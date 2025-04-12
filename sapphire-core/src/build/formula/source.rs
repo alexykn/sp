@@ -1,31 +1,34 @@
 use crate::utils::error::{SapphireError, Result};
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
-use crate::build::env::BuildEnvironment;
+use crate::build::env::BuildEnvironment; // Import BuildEnvironment
+use crate::build; // Import the build module itself for get_homebrew_prefix
+use crate::build::extract_archive_strip_components; // Import the specific function
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use std::io::copy;
 use reqwest::Client;
 use std::io::Cursor;
 use std::process::Command;
-use std::rc::Rc; // Import Rc
+// Removed: use std::rc::Rc;
+
 
 /// Download source code for the formula
 pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathBuf> {
     // Try to get a stable URL from the formula
-    let url = if let Some(stable_url) = get_formula_url(formula) {
-        stable_url
+    let url = if !formula.url.is_empty() { // Use formula.url directly
+        formula.url.clone()
     } else {
         // Fallback to creating a URL from the formula name and homepage
         if let Some(homepage) = &formula.homepage {
             if homepage.contains("github.com") {
                 // Create a typical GitHub release URL as fallback
-                format!("{}/archive/v{}.tar.gz", homepage.trim_end_matches('/'), formula.version)
+                format!("{}/archive/refs/tags/v{}.tar.gz", homepage.trim_end_matches('/'), formula.version) // Common tag format
             } else {
-                return Err(SapphireError::Generic("No source URL available".to_string()));
+                return Err(SapphireError::Generic(format!("No source URL available for {} and cannot derive from homepage", formula.name)));
             }
         } else {
-            return Err(SapphireError::Generic("No source URL available".to_string()));
+            return Err(SapphireError::Generic(format!("No source URL available for {}", formula.name)));
         }
     };
 
@@ -34,14 +37,7 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
     download_url(&url, config).await
 }
 
-/// Get the main URL for a formula, trying stable URL first
-fn get_formula_url(formula: &Formula) -> Option<String> {
-    if !formula.url.is_empty() {
-        Some(formula.url.clone())
-    } else {
-        None
-    }
-}
+// Removed get_formula_url function as logic is simple enough inline
 
 /// Download a specific URL to the cache
 async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
@@ -50,15 +46,16 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
     fs::create_dir_all(&cache_dir)?;
 
     // Generate a filename from the URL
-    let filename = url.split('/').last().unwrap_or("download.tar.gz");
+    let filename = url.split('/').last().unwrap_or("download.tmp"); // Basic fallback filename
     let source_path = cache_dir.join(filename);
 
-    // Skip download if the file already exists
+    // Skip download if the file already exists and is valid (optional: add SHA check later)
     if source_path.exists() {
         println!("Using cached source: {}", source_path.display());
         return Ok(source_path);
     }
 
+    println!("Downloading {}", url);
     // Download the source
     let client = Client::new();
     let response = client.get(url)
@@ -67,7 +64,9 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
         .map_err(|e| SapphireError::Http(e))?;
 
     if !response.status().is_success() {
-        return Err(SapphireError::Generic(format!("Failed to download: HTTP status {}", response.status())));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "Failed to read body".to_string());
+        return Err(SapphireError::Generic(format!("Failed to download source from {}: HTTP status {} - {}", url, status, body)));
     }
 
     let content = response.bytes()
@@ -87,7 +86,7 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
 /// Build and install formula from source
 pub fn build_from_source(
     source_path: &Path,
-    formula: &Formula, // Keep as reference, BuildEnvironment needs trait object anyway
+    formula: &Formula, // Keep as reference
     config: &Config,
     build_dep_opt_paths: &[PathBuf], // Added parameter for build dep paths
 ) -> Result<PathBuf> {
@@ -95,7 +94,6 @@ pub fn build_from_source(
     let install_dir = super::get_formula_cellar_path(formula);
 
     // Create a temporary directory for building
-    // Use a subdirectory within the configured cache dir for better isolation/cleanup
     let temp_dir_base = config.cache_dir.join("build-temp");
     fs::create_dir_all(&temp_dir_base)?;
     let temp_dir = tempfile::Builder::new()
@@ -104,17 +102,12 @@ pub fn build_from_source(
         .map_err(|e| SapphireError::Io(e))?
         .into_path(); // Get PathBuf and keep the directory
 
-     // Ensure we own the temp dir for the scope of this function
-     // The directory will be removed when `_temp_dir_guard` goes out of scope if using tempfile::tempdir()
-     // If using into_path(), manual cleanup might be needed on error, or rely on system cleanup.
-    // For simplicity, let's assume it gets cleaned up eventually or manually.
-
 
     println!("==> Extracting source to {}", temp_dir.display());
 
-    // Extract the source
-    // Extract directly into the temp dir, stripping the top-level component
-    super::extract_archive_strip_components(source_path, &temp_dir, 1)?;
+    // Extract the source, stripping the top-level component
+    // Use the imported function directly
+    extract_archive_strip_components(source_path, &temp_dir, 1)?;
 
 
     // The build directory is now the temp directory itself after stripping
@@ -151,58 +144,7 @@ pub fn build_from_source(
 }
 
 
-/// Find the directory containing the source code after extraction
-/// DEPRECATED: Assuming extraction with --strip-components=1 now.
-#[allow(dead_code)]
-fn find_build_directory(temp_dir: &Path, formula_name: &str) -> Result<PathBuf> {
-    // Try a directory with the formula name
-    let name_dir = temp_dir.join(formula_name);
-    if name_dir.exists() && name_dir.is_dir() {
-        return Ok(name_dir);
-    }
-
-    // Try a formula-version directory
-    let entries = fs::read_dir(temp_dir)?;
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() && path.file_name().unwrap().to_string_lossy().contains(formula_name) {
-            return Ok(path);
-        }
-    }
-
-    // If only one directory exists, use that
-    let entries: Vec<_> = fs::read_dir(temp_dir)?.collect::<std::io::Result<Vec<_>>>()?;
-    if entries.len() == 1 && entries[0].path().is_dir() {
-        return Ok(entries[0].path());
-    }
-
-    // If we find multiple directories but one matches a specific pattern (e.g., m4-1.4.19)
-    // we should prioritize that one
-    let entries: Vec<_> = fs::read_dir(temp_dir)?.collect::<std::io::Result<Vec<_>>>()?;
-    for entry in entries {
-        let path = entry.path();
-        if path.is_dir() {
-            let filename = path.file_name().unwrap().to_string_lossy().to_string();
-            if filename.starts_with(formula_name) && filename.contains('-') {
-                return Ok(path);
-            }
-        }
-    }
-
-    // Last resort - just print what directories we actually found to help diagnose
-    println!("Available directories in {}", temp_dir.display());
-    for entry in fs::read_dir(temp_dir)? {
-        if let Ok(entry) = entry {
-            println!(" - {}", entry.path().display());
-        }
-    }
-
-    Err(SapphireError::Generic(format!(
-        "Could not find build directory for {} in {}",
-        formula_name, temp_dir.display()
-    )))
-}
+// find_build_directory is deprecated
 
 /// Detect the build system and use the appropriate build method
 fn detect_and_build(
@@ -264,7 +206,7 @@ fn detect_and_build(
             )));
         }
     }
-    // 2. Check for configure.ac or configure.in (needs autoconf)
+    // 2. Check for configure.ac or configure.in (needs autoconf/autoreconf)
     else if build_dir.join("configure.ac").exists() || build_dir.join("configure.in").exists() {
         // Check if autoreconf exists in the environment's PATH
         let autoreconf_path = match which::which_in("autoreconf", build_env.get_path_string(), build_dir) {
@@ -298,9 +240,17 @@ fn detect_and_build(
         // Ensure the configure script is executable
         if cfg!(unix) {
              use std::os::unix::fs::PermissionsExt;
-             let mut perms = fs::metadata(&configure_script)?.permissions();
-             perms.set_mode(perms.mode() | 0o111);
-             fs::set_permissions(&configure_script, perms)?;
+             // Handle potential error during metadata read or permission setting
+             match fs::metadata(&configure_script) {
+                Ok(metadata) => {
+                    let mut perms = metadata.permissions();
+                    perms.set_mode(perms.mode() | 0o111);
+                    if let Err(e) = fs::set_permissions(&configure_script, perms) {
+                        eprintln!("Warning: Failed to set executable permission on configure script: {}", e);
+                    }
+                }
+                Err(e) => eprintln!("Warning: Failed to read metadata for configure script: {}", e),
+             }
         }
 
         return configure_and_make(build_dir, install_dir, build_env);
@@ -378,7 +328,9 @@ fn configure_and_make(
 
     // Run make
     println!("==> Running make");
-    let mut cmd = Command::new("make");
+    let make_exe = which::which_in("make", build_env.get_path_string(), build_dir)
+         .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
+    let mut cmd = Command::new(make_exe.clone()); // Clone make_exe for install command
     build_env.apply_to_command(&mut cmd); // MAKEFLAGS should be in build_env
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make: {}", e)))?;
 
@@ -395,7 +347,7 @@ fn configure_and_make(
 
     // Run make install
     println!("==> Running make install");
-    let mut cmd = Command::new("make");
+    let mut cmd = Command::new(make_exe);
     cmd.arg("install");
     build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make install: {}", e)))?;
@@ -493,7 +445,7 @@ fn meson_build(
      let meson_exe = which::which_in("meson", build_env.get_path_string(), source_dir)
          .map_err(|_| SapphireError::BuildEnvError("meson command not found in build environment PATH.".to_string()))?;
 
-     let mut cmd_setup = Command::new(meson_exe);
+     let mut cmd_setup = Command::new(&meson_exe); // Borrow meson_exe
      cmd_setup.arg("setup")
          .arg(format!("--prefix={}", install_dir.display()))
          // Add other standard meson options if needed (e.g., buildtype)
@@ -512,13 +464,14 @@ fn meson_build(
          )));
      }
 
-     // Meson install command
+     // Meson install command (uses ninja implicitly)
      println!("==> Running meson install -C {}", build_subdir.display());
-      let ninja_exe = which::which_in("ninja", build_env.get_path_string(), source_dir)
-          .map_err(|_| SapphireError::BuildEnvError("ninja command not found in build environment PATH (needed for meson install).".to_string()))?;
+     // Check if ninja exists, as meson install relies on it.
+     let _ninja_exe = which::which_in("ninja", build_env.get_path_string(), source_dir)
+         .map_err(|_| SapphireError::BuildEnvError("ninja command not found in build environment PATH (needed for meson install).".to_string()))?;
 
-     // Meson install uses ninja internally by default
-     let mut cmd_install = Command::new(meson_exe); // Still use meson command
+
+     let mut cmd_install = Command::new(&meson_exe); // Borrow meson_exe again
      cmd_install.arg("install")
          .arg("-C") // Specify build directory
          .arg(&build_subdir);
@@ -547,11 +500,7 @@ fn cargo_build(
      let cargo_exe = which::which_in("cargo", build_env.get_path_string(), source_dir)
          .map_err(|_| SapphireError::BuildEnvError("cargo command not found in build environment PATH.".to_string()))?;
 
-     // Cargo install directly installs binaries to $CARGO_HOME/bin by default.
-     // To install into the Cellar, we usually need `cargo build --release`
-     // and then manually copy artifacts, or use `cargo install --path . --root <prefix>`
-     // Let's use the latter approach as it's more direct.
-
+     // Cargo install --path . --root <prefix> installs directly into the cellar structure
      println!("==> Running cargo install --path . --root {}", install_dir.display());
      let mut cmd = Command::new(cargo_exe);
      cmd.arg("install")
@@ -571,9 +520,6 @@ fn cargo_build(
          )));
      }
 
-     // Cargo install --root installs into <root>/bin, <root>/lib etc.
-     // which matches the desired cellar structure. No manual copying needed.
-
      Ok(())
 }
 
@@ -584,7 +530,7 @@ fn python_build(
     build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Building with Python setup.py");
-     // Find the python executable, preferably one managed by Homebrew if available
+     // Find the python executable
      let python_exe = which::which_in("python3", build_env.get_path_string(), source_dir)
          .or_else(|_| which::which_in("python", build_env.get_path_string(), source_dir))
          .map_err(|_| SapphireError::BuildEnvError("python3 or python command not found in build environment PATH.".to_string()))?;
@@ -613,17 +559,17 @@ fn python_build(
 
 /// Build with a simple Makefile
 fn simple_make(
-    _build_dir: &Path, // Is CWD
+    build_dir: &Path, // Is CWD
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
      println!("==> Building with simple Makefile");
-      let make_exe = which::which_in("make", build_env.get_path_string(), _build_dir)
+      let make_exe = which::which_in("make", build_env.get_path_string(), build_dir)
          .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
 
 
      println!("==> Running make");
-     let mut cmd_make = Command::new(&make_exe);
+     let mut cmd_make = Command::new(make_exe.clone()); // Clone for install command
      build_env.apply_to_command(&mut cmd_make);
      let output_make = cmd_make.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make (simple): {}", e)))?;
 
@@ -650,14 +596,12 @@ fn simple_make(
 
     if !output_install.status.success() {
         // Some Makefiles might not have an install target, this might be okay
-        // but we should probably check if files were actually installed.
-        // For now, treat it as an error if the command fails.
          println!("Warning: 'make install' failed. Formula might be installed correctly if it doesn't use a standard install target.");
          // Check if install_dir/bin or install_dir/lib has files?
          let bin_dir = install_dir.join("bin");
          let lib_dir = install_dir.join("lib");
-         let bin_exists = bin_dir.exists() && fs::read_dir(bin_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
-         let lib_exists = lib_dir.exists() && fs::read_dir(lib_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
+         let bin_exists = bin_dir.exists() && fs::read_dir(&bin_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
+         let lib_exists = lib_dir.exists() && fs::read_dir(&lib_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
          if !bin_exists && !lib_exists {
              return Err(SapphireError::Generic(format!(
                  "Make install failed with status: {} and no files found in {}/bin or {}/lib",
@@ -672,21 +616,24 @@ fn simple_make(
 }
 
 /// Check if a file is executable (on Unix)
-#[cfg(unix)]
-fn is_executable(path: &Path) -> Result<bool> {
-    use std::os::unix::fs::PermissionsExt;
-    let metadata = fs::metadata(path)?;
-    let permissions = metadata.permissions();
-    // Check if user, group, or other has execute permission
-    Ok(permissions.mode() & 0o111 != 0)
-}
+//#[cfg(unix)]
+//fn is_executable(path: &Path) -> Result<bool> {
+//    use std::os::unix::fs::PermissionsExt;
+//    let metadata = fs::metadata(path)?;
+//    let permissions = metadata.permissions();
+//    // Check if user, group, or other has execute permission
+//    Ok(permissions.mode() & 0o111 != 0)
+//}
 
 /// Check if a file is executable (fallback for non-Unix)
 #[cfg(not(unix))]
 fn is_executable(path: &Path) -> Result<bool> {
      // Simple check for common executable extensions on non-Unix
      Ok(path.is_file() &&
-        path.extension().map_or(false, |ext| ext == "exe" || ext == "bat" || ext == "cmd" || ext == "sh"))
+        path.extension().map_or(false, |ext| {
+            let ext_lower = ext.to_string_lossy().to_lowercase();
+            ext_lower == "exe" || ext_lower == "bat" || ext_lower == "cmd" || ext_lower == "sh"
+        }))
 }
 
 

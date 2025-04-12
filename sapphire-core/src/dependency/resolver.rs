@@ -3,15 +3,15 @@ use crate::model::formula::Formula;
 use crate::formulary::Formulary;
 use crate::keg::KegRegistry;
 use crate::utils::error::{Result, SapphireError};
-use crate::build; // Import build module for prefix helper
+// Removed: use crate::build;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Represents a fully resolved dependency, including its load status and path.
 #[derive(Debug, Clone)]
 pub struct ResolvedDependency {
-    pub formula: Rc<Formula>,
+    pub formula: Arc<Formula>,
     /// Path to the specific installed version (e.g., /opt/homebrew/Cellar/foo/1.2.3)
     pub keg_path: Option<PathBuf>,
     /// Path to the linked 'opt' directory (e.g., /opt/homebrew/opt/foo)
@@ -56,7 +56,7 @@ pub struct ResolutionContext<'a> {
 /// Resolves the dependency graph for a given set of target formulas.
 pub struct DependencyResolver<'a> {
     context: ResolutionContext<'a>,
-    formula_cache: HashMap<String, Rc<Formula>>,
+    formula_cache: HashMap<String, Arc<Formula>>,
     visiting: HashSet<String>,
     resolved: HashMap<String, ResolvedDependency>, // Tracks the final state of each node
 }
@@ -84,7 +84,9 @@ impl<'a> DependencyResolver<'a> {
         for dep in initial_deps {
             self.resolve_recursive(&dep.name, dep.tags, true)?;
         }
-        println!("Raw resolved map after initial pass: {:?}", self.resolved.iter().map(|(k, v)| (k, v.status.clone(), v.tags)).collect::<HashMap<_,_>>());
+        // Adjusted println to avoid HashMap collect error
+        println!("Raw resolved map after initial pass: {:?}", self.resolved.iter().map(|(k, v)| (k, v.status.clone(), v.tags)).collect::<Vec<(&String, ResolutionStatus, DependencyTag)>>());
+
 
         let sorted_list = self.topological_sort()?;
         let install_plan: Vec<ResolvedDependency> = sorted_list
@@ -111,6 +113,12 @@ impl<'a> DependencyResolver<'a> {
                          println!("Adding runtime dep path: {}", opt_path.display());
                          runtime_paths.push(opt_path.clone());
                     }
+                } else {
+                     // This might happen for the formula currently being built if it's not installed yet
+                     // Or if KegRegistry couldn't determine the opt path for some reason
+                     if dep.status != ResolutionStatus::Missing && dep.status != ResolutionStatus::Requested {
+                         println!("Warning: No opt_path found for resolved dependency {} ({:?})", dep.formula.name(), dep.status);
+                     }
                 }
             }
         }
@@ -171,15 +179,19 @@ impl<'a> DependencyResolver<'a> {
                 Some(f) => f.clone(),
                 None => {
                     println!("Loading formula definition for '{}'", name);
-                    let loaded_formula = Rc::new(self.context.formulary.load_formula(name)?);
-                    self.formula_cache.insert(name.to_string(), loaded_formula.clone());
-                    loaded_formula
+                    // Load formula using Formulary
+                    let loaded_formula = self.context.formulary.load_formula(name)?;
+                    // Wrap in Arc for sharing
+                    let formula_arc = Arc::new(loaded_formula);
+                    self.formula_cache.insert(name.to_string(), formula_arc.clone());
+                    formula_arc
                 }
             };
 
              // Check if installed
             let installed_keg = if self.context.force_build { None } else { self.context.keg_registry.get_installed_keg(name)? };
-            let opt_path = self.context.keg_registry.get_opt_path(name); // Get opt path regardless of install status
+            // Call the CORRECTED get_opt_path method
+            let opt_path = self.context.keg_registry.get_opt_path(name);
 
             let (status, keg_path) = match installed_keg {
                 Some(keg) => (ResolutionStatus::Installed, Some(keg.path)),
@@ -191,7 +203,7 @@ impl<'a> DependencyResolver<'a> {
              self.resolved.insert(name.to_string(), ResolvedDependency {
                 formula: formula.clone(),
                 keg_path: keg_path.clone(),
-                opt_path: opt_path, // Store the calculated opt path
+                opt_path: Some(opt_path), // Store the calculated opt path
                 status: status.clone(),
                 tags: tags_from_parent, // Initial tags based on how it was first requested
             });
@@ -201,10 +213,12 @@ impl<'a> DependencyResolver<'a> {
         // Recurse for dependencies *of the current formula*
         // Use the formula loaded/retrieved for `name`
         let formula = self.resolved.get(name).unwrap().formula.clone(); // Safe to unwrap as we just inserted/updated it
+
+        // Add self back to visiting set before recursing to detect cycles correctly
+        self.visiting.insert(name.to_string());
+
+        // Process dependencies declared *within* the current formula
         let dependencies = formula.dependencies()?;
-
-        self.visiting.insert(name.to_string()); // Add back before recursing dependencies
-
         for dep in dependencies {
             let dep_name = &dep.name;
             let dep_tags = dep.tags; // These are the tags defined *in the formula*
@@ -221,11 +235,12 @@ impl<'a> DependencyResolver<'a> {
                 if !self.resolved.contains_key(dep_name.as_str()) {
                      // Try load formula just to mark it
                      if let Ok(loaded_formula) = self.context.formulary.load_formula(dep_name) {
-                        let f_rc = Rc::new(loaded_formula);
-                        let opt_path = self.context.keg_registry.get_opt_path(dep_name);
-                        self.formula_cache.insert(dep_name.to_string(), f_rc.clone());
+                         // Call the CORRECTED get_opt_path method
+                         let opt_path = self.context.keg_registry.get_opt_path(dep_name);
+                        let f_arc = Arc::new(loaded_formula);
+                        self.formula_cache.insert(dep_name.to_string(), f_arc.clone());
                         self.resolved.insert(dep_name.to_string(), ResolvedDependency {
-                             formula: f_rc, keg_path: None, opt_path, status: ResolutionStatus::SkippedOptional, tags: DependencyTag::OPTIONAL
+                             formula: f_arc, keg_path: None, opt_path: Some(opt_path), status: ResolutionStatus::SkippedOptional, tags: DependencyTag::OPTIONAL
                         });
                      } else { println!("Could not load skipped optional dependency '{}' to mark it.", dep_name); }
                 }
@@ -236,11 +251,12 @@ impl<'a> DependencyResolver<'a> {
                 // Mark as skipped *if not already resolved*
                  if !self.resolved.contains_key(dep_name.as_str()) {
                      if let Ok(loaded_formula) = self.context.formulary.load_formula(dep_name) {
-                         let f_rc = Rc::new(loaded_formula);
+                         // Call the CORRECTED get_opt_path method
                          let opt_path = self.context.keg_registry.get_opt_path(dep_name);
-                         self.formula_cache.insert(dep_name.to_string(), f_rc.clone());
+                         let f_arc = Arc::new(loaded_formula);
+                         self.formula_cache.insert(dep_name.to_string(), f_arc.clone());
                          self.resolved.insert(dep_name.to_string(), ResolvedDependency {
-                             formula: f_rc, keg_path: None, opt_path, status: ResolutionStatus::SkippedOptional, tags: DependencyTag::RECOMMENDED
+                             formula: f_arc, keg_path: None, opt_path: Some(opt_path), status: ResolutionStatus::SkippedOptional, tags: DependencyTag::RECOMMENDED
                          });
                      } else { println!("Could not load skipped recommended dependency '{}' to mark it.", dep_name); }
                  }
@@ -250,7 +266,7 @@ impl<'a> DependencyResolver<'a> {
             // Recurse: Pass the tags defined *in the formula* (`dep_tags`)
             self.resolve_recursive(dep_name, dep_tags, false)?; // is_target is false for dependencies
         }
-        self.visiting.remove(name);
+        self.visiting.remove(name); // Remove after processing all children
         println!("Finished resolving: {}", name);
         Ok(())
     }
@@ -281,6 +297,7 @@ impl<'a> DependencyResolver<'a> {
                         for dep in dependencies {
                              // Check if the dependency itself should be considered (not skipped)
                              if let Some(resolved_target_dep) = self.resolved.get(&dep.name) {
+                                 // Check context flags to see if this dependency *type* should be considered
                                  if resolved_target_dep.status != ResolutionStatus::SkippedOptional && self.should_consider_dependency(&dep) {
                                      // Add edge from dependency `dep.name` to current formula `name`
                                      // Because `name` depends on `dep.name`
@@ -384,6 +401,7 @@ impl<'a> DependencyResolver<'a> {
         if tags.contains(DependencyTag::TEST) && !self.context.include_test { return false; }
         if tags.contains(DependencyTag::OPTIONAL) && !self.context.include_optional { return false; }
         if tags.contains(DependencyTag::RECOMMENDED) && self.context.skip_recommended { return false; }
+        // If we reach here, it's either RUNTIME or BUILD, or a RECOMMENDED/OPTIONAL we *are* including.
         true
     }
 }

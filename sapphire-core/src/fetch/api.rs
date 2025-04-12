@@ -39,9 +39,11 @@ pub async fn fetch_raw_json(endpoint: &str) -> Result<String> {
 
     if body.trim().is_empty() {
         log::error!("Response body for {}: [empty body]", endpoint);
-    } else {
-        log::info!("Response body for {}: {}", endpoint, body);
-    }
+    } 
+    // Commenting out the print of raw responses
+    // else {
+    //     log::info!("Response body for {}: {}", endpoint, body);
+    // }
     Ok(body)
 }
 

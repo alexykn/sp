@@ -1,102 +1,96 @@
 use crate::utils::config::Config;
 use crate::model::formula::Formula;
 use crate::utils::error::{Result, SapphireError};
-use std::fs;
-use std::path::PathBuf;
+use crate::utils::cache::Cache; // Import the Cache struct
+// Removed: use std::fs;
+// Removed: use std::path::PathBuf;
+// Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
+use std::collections::HashMap; // For caching parsed formulas
+use std::sync::Arc; // Import Arc for thread-safe shared ownership
 
-const DEFAULT_CORE_TAP: &str = "homebrew/core";
 
-/// Responsible for finding and loading Formula definitions.
-#[derive(Debug)]
+/// Responsible for finding and loading Formula definitions from the API cache.
+#[derive()]
 pub struct Formulary {
-    config: Config,
-    // Optional: Add a cache for loaded formulas to avoid repeated file reads/parsing
-    // cache: Mutex<HashMap<String, std::sync::Arc<Formula>>>,
+    // config: Config, // Keep config if needed for cache path, etc.
+    cache: Cache,
+    // Optional: Add a cache for *parsed* formulas to avoid repeated parsing of the large JSON
+    parsed_cache: std::sync::Mutex<HashMap<String, std::sync::Arc<Formula>>>, // Using Arc for thread-safety
 }
 
 impl Formulary {
     pub fn new(config: Config) -> Self {
+        // Initialize the cache helper using the directory from config
+        let cache = Cache::new(&config.cache_dir).unwrap_or_else(|e| {
+             // Handle error appropriately - maybe panic or return Result?
+             // Using expect here for simplicity, but Result is better.
+             panic!("Failed to initialize cache in Formulary: {}", e);
+        });
         Self {
-            config,
-            // cache: Mutex::new(HashMap::new()),
+            // config,
+            cache,
+            parsed_cache: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    /// Resolves a formula name (potentially unqualified) to a tap and formula file path.
-    /// Returns (tap_name, formula_file_path)
-    fn resolve_formula_path(&self, name: &str) -> Result<(String, PathBuf)> {
-        println!("Resolving formula path for: {}", name);
-        let (tap_name, formula_name) = self.parse_qualified_name(name);
+    // Removed: resolve_formula_path
+    // Removed: parse_qualified_name
 
-        if let Some(path) = self.config.get_formula_path(&tap_name, &formula_name) {
-            if path.is_file() {
-                println!("Found '{}' at path: {}", name, path.display());
-                return Ok((tap_name, path));
-            } else {
-                println!("Path exists but is not a file: {}", path.display());
-            }
-        } else {
-            println!("Could not construct path for tap '{}'", tap_name);
-        }
-
-        // If unqualified and not found in assumed tap, check default core tap
-        if !name.contains('/') {
-            println!("'{}' not found in implicitly assumed tap, trying core tap: {}", name, DEFAULT_CORE_TAP);
-            let core_tap_name = DEFAULT_CORE_TAP.to_string();
-            if let Some(path) = self.config.get_formula_path(&core_tap_name, name) {
-                if path.is_file() {
-                    println!("Found '{}' in core tap at path: {}", name, path.display());
-                    return Ok((core_tap_name, path));
-                } else {
-                    println!("Path in core tap not found or not a file: {}", path.display());
-                }
-            }
-        }
-
-        println!("Formula '{}' not found in any known tap locations.", name);
-        Err(SapphireError::Generic(format!("Formula not found: {}", name)))
-    }
-
-    /// Parses a name like "user/repo/formula" or just "formula".
-    /// Returns ("user/repo", "formula") or ("homebrew/core", "formula") etc.
-    fn parse_qualified_name(&self, name: &str) -> (String, String) {
-        let parts: Vec<&str> = name.split('/').collect();
-        match parts.len() {
-            3 => (format!("{}/{}", parts[0], parts[1]), parts[2].to_string()),
-            2 => (format!("homebrew/{}", parts[0]), parts[1].to_string()),
-            1 => (DEFAULT_CORE_TAP.to_string(), parts[0].to_string()),
-            _ => (DEFAULT_CORE_TAP.to_string(), name.to_string()),
-        }
-    }
-
-    /// Loads a formula definition by name.
+    /// Loads a formula definition by name from the API cache.
     pub fn load_formula(&self, name: &str) -> Result<Formula> {
-        // let mut cache = self.cache.lock().unwrap();
-        // if let Some(formula_arc) = cache.get(name) {
-        //     println!("Loaded formula '{}' from cache.", name);
-        //     return Ok((*formula_arc).clone());
-        // }
-        // drop(cache);
+        // 1. Check parsed cache first
+        let mut parsed_cache_guard = self.parsed_cache.lock().unwrap();
+        if let Some(formula_arc) = parsed_cache_guard.get(name) {
+            println!("Loaded formula '{}' from parsed cache.", name);
+            return Ok(Arc::clone(formula_arc).as_ref().clone()); // Clone the Formula from Arc
+        }
+        // Release lock early if not found
+        drop(parsed_cache_guard);
 
-        let (_tap_name, formula_path) = self.resolve_formula_path(name)?;
+        // 2. Load the raw formula list from the main cache file
+        println!("Loading raw formula data from cache file 'formula.json'...");
+        let raw_data = self.cache.load_raw("formula.json")?; // Assumes update stored it here
 
-        println!("Loading formula definition from: {}", formula_path.display());
-        let file_content = fs::read_to_string(&formula_path)
-            .map_err(|e| SapphireError::Generic(format!("Failed to read formula file {}: {}", formula_path.display(), e)))?;
+        // 3. Parse the entire JSON array
+        // This could be expensive, hence the parsed_cache above.
+        println!("Parsing full formula list...");
+        let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data)
+            .map_err(|e| SapphireError::Cache(format!("Failed to parse cached formula data: {}", e)))?;
+        println!("Parsed {} formulas.", all_formulas.len());
 
-        let formula: Formula = serde_json::from_str(&file_content)
-            .map_err(|e| SapphireError::Generic(format!("Failed to parse formula {} ({}): {}", name, formula_path.display(), e)))?;
+        // 4. Find the requested formula and populate the parsed cache
+        let mut found_formula: Option<Formula> = None;
+        // Lock again to update the parsed cache
+        parsed_cache_guard = self.parsed_cache.lock().unwrap();
+        // Use entry API to avoid redundant lookups if another thread populated it
+        for formula in all_formulas {
+             let formula_name = formula.name.clone(); // Clone name for insertion
+             let formula_arc = std::sync::Arc::new(formula); // Create Arc once
 
-        println!("Successfully parsed formula '{}' version {}", formula.name, formula.version_str_full());
+             // If this is the formula we're looking for, store it for return value
+             if formula_name == name {
+                 found_formula = Some(Arc::clone(&formula_arc).as_ref().clone()); // Clone Formula out
+             }
 
-        // let mut cache = self.cache.lock().unwrap();
-        // cache.insert(name.to_string(), std::sync::Arc::new(formula.clone()));
+             // Insert into parsed cache using entry API
+             parsed_cache_guard.entry(formula_name).or_insert(formula_arc);
+        }
 
-        Ok(formula)
+        // 5. Return the found formula or an error
+        match found_formula {
+            Some(f) => {
+                println!("Successfully loaded formula '{}' version {}", f.name, f.version_str_full());
+                Ok(f)
+            }
+            None => {
+                 println!("Formula '{}' not found within the cached formula data.", name);
+                 Err(SapphireError::Generic(format!("Formula '{}' not found in cache.", name)))
+            }
+        }
     }
 }
 
-// --- Logging Macros (assume these are defined elsewhere or use eprintln for now) ---
+// --- Logging Macros (Keep as is) ---
 #[allow(unused_macros)]
 macro_rules! debug {
     ($($arg:tt)*) => { eprintln!("DEBUG [formulary]: {}", format!($($arg)*)); };

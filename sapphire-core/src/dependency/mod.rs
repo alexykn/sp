@@ -6,4 +6,4 @@ pub mod resolver;
 // Re-export key types for easier access
 pub use dependency::{Dependency, DependencyTag, DependencyExt};
 pub use requirement::Requirement;
-pub use resolver::{DependencyResolver, ResolvedDependency, ResolutionContext};
+pub use resolver::{DependencyResolver, ResolvedDependency, ResolutionContext, ResolutionStatus};

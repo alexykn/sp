@@ -2,15 +2,15 @@ use sapphire_core::utils::error::{SapphireError, Result};
 use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::config::Config;
 use sapphire_core::build;
-use std::collections::HashSet;
+//use std::collections::HashSet; Unused
 use futures::future::BoxFuture;
 use sapphire_core::fetch::api;
 use sapphire_core::utils::cache::Cache;
 use clap::Args;
 use sapphire_core::model::cask::Cask;
-use sapphire_core::dependency::{DependencyResolver, ResolutionContext, ResolvedDependency, ResolutionStatus}; // Import resolver components
+use sapphire_core::dependency::{DependencyResolver, ResolutionContext, ResolvedDependency, DependencyTag, ResolutionStatus}; // Import resolver components
 use sapphire_core::keg::KegRegistry; // Import KegRegistry
-use std::rc::Rc; // Import Rc for formula cloning if needed
+use std::sync::Arc; // Use Arc for formula sharing across threads
 
 
 #[derive(Debug, Args)]
@@ -82,7 +82,7 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                          // For simplicity now, we'll rely on the build_env setup inside install_formula_internal
                          // to fetch necessary build deps if needed, but ideally, resolution is fully upfront.
                          install_formula_internal(
-                             resolved_dep.formula.clone(), // Pass Rc<Formula>
+                             resolved_dep.formula.clone(), // Pass Arc<Formula>
                              resolved_dep,                 // Pass the ResolvedDependency info
                              config,
                              &resolved_graph.build_dependency_opt_paths, // Pass build paths relevant for *this* build
@@ -129,7 +129,7 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
 /// Internal function to handle the actual installation of a single formula.
 /// Assumes dependencies have been handled by the caller if `process_deps` is false.
 async fn install_formula_internal(
-    formula: Rc<Formula>, // Use Rc<Formula>
+    formula: Arc<Formula>, // Use Arc<Formula>
     resolved_info: &ResolvedDependency, // Pass resolved info
     config: &Config,
     // Pass build dependency paths needed for *this* formula's build
