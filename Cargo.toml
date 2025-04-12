@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "sapphire-cli",
+    "sapphire-core",
+]
+
+# Optional: Define shared dependencies or profiles here
+[workspace.dependencies]
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

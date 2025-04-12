@@ -1,0 +1,36 @@
+[package]
+name = "sapphire-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line interface for Sapphire"
+# repository = "..."
+# license = "..."
+
+[[bin]]
+name = "sapphire"
+path = "src/main.rs"
+
+[dependencies]
+sapphire-core = { path = "../sapphire-core" }
+
+# Inherit from workspace
+anyhow = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+# CLI specific dependencies
+clap = { version = "4.3", features = ["derive"] }
+colored = "2.0"
+spinners = "4.1"
+dialoguer = "0.10"
+indicatif = "0.17"
+env_logger = "0.10"
+prettytable-rs = "0.10"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+serde_json = "1.0"
+walkdir = "2.3"
+
+[build-dependencies]
+clap_complete = "4.3"
