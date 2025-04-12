@@ -2,22 +2,25 @@
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
 use crate::build::extract_archive_strip_components;
-use super::{download_fallback_source, find_build_script, run_build_command_for_script};
+use super::{download_fallback_source, run_build_script_from_content}; // Use content runner
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use log; // Import log crate
+
+// Embed the script content at compile time
+const LIBTOOL_SCRIPT_CONTENT: &str = include_str!("../../../../sapphire-cli/scripts/build_libtool.sh");
 
 const LIBTOOL_VERSION: &str = "2.5.4"; // Using version from report example
-const LIBTOOL_SOURCE_URL: &str = "https://ftp.gnu.org/gnu/libtool/libtool-2.5.4.tar.gz";
-const LIBTOOL_SCRIPT_NAME: &str = "build_libtool.sh";
+const LIBTOOL_SOURCE_URL: &str = "https://ftp.gnu.org/gnu/libtool/libtool-2.5.4.tar.gz"; // Adjusted to .gz based on filename
+const LIBTOOL_SCRIPT_NAME_HINT: &str = "build_libtool.sh";
 
-/// Builds Libtool using its shell script, passing required M4 and Autoconf prefixes.
+/// Builds Libtool using its embedded shell script, passing required M4 and Autoconf prefixes.
 pub async fn build_libtool_from_source(
     config: &Config,
     install_prefix: &Path, // Where to install libtool
     m4_prefix: &Path,      // Where prerequisite M4 is
     autoconf_prefix: &Path,// Where prerequisite Autoconf is
 ) -> Result<PathBuf> {
-    log::info!("[Fallback] Starting build for Libtool v{} via script", LIBTOOL_VERSION);
+    log::info!("[Fallback] Starting build for Libtool v{} via embedded script", LIBTOOL_VERSION);
     log::info!("[Fallback] Using M4 dependency from: {}", m4_prefix.display());
     log::info!("[Fallback] Using Autoconf dependency from: {}", autoconf_prefix.display());
 
@@ -34,22 +37,26 @@ pub async fn build_libtool_from_source(
 
     // 3. Extract source
     log::info!("[Fallback] Extracting Libtool source {} to {}", source_tarball.display(), build_dir.display());
+    // Assuming .tar.gz, strip 1 component (e.g., libtool-2.5.4/)
     extract_archive_strip_components(&source_tarball, build_dir, 1)?;
 
-    // 4. Find the build script
-    let script_path = find_build_script(LIBTOOL_SCRIPT_NAME)?;
+    // 4. Prepare arguments for the script
+    let args = vec![
+        build_dir.to_string_lossy().to_string(),       // Arg 1: Build directory
+        install_prefix.to_string_lossy().to_string(),  // Arg 2: Installation prefix
+        m4_prefix.to_string_lossy().to_string(),       // Arg 3: M4 prefix
+        autoconf_prefix.to_string_lossy().to_string(), // Arg 4: Autoconf prefix
+    ];
 
-    // 5. Execute the build script
-    log::info!("[Fallback] Executing build script: {}", script_path.display());
-    let mut cmd = Command::new("sh");
-    cmd.arg(&script_path);
-    // Pass arguments
-    cmd.arg(build_dir);         // Arg 1: Build directory
-    cmd.arg(install_prefix);    // Arg 2: Installation prefix
-    cmd.arg(m4_prefix);         // Arg 3: M4 prefix
-    cmd.arg(autoconf_prefix);   // Arg 4: Autoconf prefix
-
-    run_build_command_for_script(&mut cmd, LIBTOOL_SCRIPT_NAME, "libtool")?;
+    // 5. Execute the embedded build script
+    log::info!("[Fallback] Executing embedded Libtool build script...");
+    run_build_script_from_content(
+        LIBTOOL_SCRIPT_CONTENT,
+        LIBTOOL_SCRIPT_NAME_HINT,
+        "libtool",
+        config,
+        &args,
+    )?;
 
     log::info!("[Fallback] Successfully executed script to build/install Libtool to {}", install_prefix.display());
     Ok(install_prefix.to_path_buf())

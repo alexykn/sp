@@ -24,6 +24,9 @@ pub enum SapphireError {
     #[error("Semantic Versioning Error: {0}")]
     SemVer(#[from] semver::Error),
 
+    #[error("DownloadError: {0}")]
+    DownloadError(String, String, String),
+
     #[error("Cache Error: {0}")]
     Cache(String),
 
