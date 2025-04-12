@@ -33,6 +33,7 @@ sha2 = "0.10"
 indicatif = "0.17"
 regex = "1.8"
 glob = "0.3"
+rc = "0.1.1"
 futures = "0.3" # Added based on install.rs usage
 
 # Added from check errors

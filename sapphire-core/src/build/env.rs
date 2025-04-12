@@ -1,5 +1,4 @@
-// **File:** sapphire-core/src/build/env.rs (Complete Rewrite)
-use crate::model::formula::FormulaDependencies; // Import the dependency trait/methods
+use crate::model::formula::FormulaDependencies; // Keep using the trait for name() and install_prefix()
 use crate::utils::error::{Result, SapphireError};
 use crate::build::devtools; // Import the devtools module
 use std::{
@@ -31,10 +30,10 @@ const ENV_VARS_TO_REMOVE: &[&str] = &[
     "LDFLAGS", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "OBJCFLAGS", "OBJCXXFLAGS", // We set these explicitly
     "CC", "CXX", "CPP", "LD", // We set these explicitly via HOMEBREW_* vars usually
     // Potentially problematic user settings
-    "println", // Can interfere with configure/make flags
+    "DEBUG", // Can interfere with configure/make flags (was 'println' which is likely a typo)
     "GREP_OPTIONS", // Can interfere with configure scripts
     // Homebrew internals (might not apply directly but good to filter)
-    "HOMEBREW_println", "HOMEBREW_VERBOSE", "HOMEBREW_DEVELOPER",
+    "HOMEBREW_DEBUG", "HOMEBREW_VERBOSE", "HOMEBREW_DEVELOPER", // Corrected DEBUG var
     "HOMEBREW_OPTIMIZATION_LEVEL", "HOMEBREW_ARCH", "HOMEBREW_ARTIFACT_DOMAIN",
     "HOMEBREW_AUTO_UPDATE_SECS", "HOMEBREW_BAT", "HOMEBREW_BUILD_BOTTLE",
     "HOMEBREW_BUILD_FROM_SOURCE", "HOMEBREW_CACHE", "HOMEBREW_CASK_OPTS",
@@ -77,16 +76,22 @@ pub struct BuildEnvironment {
     /// The final map of environment variables to be used for build commands.
     vars: HashMap<String, String>,
     /// The ordered list of directories constituting the final PATH.
+    #[allow(dead_code)] // Keep for potential debugging or future use
     path_dirs: Vec<PathBuf>,
     /// The root installation directory for Sapphire (e.g., /opt/homebrew or /usr/local).
+    #[allow(dead_code)] // Keep for potential debugging or future use
     sapphire_prefix: PathBuf,
     /// The specific installation prefix for the formula being built.
+    #[allow(dead_code)] // Keep for potential debugging or future use
     formula_install_prefix: PathBuf,
     /// Resolved path to the C compiler.
+    #[allow(dead_code)] // Keep for potential debugging or future use
     cc: PathBuf,
     /// Resolved path to the C++ compiler.
+    #[allow(dead_code)] // Keep for potential debugging or future use
     cxx: PathBuf,
     /// Resolved path to the macOS SDK (or "/" if not applicable).
+    #[allow(dead_code)] // Keep for potential debugging or future use
     sdk_path: PathBuf,
 }
 
@@ -100,9 +105,16 @@ impl BuildEnvironment {
     ///
     /// # Arguments
     /// * `formula` - A reference to the formula being built, implementing `FormulaDependencies`.
-    /// * `sapphire_prefix` - The root directory of the Sapphire installation.
-    pub fn new<F: FormulaDependencies>(formula: &F, sapphire_prefix: &Path, cellar_path: &Path) -> Result<Self> {
-        println!("Creating BuildEnvironment for formula..."); // Add formula name if available
+    /// * `sapphire_prefix` - The root directory of the Sapphire installation (e.g., /opt/homebrew).
+    /// * `cellar_path` - The root directory of the Cellar (e.g., /opt/homebrew/Cellar).
+    /// * `build_dep_opt_paths` - A slice of resolved 'opt' paths for build-time dependencies.
+    pub fn new<F: FormulaDependencies>(
+        formula: &F,
+        sapphire_prefix: &Path,
+        cellar_path: &Path,
+        build_dep_opt_paths: &[PathBuf], // Added parameter
+    ) -> Result<Self> {
+        println!("Creating BuildEnvironment for formula '{}'...", formula.name());
 
         let mut vars = HashMap::new();
         let mut path_dirs = Vec::new();
@@ -114,7 +126,7 @@ impl BuildEnvironment {
 
         for (key, value) in initial_env.iter() {
             let key_upper = key.to_uppercase(); // Normalize for checks like HOMEBREW_*
-        
+
             // Remove explicitly blacklisted variables
             if vars_to_remove_set.contains(key.as_str()) {
                 println!("Removing env var: {}", key);
@@ -152,9 +164,13 @@ impl BuildEnvironment {
             cc.display(), cxx.display(), sdk_path.display(), macos_version, arch_flag, formula_install_prefix.display()
         );
 
-        // 3. Get Dependency Paths from Formula
-        let dep_paths = formula.all_resolved_dependency_paths()?;
-        println!("Resolved dependency paths: {:?}", dep_paths.iter().map(|p| p.display()).collect::<Vec<_>>());
+        // 3. Get Runtime Dependency Paths (We get build paths via parameter now)
+        // These runtime paths are primarily needed for setting include/lib flags,
+        // not necessarily for the PATH itself unless tools from runtime deps are needed at build time.
+        // Let's assume `build_dep_opt_paths` contains *all* dependencies needed during the build.
+        let runtime_dep_opt_paths = build_dep_opt_paths; // For now, assume build deps cover runtime build needs too.
+                                                        // A more precise approach would involve getting runtime deps separately if needed.
+        println!("Using build dependency paths for include/lib flags: {:?}", runtime_dep_opt_paths.iter().map(|p| p.display()).collect::<Vec<_>>());
 
 
         // 4. Construct PATH (Order matters!)
@@ -164,38 +180,40 @@ impl BuildEnvironment {
         path_dirs.push(PathBuf::from("/usr/sbin"));
         path_dirs.push(PathBuf::from("/sbin"));
 
-        //    - Add Sapphire's bin/sbin directories (higher priority than system)
+        //    - Prepend **build dependency** bin/sbin paths (High priority!)
+        for dep_opt_path in build_dep_opt_paths.iter().rev() { // Iterate reverse for correct prepend order
+            let dep_bin = dep_opt_path.join("bin");
+            if dep_bin.is_dir() { // Check existence before adding
+                path_dirs.insert(0, dep_bin.clone());
+                println!("Prepending build dependency bin to PATH: {}", dep_bin.display());
+            }
+            let dep_sbin = dep_opt_path.join("sbin");
+            if dep_sbin.is_dir() { // Check existence before adding
+                // Insert sbin after corresponding bin if possible, otherwise just prepend
+                 let bin_pos = path_dirs.iter().position(|p| p == &dep_bin).unwrap_or(0);
+                 path_dirs.insert(bin_pos + 1, dep_sbin.clone());
+                 println!("Prepending build dependency sbin to PATH: {}", dep_sbin.display());
+            }
+        }
+
+
+        //    - Add Sapphire's bin/sbin directories (Medium priority)
         let sapphire_bin = sapphire_prefix.join("bin");
         if sapphire_bin.is_dir() {
-            path_dirs.insert(0, sapphire_bin);
+            // Insert after build deps, before system paths
+             let first_system_path_idx = path_dirs.iter().position(|p| p.starts_with("/usr/bin") || p.starts_with("/bin")).unwrap_or(path_dirs.len());
+            path_dirs.insert(first_system_path_idx, sapphire_bin);
             println!("Prepending Sapphire bin to PATH: {}", sapphire_prefix.join("bin").display());
         }
         let sapphire_sbin = sapphire_prefix.join("sbin");
         if sapphire_sbin.is_dir() {
             // sbin usually comes after bin in precedence
-            let bin_pos = path_dirs.iter().position(|p| p == &sapphire_prefix.join("bin")).unwrap_or(0);
+            let bin_pos = path_dirs.iter().position(|p| p == &sapphire_prefix.join("bin")).unwrap_or(path_dirs.len());
             path_dirs.insert(bin_pos + 1, sapphire_sbin);
              println!("Prepending Sapphire sbin to PATH: {}", sapphire_prefix.join("sbin").display());
         }
 
-        //    - Prepend dependency bin/sbin paths (higher priority)
-        //      Iterate in reverse to maintain desired final order (last preprended is first in path)
-        for dep_keg_path in dep_paths.iter().rev() {
-            let dep_bin = dep_keg_path.join("bin");
-            if dep_bin.is_dir() && !path_dirs.contains(&dep_bin) {
-                path_dirs.insert(0, dep_bin.clone());
-                 println!("Prepending dependency bin to PATH: {}", dep_bin.display());
-            }
-            let dep_sbin = dep_keg_path.join("sbin");
-            if dep_sbin.is_dir() && !path_dirs.contains(&dep_sbin) {
-                // Insert sbin after corresponding bin if possible, otherwise just prepend
-                 let bin_pos = path_dirs.iter().position(|p| p == &dep_bin).unwrap_or(0);
-                 path_dirs.insert(bin_pos + 1, dep_sbin.clone());
-                 println!("Prepending dependency sbin to PATH: {}", dep_sbin.display());
-            }
-        }
-
-        //    - Prepend compiler path (highest priority for build tools)
+        //    - Prepend compiler path (Highest priority for build tools like cc itself)
         if let Some(compiler_dir) = cc.parent() {
              let compiler_path_buf = compiler_dir.to_path_buf();
              // Remove if already present from deps perhaps, then insert at front
@@ -231,9 +249,15 @@ impl BuildEnvironment {
              "/".to_string()
         }));
         // Use a Sapphire-managed temporary directory if possible
-        let tmpdir = env::temp_dir().join(format!("sapphire-build-{}", formula.name())); // Assuming formula has name()
-        // Ensure temp dir exists
-         std::fs::create_dir_all(&tmpdir).map_err(|e| SapphireError::BuildEnvError(format!("Failed to create temp dir {}: {}", tmpdir.display(), e)))?;
+        let tmpdir_base = env::temp_dir().join("sapphire-builds");
+         std::fs::create_dir_all(&tmpdir_base).map_err(|e| SapphireError::BuildEnvError(format!("Failed to create base temp dir {}: {}", tmpdir_base.display(), e)))?;
+         let tmpdir = tempfile::Builder::new()
+             .prefix(&format!("{}-", formula.name()))
+             .tempdir_in(&tmpdir_base)
+             .map_err(|e| SapphireError::BuildEnvError(format!("Failed to create temp dir: {}", e)))?
+             .into_path(); // Get PathBuf for the temp dir specific to this build
+
+
         vars.insert("TMPDIR".to_string(), tmpdir.to_string_lossy().to_string());
         vars.insert("TEMP".to_string(), tmpdir.to_string_lossy().to_string()); // For windowsy tools
         vars.insert("TMP".to_string(), tmpdir.to_string_lossy().to_string()); // For other tools
@@ -258,7 +282,7 @@ impl BuildEnvironment {
          println!("Setting CC={} CXX={}", cc.display(), cxx.display());
 
         // Set Compiler Flags (CFLAGS, CXXFLAGS, CPPFLAGS, LDFLAGS)
-        let opt_level = "-O2"; // TODO: Make configurable (e.g., based on println/release build)
+        let opt_level = "-O2"; // TODO: Make configurable (e.g., based on debug/release build)
         let sysroot_flag = if cfg!(target_os = "macos") && sdk_path != PathBuf::from("/") {
              format!("-isysroot {}", sdk_path.to_string_lossy())
          } else {
@@ -278,8 +302,9 @@ impl BuildEnvironment {
          if prefix_include.is_dir() {
              cppflags_vec.push(format!("-I{}", prefix_include.display()));
          }
-        // Add dependency includes
-        for dep_path in &dep_paths {
+        // Add dependency includes (use runtime_dep_opt_paths or build_dep_opt_paths?)
+        // Use the same paths used for PATH construction for consistency.
+        for dep_path in runtime_dep_opt_paths { // Assuming these cover necessary includes
             let dep_include = dep_path.join("include");
             if dep_include.is_dir() {
                 cppflags_vec.push(format!("-I{}", dep_include.display()));
@@ -307,8 +332,8 @@ impl BuildEnvironment {
          if prefix_lib.is_dir() {
              ldflags_vec.push(format!("-L{}", prefix_lib.display()));
          }
-        // Add dependency libs
-        for dep_path in &dep_paths {
+        // Add dependency libs (use runtime_dep_opt_paths or build_dep_opt_paths?)
+        for dep_path in runtime_dep_opt_paths { // Assuming these cover necessary libs
             let dep_lib = dep_path.join("lib");
             if dep_lib.is_dir() {
                 ldflags_vec.push(format!("-L{}", dep_lib.display()));
@@ -357,15 +382,19 @@ impl BuildEnvironment {
         let mut pkg_config_path_dirs = Vec::new();
         let mut pkg_config_libdir_dirs = Vec::new();
         let mut aclocal_path_dirs = Vec::new();
-        let mut cmake_prefix_path_dirs = vec![sapphire_prefix.to_path_buf()]; // Start with sapphire prefix
+        // Start CMAKE_PREFIX_PATH with the sapphire prefix itself, then add deps
+        let mut cmake_prefix_path_dirs = vec![sapphire_prefix.to_path_buf()];
 
-        // Add paths from dependencies
-        for dep_path in &dep_paths {
-            cmake_prefix_path_dirs.push(dep_path.clone()); // Add root path for CMake
+        // Add paths from dependencies (use build_dep_opt_paths for tools)
+        for dep_path in build_dep_opt_paths {
+             // Check if this path should be added for CMake (it likely should be)
+             if !cmake_prefix_path_dirs.contains(dep_path) {
+                 cmake_prefix_path_dirs.push(dep_path.clone());
+             }
 
-            let pkgconfig_lib = dep_path.join("lib/pkgconfig");
-            let pkgconfig_share = dep_path.join("share/pkgconfig");
-            let aclocal_share = dep_path.join("share/aclocal");
+             let pkgconfig_lib = dep_path.join("lib/pkgconfig");
+             let pkgconfig_share = dep_path.join("share/pkgconfig");
+             let aclocal_share = dep_path.join("share/aclocal");
 
              if pkgconfig_lib.is_dir() {
                  pkg_config_path_dirs.push(pkgconfig_lib.clone());
@@ -380,20 +409,20 @@ impl BuildEnvironment {
              }
         }
 
-        // Add paths from sapphire prefix itself
+        // Add paths from sapphire prefix itself (potentially redundant if already in build_dep_opt_paths, but safe)
         let prefix_pkgconfig_lib = sapphire_prefix.join("lib/pkgconfig");
         let prefix_pkgconfig_share = sapphire_prefix.join("share/pkgconfig");
         let prefix_aclocal_share = sapphire_prefix.join("share/aclocal");
 
-         if prefix_pkgconfig_lib.is_dir() {
+         if prefix_pkgconfig_lib.is_dir() && !pkg_config_path_dirs.contains(&prefix_pkgconfig_lib) {
              pkg_config_path_dirs.push(prefix_pkgconfig_lib.clone());
              pkg_config_libdir_dirs.push(prefix_pkgconfig_lib);
          }
-         if prefix_pkgconfig_share.is_dir() {
+         if prefix_pkgconfig_share.is_dir() && !pkg_config_path_dirs.contains(&prefix_pkgconfig_share) {
              pkg_config_path_dirs.push(prefix_pkgconfig_share.clone());
               pkg_config_libdir_dirs.push(prefix_pkgconfig_share);
          }
-          if prefix_aclocal_share.is_dir() {
+          if prefix_aclocal_share.is_dir() && !aclocal_path_dirs.contains(&prefix_aclocal_share) {
              aclocal_path_dirs.push(prefix_aclocal_share);
          }
 
@@ -401,7 +430,15 @@ impl BuildEnvironment {
         Self::set_path_list_var(&mut vars, "PKG_CONFIG_PATH", &pkg_config_path_dirs)?;
         Self::set_path_list_var(&mut vars, "PKG_CONFIG_LIBDIR", &pkg_config_libdir_dirs)?;
         Self::set_path_list_var(&mut vars, "ACLOCAL_PATH", &aclocal_path_dirs)?;
-        Self::set_path_list_var(&mut vars, "CMAKE_PREFIX_PATH", &cmake_prefix_path_dirs)?;
+        // Deduplicate cmake paths before setting
+         let mut unique_cmake_paths = Vec::new();
+         for path in cmake_prefix_path_dirs {
+             if !unique_cmake_paths.contains(&path) {
+                 unique_cmake_paths.push(path);
+             }
+         }
+        Self::set_path_list_var(&mut vars, "CMAKE_PREFIX_PATH", &unique_cmake_paths)?;
+
 
         // Homebrew also sets CMAKE_FRAMEWORK_PATH, CMAKE_INCLUDE_PATH, CMAKE_LIBRARY_PATH
         // based on these prefixes. Let's add them.
@@ -409,7 +446,8 @@ impl BuildEnvironment {
         let mut cmake_include_path_dirs = vec![sapphire_prefix.join("include")];
         let mut cmake_library_path_dirs = vec![sapphire_prefix.join("lib")];
 
-        for dep_path in &dep_paths {
+        // Use build_dep_opt_paths here too for consistency
+        for dep_path in build_dep_opt_paths {
             cmake_framework_path_dirs.push(dep_path.join("Frameworks"));
             cmake_include_path_dirs.push(dep_path.join("include"));
             cmake_library_path_dirs.push(dep_path.join("lib"));
@@ -431,7 +469,7 @@ impl BuildEnvironment {
 
         Ok(Self {
             vars,
-            path_dirs,
+            path_dirs, // Store the final ordered list
             sapphire_prefix: sapphire_prefix.to_path_buf(),
             formula_install_prefix,
             cc,
@@ -446,7 +484,7 @@ impl BuildEnvironment {
             "HOMEBREW_CC" | "HOMEBREW_CXX" | "HOMEBREW_CFLAGS" | "HOMEBREW_CXXFLAGS" |
             "HOMEBREW_CPPFLAGS" | "HOMEBREW_LDFLAGS" | "HOMEBREW_OPTFLAGS" |
             "HOMEBREW_TEMP" | "HOMEBREW_CACHE" | "HOMEBREW_LOGS" | "HOMEBREW_PREFIX" |
-            "HOMEBREW_CELLAR" | "HOMEBREW_REPOSITORY" | "HOMEBREW_LIBRARY" |
+            "HOMEBREW_CELLAR" | "HOMEBREW_REPOSITORY" | // HOMEBREW_LIBRARY (usually derived)
             "HOMEBREW_MAKE_JOBS" // Check if we want to keep user's pref here? Currently we override.
              => true,
             _ => false,
@@ -455,14 +493,25 @@ impl BuildEnvironment {
 
 
     /// Helper function to join a list of paths and set an environment variable.
-    /// Filters out non-existent directories.
+    /// Filters out non-existent directories. Uses ":" as separator.
     fn set_path_list_var(vars: &mut HashMap<String, String>, name: &str, paths: &[PathBuf]) -> Result<()> {
-        let existing_paths: Vec<&Path> = paths.iter().filter(|p| p.is_dir()).map(|p| p.as_path()).collect();
+        let existing_paths: Vec<String> = paths.iter()
+            .filter(|p| p.is_dir()) // Only include existing directories
+            .filter_map(|p| p.to_str()) // Convert to &str, filtering None
+            .map(|s| s.to_string()) // Convert to String
+            .collect();
+
         if !existing_paths.is_empty() {
-            let joined_path = env::join_paths(existing_paths)
-                .map_err(|e| SapphireError::BuildEnvError(format!("Failed to join paths for {}: {}", name, e)))?
-                .into_string()
-                .map_err(|os_str| SapphireError::BuildEnvError(format!("{} path contains non-UTF8 characters: {:?}", name, os_str)))?;
+            // Deduplicate while preserving order
+            let mut unique_paths = Vec::new();
+            let mut seen = HashSet::new();
+            for path in existing_paths {
+                 if seen.insert(path.clone()) {
+                     unique_paths.push(path);
+                 }
+            }
+
+            let joined_path = unique_paths.join(":"); // Use ":" as separator
 
              if !joined_path.is_empty() {
                  println!("Setting {}={}", name, joined_path);
@@ -471,7 +520,7 @@ impl BuildEnvironment {
                   println!("No valid directories found for {}, not setting variable.", name);
              }
         } else {
-             println!("No directories provided for {}, not setting variable.", name);
+             println!("No existing directories provided for {}, not setting variable.", name);
         }
         Ok(())
     }
@@ -484,7 +533,14 @@ impl BuildEnvironment {
     pub fn apply_to_command(&self, command: &mut Command) {
         command.env_clear(); // Start clean before applying our vars
         command.envs(&self.vars);
-        println!("Applied sanitized environment to command: {:?}", command);
+        // Avoid printing the full command with env vars here as it can be very verbose.
+        // Log the command name and args separately if needed before execution.
+        // println!("Applied sanitized environment to command: {:?}", command);
+        println!("Applying sanitized environment to command: {:?}", command.get_program());
+        println!("  Arguments: {:?}", command.get_args().collect::<Vec<_>>());
+        // Example of logging a few key env vars:
+        // println!("  Env PATH: {}", self.get_var("PATH").unwrap_or("N/A"));
+        // println!("  Env CFLAGS: {}", self.get_var("CFLAGS").unwrap_or("N/A"));
     }
 
     /// Gets the configured PATH string.
@@ -493,11 +549,13 @@ impl BuildEnvironment {
     }
 
     /// Gets the configured target installation prefix for the formula.
+    #[allow(dead_code)] // Keep for potential future use
     pub fn get_formula_install_prefix(&self) -> &Path {
         &self.formula_install_prefix
     }
 
     /// Gets a specific variable from the sanitized environment.
+    #[allow(dead_code)] // Keep for potential future use
     pub fn get_var(&self, key: &str) -> Option<&str> {
         self.vars.get(key).map(|s| s.as_str())
     }
@@ -512,6 +570,7 @@ impl BuildEnvironment {
 // --- Ensure Dependencies are in sapphire-core's Cargo.toml ---
 // [dependencies]
 // num_cpus = "1.16" # Or latest
-// which = "4.4" # Or latest
+// which = "4.4" # Or latest -> Make sure it's at least 4.0 for which_in
+// tempfile = "3.8" # Or latest for temp dir management
 // log = "0.4" # If using log crate
 // thiserror = "1.0" # If using thiserror for SapphireError
