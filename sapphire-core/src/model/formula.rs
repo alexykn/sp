@@ -3,11 +3,13 @@
 // Formulas are typically recipes for building software from source.
 
 use crate::dependency::{Dependency, Requirement, DependencyTag};
-use crate::model::version::Version;
 use crate::utils::error::{Result, SapphireError};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
+use serde::de;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use semver::Version;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BottleFileSpec {
@@ -27,9 +29,10 @@ pub struct BottleStableSpec {
     pub files: HashMap<String, BottleFileSpec>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Formula {
     pub name: String,
+    #[serde(rename = "versions", deserialize_with = "deserialize_version")]
     pub version: Version,
     #[serde(default)]
     pub revision: u32,
@@ -52,7 +55,7 @@ pub struct Formula {
     pub bottle: BottleSpec,
 
     /// Parsed dependencies from the formula definition.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_dependencies")]
     pub dependencies: Vec<Dependency>,
 
     /// Parsed requirements from the formula definition.
@@ -62,6 +65,83 @@ pub struct Formula {
     /// Installation path - determined *after* installation, not part of definition
     #[serde(skip)]
     install_keg_path: Option<PathBuf>,
+}
+
+impl<'de> Deserialize<'de> for Formula {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        let v = serde_json::Value::deserialize(deserializer)?;
+        if let serde_json::Value::Object(ref map) = v {
+            if map.contains_key("urls") {
+                let name = map.get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| de::Error::missing_field("name"))?
+                    .to_string();
+                let versions = map.get("versions")
+                    .ok_or_else(|| de::Error::missing_field("versions"))?;
+                let stable = versions.get("stable")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| de::Error::missing_field("versions.stable"))?;
+                // Append ".0" if the stable version has less than three components
+                let fixed = if stable.split('.').count() < 3 {
+                    format!("{}.0", stable)
+                } else {
+                    stable.to_string()
+                };
+                let version = Version::parse(&fixed).map_err(de::Error::custom)?;
+                let revision = map.get("revision")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let desc = map.get("desc")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let homepage = map.get("homepage")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                let urls = map.get("urls")
+                    .ok_or_else(|| de::Error::missing_field("urls"))?;
+                let stable_url = urls.get("stable")
+                    .ok_or_else(|| de::Error::missing_field("urls.stable"))?;
+                let url = stable_url.get("url")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| de::Error::missing_field("urls.stable.url"))?
+                    .to_string();
+                let sha256 = stable_url.get("checksum")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| de::Error::missing_field("urls.stable.checksum"))?
+                    .to_string();
+
+                // Use our custom dependency deserializer via IntoDeserializer
+                let dependencies = if let Some(deps_value) = map.get("dependencies") {
+                    use serde::de::IntoDeserializer;
+                    deserialize_dependencies(deps_value.clone().into_deserializer())
+                        .map_err(de::Error::custom)?
+                } else {
+                    Vec::new()
+                };
+
+                return Ok(Formula {
+                    name,
+                    version,
+                    revision,
+                    desc,
+                    homepage,
+                    url,
+                    sha256,
+                    mirrors: Vec::new(),
+                    bottle: BottleSpec::default(),
+                    dependencies,
+                    requirements: Vec::new(),
+                    install_keg_path: None,
+                });
+            }
+        }
+        // Fallback: use the existing layout
+        serde_json::from_value(v).map_err(de::Error::custom)
+    }
 }
 
 impl Formula {
@@ -264,5 +344,66 @@ pub struct BottleFile {
 // - Searching for formulas
 // - Getting formula info
 // - Resolving dependencies
+
+/// Custom deserializer for dependencies that handles both Vec<String> and Vec<Dependency>
+fn deserialize_dependencies<'de, D>(deserializer: D) -> std::result::Result<Vec<Dependency>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct DependenciesVisitor;
+
+    impl<'de> Visitor<'de> for DependenciesVisitor {
+        type Value = Vec<Dependency>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a list of dependencies as strings or objects")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut deps = Vec::new();
+            while let Some(value) = seq.next_element::<serde_json::Value>()? {
+                if let Some(s) = value.as_str() {
+                    deps.push(Dependency::new_runtime(s));
+                } else if value.is_object() {
+                    let dep: Dependency = serde_json::from_value(value)
+                        .map_err(de::Error::custom)?;
+                    deps.push(dep);
+                } else {
+                    return Err(de::Error::custom("Invalid dependency entry"));
+                }
+            }
+            Ok(deps)
+        }
+    }
+
+    deserializer.deserialize_seq(DependenciesVisitor)
+}
+
+// Custom deserializer to extract the stable version from the "versions" map
+pub fn deserialize_version<'de, D>(deserializer: D) -> std::result::Result<Version, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v: Value = Deserialize::deserialize(deserializer)?;
+    if let Value::Object(map) = v {
+        if let Some(Value::String(stable)) = map.get("stable") {
+            // Append ".0" if needed (e.g. "6.5" becomes "6.5.0")
+            let fixed = if stable.split('.').count() < 3 {
+                format!("{}.0", stable)
+            } else {
+                stable.to_string()
+            };
+            return Version::parse(&fixed).map_err(de::Error::custom);
+        }
+        return Err(de::Error::missing_field("stable"));
+    }
+    Err(de::Error::custom("expected versions as map"))
+}
 
 // Placeholder function removed as fetching/processing logic belongs elsewhere.

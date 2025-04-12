@@ -26,8 +26,10 @@ pub async fn fetch_raw_json(endpoint: &str) -> Result<String> {
         })?;
 
     if !response.status().is_success() {
-        log::error!("HTTP request returned non-success status: {}", response.status());
-        return Err(SapphireError::Api(format!("HTTP status: {}", response.status())));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|e| format!("(Failed to read response body: {})", e));
+        log::error!("HTTP request returned non-success status: {}. Body: {}", status, body);
+        return Err(SapphireError::Api(format!("HTTP status: {}. Response body: {}", status, body)));
     }
 
     let body = response.text().await.map_err(|e| {
@@ -35,6 +37,11 @@ pub async fn fetch_raw_json(endpoint: &str) -> Result<String> {
         SapphireError::Http(e)
     })?;
 
+    if body.trim().is_empty() {
+        log::error!("Response body for {}: [empty body]", endpoint);
+    } else {
+        log::info!("Response body for {}: {}", endpoint, body);
+    }
     Ok(body)
 }
 
@@ -55,7 +62,13 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
 
     if let Ok(body) = direct_fetch_result {
         // Successfully fetched directly
-        let formula: serde_json::Value = serde_json::from_str(&body)?;
+        let formula: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+            SapphireError::Api(format!(
+                "Failed to decode formula JSON: {}. Response body: {}",
+                e,
+                body
+            ))
+        })?;
         return Ok(formula);
     } else {
         // Direct fetch failed, fetch all formulas and find the matching one
@@ -81,7 +94,13 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
 
     if let Ok(body) = direct_fetch_result {
         // Successfully fetched directly
-        let cask: serde_json::Value = serde_json::from_str(&body)?;
+        let cask: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+            SapphireError::Api(format!(
+                "Failed to decode cask JSON: {}. Response body: {}",
+                e,
+                body
+            ))
+        })?;
         return Ok(cask);
     } else {
         // Direct fetch failed, fetch all casks and find the matching one
@@ -103,7 +122,26 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
 /// Get data for a specific formula
 pub async fn get_formula(name: &str) -> Result<Formula> {
     let url = format!("{}/formula/{}.json", API_BASE_URL, name);
-    fetch_and_parse_json(&url).await
+
+    // Try to parse as a single Formula first
+    match fetch_and_parse_json::<Formula>(&url).await {
+        Ok(formula) => Ok(formula),
+        Err(e1) => {
+            // If that fails, try to parse as an array of Formulas and take the first
+            match fetch_and_parse_json::<Vec<Formula>>(&url).await {
+                Ok(mut formulas) if !formulas.is_empty() => Ok(formulas.remove(0)),
+                Ok(_) => Err(SapphireError::NotFound(format!(
+                    "Formula '{}' not found (empty array returned by API)", name
+                ))),
+                Err(e2) => {
+                    Err(SapphireError::Generic(format!(
+                        "Failed to parse formula '{}': as object: {}; as array: {}",
+                        name, e1, e2
+                    )))
+                }
+            }
+        }
+    }
 }
 
 /// Get data for all formulas
@@ -164,15 +202,38 @@ async fn fetch_and_parse_json<T: serde::de::DeserializeOwned>(url: &str) -> Resu
         .await
         .map_err(|e| SapphireError::Http(e))?;
 
-    if !response.status().is_success() {
+    let status = response.status();
+    let text = response.text().await.unwrap_or_else(|e| format!("(Failed to read response body: {})", e));
+
+    if !status.is_success() {
+        if text.trim().is_empty() {
+            log::error!("HTTP request to {} failed: status {}. Response body: [empty body]", url, status);
+        } else {
+            log::error!("HTTP request to {} failed: status {}. Response body: {}", url, status, text);
+        }
         return Err(SapphireError::Generic(format!(
-            "Failed to fetch data: HTTP status {}", response.status()
+            "Failed to fetch data: HTTP status {}. Response body: {}",
+            status,
+            if text.trim().is_empty() { "[empty body]".to_string() } else { text.clone() }
         )));
     }
 
-    let parsed = response.json::<T>()
-        .await
-        .map_err(|e| SapphireError::Http(e))?;
+    if text.trim().is_empty() {
+        log::error!("HTTP request to {} succeeded but response body is empty", url);
+        return Err(SapphireError::Generic(format!(
+            "HTTP request succeeded but response body is empty"
+        )));
+    }
 
-    Ok(parsed)
+    match serde_json::from_str::<T>(&text) {
+        Ok(parsed) => Ok(parsed),
+        Err(e) => {
+            log::error!("Failed to decode JSON from {}: {}. Body: {}", url, e, if text.trim().is_empty() { "[empty body]" } else { &text });
+            Err(SapphireError::Generic(format!(
+                "Failed to decode JSON: {}. Response body: {}",
+                e,
+                if text.trim().is_empty() { "[empty body]".to_string() } else { text }
+            )))
+        }
+    }
 }
