@@ -58,7 +58,7 @@ pub struct DependencyResolver<'a> {
     formula_cache: HashMap<String, Arc<Formula>>,
     visiting: HashSet<String>,
     // Make resolved accessible within the crate (for install.rs)
-    pub(crate) resolved: HashMap<String, ResolvedDependency>, // Tracks the final state of each node
+    pub resolved: HashMap<String, ResolvedDependency>, // Tracks the final state of each node
 }
 
 impl<'a> DependencyResolver<'a> {

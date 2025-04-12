@@ -295,7 +295,7 @@ fn check_and_update_opt_path(
 
  /// Pre-populate installed_opt_paths and install_status with globally installed kegs
  fn add_globally_installed_paths(
-     resolver: &DependencyResolver, // Use pub(crate) resolver.resolved directly
+     _resolver: &DependencyResolver, // Use pub(crate) resolver.resolved directly
      keg_registry: &KegRegistry,
      installed_opt_paths: &mut HashMap<String, PathBuf>,
      install_status: &mut HashMap<String, ResolutionStatus>
