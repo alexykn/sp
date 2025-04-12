@@ -5,7 +5,6 @@ use sapphire_core::utils::error::{SapphireError, Result};
 use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::config::Config;
 use sapphire_core::build;
-use sapphire_core::dependency::{Dependency, DependencyExt, DependencyTag};
 use std::collections::HashSet;
 use futures::future::BoxFuture;
 use sapphire_core::fetch::api;
