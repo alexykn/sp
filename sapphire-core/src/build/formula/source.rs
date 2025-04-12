@@ -437,6 +437,23 @@ fn detect_and_build(
         return simple_make(build_dir, install_dir, env_map);
     }
 
+    // 9. Check for dist/configure (non-standard setup)
+    let dist_configure = build_dir.join("dist/configure");
+    if dist_configure.exists() {
+        println!("==> Running dist/configure");
+
+        // Ensure the script is executable
+        if let Err(e) = Command::new("chmod")
+            .arg("+x")
+            .arg(dist_configure.to_str().unwrap())
+            .status()
+        {
+            eprintln!("Warning: Failed to set executable permission on dist/configure: {}", e);
+        }
+
+        return configure_and_make(&dist_configure.parent().unwrap(), install_dir, env_map);
+    }
+
     // If we get here, we couldn't determine the build system
     Err(BrewRsError::Generic(format!(
         "Could not determine build system for {}",
@@ -670,8 +687,8 @@ fn cargo_build(
     let target_release_dir = build_dir.join("target/release");
     let install_bin_dir = install_dir.join("bin");
     fs::create_dir_all(&install_bin_dir)?;
-
-    for entry in fs::read_dir(target_release_dir)? {
+    
+    for entry in fs::read_dir(target_release_dir.clone())? {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() && is_executable(&path)? {
@@ -680,7 +697,26 @@ fn cargo_build(
             println!("  -> Copying {} to {}", path.display(), dest_path.display());
             fs::copy(&path, &dest_path)?;
         }
-        // TODO: Handle libraries (.dylib, .so), static libs (.a), etc.
+    }
+
+    // Handle libraries (.dylib, .so, .a)
+    let install_lib_dir = install_dir.join("lib");
+    fs::create_dir_all(&install_lib_dir)?;
+
+    for entry in fs::read_dir(&target_release_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if ext == "dylib" || ext == "so" || ext == "a" {
+                    let filename = path.file_name().unwrap();
+                    let dest_path = install_lib_dir.join(filename);
+                    println!("  -> Copying library {} to {}", path.display(), dest_path.display());
+                    fs::copy(&path, &dest_path)?;
+                }
+            }
+        }
     }
 
     Ok(())

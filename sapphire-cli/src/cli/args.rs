@@ -47,7 +47,4 @@ pub enum Commands {
     /// Uninstall a formula or cask (placeholder)
     Uninstall { name: String },
 
-    /// Upgrade outdated formulas or casks (placeholder)
-    Upgrade,
-    // Add other commands like list, outdated, etc.
 }

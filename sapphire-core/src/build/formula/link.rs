@@ -71,6 +71,62 @@ pub fn link_formula_binaries(formula: &Formula, formula_dir: &Path) -> Result<()
     Ok(())
 }
 
+/// Link all artifacts (binaries, libraries, headers, etc.) from a formula's installation directory
+pub fn link_formula_artifacts(formula: &Formula, formula_dir: &Path) -> Result<()> {
+    println!("==> Linking artifacts for {}", formula.name);
+
+    let mut symlinks: Vec<String> = Vec::new();
+
+    // Define standard directories to link
+    let artifact_dirs = ["bin", "lib", "include", "share/man"];
+    let prefix_dir = if std::env::consts::ARCH == "aarch64" {
+        PathBuf::from("/opt/homebrew")
+    } else {
+        PathBuf::from("/usr/local")
+    };
+
+    for dir in &artifact_dirs {
+        let formula_subdir = formula_dir.join(dir);
+        let target_subdir = prefix_dir.join(dir);
+
+        if formula_subdir.exists() {
+            fs::create_dir_all(&target_subdir)?;
+
+            for entry in fs::read_dir(&formula_subdir)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                if path.is_file() {
+                    let file_name = path.file_name().unwrap();
+                    let target_link = target_subdir.join(file_name);
+
+                    // Remove existing link if it exists
+                    if target_link.exists() {
+                        fs::remove_file(&target_link)?;
+                    }
+
+                    // Create symlink
+                    unix_fs::symlink(&path, &target_link)?;
+                    println!("  Linked {} -> {}", target_link.display(), path.display());
+                    symlinks.push(target_link.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    // Write symlinks manifest
+    if !symlinks.is_empty() {
+        let manifest_path = formula_dir.join("INSTALL_MANIFEST.json");
+        let manifest_json = serde_json::to_string_pretty(&symlinks)
+            .map_err(|e| BrewRsError::Generic(e.to_string()))?;
+        fs::write(&manifest_path, manifest_json)?;
+        println!("Wrote install manifest: {}", manifest_path.display());
+    }
+
+    println!("Successfully linked artifacts for {}", formula.name);
+    Ok(())
+}
+
 /// Unlink binaries for a formula
 pub fn unlink_formula_binaries(formula: &Formula) -> Result<()> {
     println!("==> Unlinking binaries for {}", formula.name);

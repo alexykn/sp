@@ -50,9 +50,9 @@ async fn main() -> Result<()> {
         Commands::Info { name, cask } => {
             cmd::info::run_info(&name, cask).await
         }
-        Commands::Upgrade => {
-            cmd::upgrade::run_upgrade().await
-        }
+        //Commands::Upgrade => {
+        //    cmd::upgrade::run_upgrade().await
+        //}
     };
 
     // Handle potential errors from command execution

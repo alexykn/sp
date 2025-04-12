@@ -128,6 +128,13 @@ pub struct Formula {
 
     #[serde(default)]
     pub variations: HashMap<String, serde_json::Value>,
+    /// Whether this formula requires C++11 (Homebrew DSL: `needs :cxx11`)
+    #[serde(default)]
+    pub requires_cpp11: Option<bool>,
+
+    /// The C++ standard library to use, e.g. "libc++" or "libstdc++"
+    #[serde(default)]
+    pub stdlib: Option<String>,
 }
 
 // Represents the versions object in the JSON

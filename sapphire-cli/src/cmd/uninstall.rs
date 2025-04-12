@@ -111,7 +111,17 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                                         // Try removing directory (e.g., the .app bundle)
                                         if let Err(e) = std::fs::remove_dir_all(file_path) {
                                             eprintln!("Warning: Failed to remove directory {}: {}", file_path.display(), e);
-                                            // TODO: Add sudo fallback if needed?
+                                            println!("Attempting to remove directory with sudo...");
+                                            let output = std::process::Command::new("sudo")
+                                                .arg("rm")
+                                                .arg("-rf")
+                                                .arg(file_path)
+                                                .output();
+                                            if let Err(sudo_err) = output {
+                                                eprintln!("Error: Failed to remove directory {} with sudo: {}", file_path.display(), sudo_err);
+                                            } else {
+                                                println!("Successfully removed directory {} with sudo.", file_path.display());
+                                            }
                                         } else {
                                             println!("Removed directory: {}", file_path.display());
                                         }

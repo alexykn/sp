@@ -6,5 +6,4 @@ pub mod install;
 pub mod search;
 pub mod uninstall;
 pub mod update;
-pub mod upgrade;
 // Add other command modules here

@@ -116,7 +116,15 @@ pub async fn get_all_formulas() -> Result<Vec<Formula>> {
 /// Get data for a specific cask
 pub async fn get_cask(name: &str) -> Result<Cask> {
     let url = format!("{}/cask/{}.json", API_BASE_URL, name);
-    fetch_and_parse_json(&url).await
+    let response = fetch_raw_json(&url).await?;
+
+    // Parse the response as a single Cask object
+    let cask: Cask = serde_json::from_str(&response).map_err(|e| {
+        log::error!("Failed to parse cask JSON: {}", e);
+        BrewRsError::ParseError("Cask", e.to_string())
+    })?;
+
+    Ok(cask)
 }
 
 /// Get data for all casks

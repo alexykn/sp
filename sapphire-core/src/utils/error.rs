@@ -35,6 +35,9 @@ pub enum BrewRsError {
 
     #[error("Generic Error: {0}")]
     Generic(String),
+
+    #[error("Parsing Error in {0}: {1}")]
+    ParseError(&'static str, String),
 }
 
 // Define a convenience Result type alias using our custom error

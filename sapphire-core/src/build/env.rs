@@ -79,9 +79,24 @@ pub fn setup_build_environment(
     // --- Determine HOMEBREW_CCCFG (Controls shim behavior) ---
     // Start with "O" for argument refurbishing (standard superenv behavior)
     // Add other flags as needed based on formula requirements or future logic (e.g., "x" for C++11)
-    let cccfg = "O".to_string(); // Basic refurbishing
-    // TODO: Add logic for C++11 ("x"), stdlib ("g"/"h"), etc.
-    env_map.insert("HOMEBREW_CCCFG".to_string(), cccfg);
+    // Add logic for C++11 and stdlib flags
+    let mut cccfg = "O".to_string(); // Basic refurbishing
+
+    // Check if the formula requires C++11
+    if formula.requires_cpp11.unwrap_or(false) {
+        cccfg.push('x');
+    }
+
+    // Check if the formula specifies a standard library
+    if let Some(stdlib) = formula.stdlib.as_deref() {
+        match stdlib {
+            "libstdc++" => cccfg.push('g'),
+            "libc++" => cccfg.push('h'),
+            _ => (),
+        }
+    }
+
+    env_map.insert("HOMEBREW_CCCFG".to_string(), cccfg.clone());
 
     // --- Calculate Homebrew Path Variables (for shims) ---
     let (homebrew_include_paths, homebrew_isystem_paths) = calculate_homebrew_include_paths(resolved_dependencies, &homebrew_prefix, &sdk_path_str);
@@ -115,8 +130,13 @@ pub fn setup_build_environment(
 
     // Combine base opt/arch flags with include flags
     let cflags = format!("{} {}", opt_flags, cppflags).trim().to_string();
-    let cxxflags = cflags.clone(); // Start CXXFLAGS with CFLAGS
-    // TODO: Add C++ specific flags if needed (e.g., -stdlib=libc++ based on CCCFG?)
+    let mut cxxflags = cflags.clone(); // Start CXXFLAGS with CFLAGS
+    // Add C++ specific flags based on CCCFG
+    if cccfg.contains('h') {
+        cxxflags.push_str(" -stdlib=libc++");
+    } else if cccfg.contains('g') {
+        cxxflags.push_str(" -stdlib=libstdc++");
+    }
 
     env_map.insert("CPPFLAGS".to_string(), cppflags.trim().to_string());
     env_map.insert("CFLAGS".to_string(), cflags);
@@ -262,15 +282,15 @@ fn calculate_build_path(
     homebrew_prefix: &Path,
 ) -> Vec<PathBuf> {
     let mut path_entries = Vec::new();
+
+    // 1. Add Homebrew shim directory
+    let shim_path = homebrew_prefix.join("Library/Homebrew/shims/mac/super");
+    if shim_path.is_dir() {
+        path_entries.push(shim_path);
+    }
+
+    // 2. Essential Build Tool Paths from Homebrew opt directory
     let opt_path = homebrew_prefix.join("opt");
-
-    // *** IMPORTANT CHANGE: OMIT HOMEBREW SHIMS (THEY REQUIRE RUBY) ***
-    // Instead, we'll rely on standard system paths and set correct CC/CXX values
-    // The shim_path would be:
-    // let shim_path = homebrew_prefix.join("Library/Homebrew/shims/mac/super");
-
-    // 1. Essential Build Tool Paths from Homebrew opt directory
-    // Add paths for common build tools managed by Homebrew
     let build_tools = ["pkg-config", "autoconf", "automake", "libtool", "m4", "gm4"];
     for tool in build_tools.iter() {
         let tool_opt_bin_path = opt_path.join(tool).join("bin");
@@ -279,7 +299,7 @@ fn calculate_build_path(
         }
     }
 
-    // 2. Dependency bin directories
+    // 3. Dependency bin directories
     for dep in dependencies {
         let dep_bin = dep.prefix.join("bin");
         if dep_bin.is_dir() {
@@ -291,7 +311,7 @@ fn calculate_build_path(
         }
     }
 
-    // 3. Homebrew bin/sbin
+    // 4. Homebrew bin/sbin
     let homebrew_bin = homebrew_prefix.join("bin");
     if homebrew_bin.is_dir() {
         path_entries.push(homebrew_bin);
@@ -301,21 +321,11 @@ fn calculate_build_path(
         path_entries.push(homebrew_sbin);
     }
 
-    // 4. Standard system paths (CRITICAL for finding system compilers)
+    // 5. Standard system paths (CRITICAL for finding system compilers)
     path_entries.push(PathBuf::from("/usr/bin"));
     path_entries.push(PathBuf::from("/bin"));
     path_entries.push(PathBuf::from("/usr/sbin"));
     path_entries.push(PathBuf::from("/sbin"));
-
-    // MacPorts paths if they exist (since the user has MacPorts tools)
-    let macports_bin = PathBuf::from("/opt/local/bin");
-    if macports_bin.exists() {
-        path_entries.push(macports_bin);
-    }
-    let macports_sbin = PathBuf::from("/opt/local/sbin");
-    if macports_sbin.exists() {
-        path_entries.push(macports_sbin);
-    }
 
     path_entries
 }
@@ -450,12 +460,12 @@ fn calculate_homebrew_include_paths(
     }
 
     // 3. Keg-Only Dependency Includes (as -I)
-    // TODO: Need a way to identify keg-only dependencies
-    // For now, add all dependency includes here as -I
     for dep in dependencies {
-        let dep_include = dep.prefix.join("include");
-        if dep_include.is_dir() {
-            include_paths.push(dep_include);
+        if is_keg_only(&dep.formula) {
+            let dep_include = dep.prefix.join("include");
+            if dep_include.is_dir() {
+                include_paths.push(dep_include);
+            }
         }
     }
 
@@ -512,4 +522,9 @@ fn calculate_homebrew_library_paths(
     lib_paths
 }
 
-// TODO: Add helper functions to calculate dependency paths, compiler flags etc.
+/// Determines if a dependency is keg-only based on its formula metadata.
+fn is_keg_only(formula: &Formula) -> bool {
+    formula.keg_only // Access the bool field directly
+}
+
+
