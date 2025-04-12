@@ -125,6 +125,8 @@ fn find_all_apps_in_directory(dir: &Path) -> Result<Vec<PathBuf>> {
 
 /// Actually install an app bundle to /Applications and create symlink in caskroom
 fn install_app(app_path: &Path, _cask: &Cask, caskroom_path: &Path) -> Result<()> {
+    use serde_json;
+
     // Get the application name
     let app_name = app_path.file_name()
         .ok_or_else(|| BrewRsError::Generic("Invalid app path".to_string()))?
@@ -189,6 +191,17 @@ fn install_app(app_path: &Path, _cask: &Cask, caskroom_path: &Path) -> Result<()
         .arg("755")
         .arg(&destination)
         .output()?;
+
+    // Write install manifest for uninstall
+    let manifest = vec![
+        destination.to_string_lossy().to_string(),
+        caskroom_app_path.to_string_lossy().to_string(),
+    ];
+    let manifest_path = caskroom_path.join("INSTALL_MANIFEST.json");
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| BrewRsError::Generic(format!("Failed to serialize manifest: {}", e)))?;
+    fs::write(&manifest_path, manifest_json)?;
+    println!("Wrote cask install manifest: {}", manifest_path.display());
 
     println!("==> Successfully installed {}", app_name);
 

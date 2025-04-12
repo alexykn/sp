@@ -49,6 +49,14 @@ pub struct Cask {
 
     /// Installation stage
     pub stage_only: Option<bool>,
+
+    /// Uninstall stanzas (e.g., pkgutil, script)
+    #[serde(default)] // Use default if missing
+    pub uninstall: Option<HashMap<String, serde_json::Value>>,
+
+    /// Zap stanzas for thorough uninstall
+    #[serde(default)] // Use default if missing
+    pub zap: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Represents an artifact for a cask

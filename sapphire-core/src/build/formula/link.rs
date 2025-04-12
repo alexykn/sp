@@ -6,6 +6,8 @@ use crate::model::formula::Formula;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::os::unix::fs as unix_fs;
+use serde_json;
+use crate::utils::error::BrewRsError;
 
 /// Link binaries from a formula's installation directory to the bin directory
 pub fn link_formula_binaries(formula: &Formula, formula_dir: &Path) -> Result<()> {
@@ -28,6 +30,7 @@ pub fn link_formula_binaries(formula: &Formula, formula_dir: &Path) -> Result<()
     // Find all executables in the formula bin directory
     let entries = fs::read_dir(formula_bin_dir)?;
     let mut linked_count = 0;
+    let mut symlinks: Vec<String> = Vec::new();
 
     for entry in entries {
         let entry = entry?;
@@ -46,7 +49,17 @@ pub fn link_formula_binaries(formula: &Formula, formula_dir: &Path) -> Result<()
             unix_fs::symlink(&path, &target_link)?;
             println!("  Linked {} -> {}", target_link.display(), path.display());
             linked_count += 1;
+            symlinks.push(target_link.to_string_lossy().to_string());
         }
+    }
+
+    // Write symlinks manifest
+    if !symlinks.is_empty() {
+        let manifest_path = formula_dir.join("INSTALL_MANIFEST.json");
+        let manifest_json = serde_json::to_string_pretty(&symlinks)
+            .map_err(|e| BrewRsError::Generic(e.to_string()))?;
+        fs::write(&manifest_path, manifest_json)?;
+        println!("Wrote install manifest: {}", manifest_path.display());
     }
 
     if linked_count > 0 {
@@ -110,7 +123,7 @@ pub fn unlink_formula_binaries(formula: &Formula) -> Result<()> {
 }
 
 /// Get the standard Homebrew bin directory
-fn get_bin_directory() -> PathBuf {
+pub(crate) fn get_bin_directory() -> PathBuf {
     if std::env::consts::ARCH == "aarch64" {
         PathBuf::from("/opt/homebrew/bin")
     } else {

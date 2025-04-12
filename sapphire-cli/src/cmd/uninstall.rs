@@ -7,43 +7,159 @@ use sapphire_core::build;
 use std::fs;
 use std::path::PathBuf;
 use walkdir;
+use serde_json;
+
+use sapphire_core::model::cask::Cask; // Add Cask import
+use sapphire_core::utils::cache::Cache; // Add Cache import
+use sapphire_core::fetch::api; // Add api import
 
 pub async fn run_uninstall(name: &str) -> Result<()> {
-    println!("==> Uninstalling formula: {}", name);
+    let cache_dir = sapphire_core::utils::cache::get_cache_dir()?;
+    let _cache = Cache::new(&cache_dir)?; // renamed to _cache since it's not used below
 
-    // Get formula information
-    let formula = match info::get_formula_info(name).await {
-        Ok(formula) => formula,
-        Err(_) => {
-            // If not found as a formula, notify the user
-            return Err(BrewRsError::NotFound(format!("Formula '{}' not found", name)));
+    // Try to get info as a formula first
+    if let Ok(formula) = info::get_formula_info(name).await {
+        println!("==> Uninstalling formula: {}", name);
+        let cellar_path = build::formula::get_formula_cellar_path(&formula);
+
+        if !cellar_path.exists() {
+            return Err(BrewRsError::NotFound(format!("Formula '{}' is not installed (no keg at {})", name, cellar_path.display())));
         }
-    };
 
-    // Check if the formula is installed
-    let cellar_path = build::formula::get_formula_cellar_path(&formula);
+        // Count files before removal
+        let (file_count, size_bytes) = count_files_and_size(&cellar_path)?;
 
-    if !cellar_path.exists() {
-        return Err(BrewRsError::NotFound(format!("No such keg: {}", cellar_path.display())));
+        // Remove symlinks listed in INSTALL_MANIFEST.json
+        let manifest_path = cellar_path.join("INSTALL_MANIFEST.json");
+        if manifest_path.exists() {
+            match std::fs::read_to_string(&manifest_path) {
+                Ok(manifest_str) => {
+                    match serde_json::from_str::<Vec<String>>(&manifest_str) {
+                        Ok(symlinks) => {
+                            for symlink in symlinks {
+                                let symlink_path = std::path::Path::new(&symlink);
+                                if symlink_path.exists() {
+                                    if let Err(e) = std::fs::remove_file(symlink_path) {
+                                        eprintln!("Warning: Failed to remove symlink {}: {}", symlink_path.display(), e);
+                                    } else {
+                                        println!("Removed symlink: {}", symlink_path.display());
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("Warning: Failed to parse formula install manifest: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Warning: Failed to read formula install manifest: {}", e),
+            }
+        } else {
+            // Fallback: Try the old unlink logic if manifest doesn't exist
+            println!("Warning: No install manifest found, attempting legacy unlink...");
+            build::formula::link::unlink_formula_binaries(&formula)?;
+        }
+
+        // Remove the formula's directory from the Cellar
+        fs::remove_dir_all(&cellar_path)?;
+
+        println!("Uninstalling {}... ({} files, {})",
+            cellar_path.display(),
+            file_count,
+            format_size(size_bytes));
+
+        return Ok(());
     }
 
-    // First unlink binaries
-    build::formula::link::unlink_formula_binaries(&formula)?;
+    // If not a formula, try as a cask
+    if let Ok(cask_json) = api::fetch_cask(name).await {
+        let cask: Cask = serde_json::from_value(cask_json)?;
+        println!("==> Uninstalling cask: {}", name);
+        let caskroom_path = build::cask::get_cask_path(&cask);
 
-    // Count number of files and calculate size before removal
-    let (file_count, size_bytes) = count_files_and_size(&cellar_path)?;
+        if !caskroom_path.exists() {
+            return Err(BrewRsError::NotFound(format!("Cask '{}' is not installed (no caskroom at {})", name, caskroom_path.display())));
+        }
 
-    // Remove the formula's directory from the Cellar
-    fs::remove_dir_all(&cellar_path)?;
+        // Count files before removal (might be less accurate for casks)
+        let (file_count, size_bytes) = count_files_and_size(&caskroom_path)?;
 
-    // TODO: Remove symlinks from /usr/local/bin or /opt/homebrew/bin
+        // Remove files listed in INSTALL_MANIFEST.json
+        let manifest_path = caskroom_path.join("INSTALL_MANIFEST.json");
+        if manifest_path.exists() {
+            match std::fs::read_to_string(&manifest_path) {
+                Ok(manifest_str) => {
+                    match serde_json::from_str::<Vec<String>>(&manifest_str) {
+                        Ok(files_to_remove) => {
+                            for file_path_str in files_to_remove {
+                                // Check for pkgutil directive
+                                if let Some(pkg_id) = file_path_str.strip_prefix("pkgutil:") {
+                                    println!("==> Forgetting package receipt: {}", pkg_id);
+                                    let output = std::process::Command::new("sudo")
+                                        .arg("pkgutil")
+                                        .arg("--forget")
+                                        .arg(pkg_id)
+                                        .output()?;
+                                    if !output.status.success() {
+                                        eprintln!("Warning: Failed to forget package receipt {}: {}", pkg_id, String::from_utf8_lossy(&output.stderr));
+                                    }
+                                    continue; // Don't try to remove this as a file/dir
+                                }
 
-    println!("Uninstalling {}... ({} files, {})",
-        cellar_path.display(),
-        file_count,
-        format_size(size_bytes));
+                                // Handle regular file/directory removal
+                                let file_path = std::path::Path::new(&file_path_str);
+                                if file_path.exists() {
+                                    if file_path.is_dir() {
+                                        // Try removing directory (e.g., the .app bundle)
+                                        if let Err(e) = std::fs::remove_dir_all(file_path) {
+                                            eprintln!("Warning: Failed to remove directory {}: {}", file_path.display(), e);
+                                            // TODO: Add sudo fallback if needed?
+                                        } else {
+                                            println!("Removed directory: {}", file_path.display());
+                                        }
+                                    } else {
+                                        // Try removing file (e.g., the caskroom symlink)
+                                        if let Err(e) = std::fs::remove_file(file_path) {
+                                            eprintln!("Warning: Failed to remove file {}: {}", file_path.display(), e);
+                                        } else {
+                                            println!("Removed file: {}", file_path.display());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("Warning: Failed to parse cask install manifest: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Warning: Failed to read cask install manifest: {}", e),
+            }
+        } else {
+            println!("Warning: No install manifest found for cask {}. Cannot perform clean uninstall.", name);
+            // Optionally, add logic here to attempt removal based on cask stanzas if manifest is missing
+        }
 
-    Ok(())
+        // Remove the cask's directory from the Caskroom
+        // Only do this if the manifest was successfully processed or didn't exist
+        if manifest_path.exists() { // Re-check existence in case reading failed
+             if let Err(e) = fs::remove_dir_all(&caskroom_path) {
+                 eprintln!("Warning: Failed to remove caskroom directory {}: {}", caskroom_path.display(), e);
+             }
+        } else {
+             // If no manifest, still try to remove the caskroom
+             if let Err(e) = fs::remove_dir_all(&caskroom_path) {
+                 eprintln!("Warning: Failed to remove caskroom directory {}: {}", caskroom_path.display(), e);
+             }
+        }
+
+
+        println!("Uninstalling {}... (~{} files, ~{})",
+            caskroom_path.display(),
+            file_count,
+            format_size(size_bytes));
+
+        return Ok(());
+    }
+
+    // If not found as formula or cask
+    Err(BrewRsError::NotFound(format!("Formula or Cask '{}' not found or not installed", name)))
 }
 
 /// Count files and calculate total size in a directory

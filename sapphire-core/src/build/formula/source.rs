@@ -238,6 +238,7 @@ fn detect_and_build(
 
         let mut cmd = Command::new("./autogen.sh");
         cmd.current_dir(build_dir); // Explicitly set working directory
+        cmd.env_clear();
         for (key, value) in env_map {
             cmd.env(key, value);
         }
@@ -368,6 +369,7 @@ fn detect_and_build(
 
         println!("Using autoconf command: {:?}", autoconf_cmd);
         let mut cmd = Command::new(&autoconf_cmd);
+        cmd.env_clear();
         for (key, value) in &modified_env_map {
             cmd.env(key, value);
         }
@@ -460,6 +462,7 @@ fn configure_and_make(
 
     let mut cmd = Command::new("./configure");
     cmd.arg(format!("--prefix={}", install_dir.display()));
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -478,6 +481,7 @@ fn configure_and_make(
     // Run make
     println!("==> Running make");
     let mut cmd = Command::new("make");
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -497,6 +501,7 @@ fn configure_and_make(
     println!("==> Running make install");
     let mut cmd = Command::new("make");
     cmd.arg("install");
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -535,6 +540,7 @@ fn cmake_build(
             "-Wno-dev",
         ])
         .current_dir(&build_subdir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -553,6 +559,7 @@ fn cmake_build(
     let mut cmd = Command::new("make");
     cmd.arg("install")
         .current_dir(&build_subdir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -586,6 +593,7 @@ fn meson_build(
         .arg(&build_subdir)
         .arg(".")
         .current_dir(build_dir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -606,6 +614,7 @@ fn meson_build(
         .arg("-C")
         .arg(&build_subdir)
         .current_dir(build_dir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -640,6 +649,7 @@ fn cargo_build(
     cmd.arg("build")
         .arg("--release")
         .current_dir(build_dir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -693,6 +703,7 @@ fn python_build(
         .arg("install")
         .arg(format!("--prefix={}", install_dir.display()))
         .current_dir(build_dir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -721,6 +732,7 @@ fn simple_make(
     println!("==> Running make");
     let mut cmd = Command::new("make");
     cmd.current_dir(build_dir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }
@@ -740,6 +752,7 @@ fn simple_make(
     cmd.arg("install")
         .arg(format!("PREFIX={}", install_dir.display()))
         .current_dir(build_dir);
+    cmd.env_clear();
     for (key, value) in env_map {
         cmd.env(key, value);
     }

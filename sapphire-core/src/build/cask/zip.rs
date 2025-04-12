@@ -143,33 +143,51 @@ fn install_binary_files(cask: &Cask, binary_paths: &[PathBuf], caskroom_path: &P
         }
     }
 
-    // Create symlinks in /usr/local/bin if needed
-    let homebrew_bin = PathBuf::from("/usr/local/bin");
-    if homebrew_bin.exists() {
-        for binary_path in binary_paths {
-            let binary_name = binary_path.file_name()
-                .ok_or_else(|| BrewRsError::Generic("Invalid binary path".to_string()))?;
+    // Create symlinks in the correct Homebrew bin directory
+    let homebrew_bin = super::super::formula::link::get_bin_directory(); // Use helper from formula link
+    fs::create_dir_all(&homebrew_bin)?; // Ensure it exists
 
-            let source = bin_dir.join(binary_name);
-            let link_path = homebrew_bin.join(binary_name);
+    let mut created_symlinks: Vec<String> = Vec::new();
 
-            // Remove existing symlink if it exists
-            if link_path.exists() {
-                fs::remove_file(&link_path)?;
+    for binary_path in binary_paths {
+        let binary_name = binary_path.file_name()
+            .ok_or_else(|| BrewRsError::Generic("Invalid binary path".to_string()))?;
+
+        let source = bin_dir.join(binary_name); // Source is the copied binary in caskroom/bin
+        let link_path = homebrew_bin.join(binary_name); // Target is the link in Homebrew's bin
+
+        // Remove existing symlink if it exists
+        if link_path.exists() {
+            // Check if it's actually a symlink before removing
+            if link_path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+                 fs::remove_file(&link_path)?;
+            } else {
+                 eprintln!("Warning: Existing file at link location {} is not a symlink. Skipping removal.", link_path.display());
+                 continue; // Skip linking this binary to avoid overwriting non-symlink file
             }
-
-            // Create the symlink
-            println!("==> Linking binary '{}' to {}", binary_name.to_string_lossy(), homebrew_bin.display());
-            std::os::unix::fs::symlink(&source, &link_path)?;
         }
+
+        // Create the symlink
+        println!("==> Linking binary '{}' to {}", binary_name.to_string_lossy(), homebrew_bin.display());
+        if let Err(e) = std::os::unix::fs::symlink(&source, &link_path) {
+             eprintln!("Warning: Failed to create symlink {} -> {}: {}", link_path.display(), source.display(), e);
+             continue; // Skip adding to manifest if linking failed
+        }
+        created_symlinks.push(link_path.to_string_lossy().to_string());
     }
 
-    // Create receipt file with installation info
-    let artifacts = binary_paths.iter().map(|p| {
-        format!("binary:{}", p.file_name().unwrap().to_string_lossy())
-    }).collect();
 
-    super::write_receipt(cask, caskroom_path, artifacts)?;
+    // Create manifest file with installation info (including symlinks)
+    // Also include the path to the copied binaries in the caskroom bin dir
+    let mut artifacts_to_record = created_symlinks;
+    for binary_path in binary_paths {
+         let binary_name = binary_path.file_name().unwrap();
+         let caskroom_bin_path = bin_dir.join(binary_name);
+         artifacts_to_record.push(caskroom_bin_path.to_string_lossy().to_string());
+    }
+
+
+    super::write_receipt(cask, caskroom_path, artifacts_to_record)?;
 
     println!("==> Successfully installed binary files");
 

@@ -105,8 +105,24 @@ fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()>
         )));
     }
 
-    // Create receipt file with installation info
-    super::write_receipt(cask, caskroom_path, vec![format!("pkg:{}", pkg_name.to_string_lossy())])?;
+    // Prepare artifacts for the manifest
+    let mut artifacts_to_record = vec![
+        // Record the path to the copied pkg in the caskroom for removal
+        caskroom_pkg_path.to_string_lossy().to_string(),
+    ];
+
+    // Check for pkgutil ID in uninstall stanza
+    if let Some(uninstall_stanzas) = &cask.uninstall {
+        if let Some(pkgutil_id_value) = uninstall_stanzas.get("pkgutil") {
+            if let Some(pkgutil_id) = pkgutil_id_value.as_str() {
+                artifacts_to_record.push(format!("pkgutil:{}", pkgutil_id));
+                println!("Found pkgutil ID for manifest: {}", pkgutil_id);
+            }
+        }
+    }
+
+    // Create receipt file (manifest) with installation info
+    super::write_receipt(cask, caskroom_path, artifacts_to_record)?;
 
     println!("==> Successfully installed pkg");
 
