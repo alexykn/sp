@@ -1,7 +1,6 @@
 use crate::utils::config::Config;
 use semver::Version; // Changed from crate::model::version::Version
 use crate::utils::error::{Result, SapphireError};
-// Removed: use crate::build; // No longer needed here
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -98,6 +97,63 @@ impl KegRegistry {
 
         Ok(latest_keg)
     }
+
+    /// Lists all installed kegs.
+    /// Reads the cellar directory and parses all valid keg structures found.
+    // Ensure this method is public
+    pub fn list_installed_kegs(&self) -> Result<Vec<InstalledKeg>> {
+        let mut installed_kegs = Vec::new();
+        let cellar_dir = self.cellar_path();
+
+        if !cellar_dir.is_dir() {
+            return Ok(installed_kegs); // Cellar doesn't exist
+        }
+
+        // Iterate over formula name directories
+        for formula_entry_res in fs::read_dir(cellar_dir).map_err(SapphireError::Io)? {
+             let formula_entry = formula_entry_res.map_err(SapphireError::Io)?;
+             let formula_path = formula_entry.path();
+
+             if formula_path.is_dir() {
+                 if let Some(formula_name) = formula_path.file_name().and_then(|n| n.to_str()) {
+                     // Iterate over version directories within the formula dir
+                     for version_entry_res in fs::read_dir(&formula_path).map_err(SapphireError::Io)? {
+                          let version_entry = version_entry_res.map_err(SapphireError::Io)?;
+                          let version_path = version_entry.path();
+
+                          if version_path.is_dir() {
+                              if let Some(version_str_full) = version_path.file_name().and_then(|n| n.to_str()) {
+                                 // Parse version and revision
+                                 let mut parts = version_str_full.splitn(2, '_');
+                                 let version_part = parts.next().unwrap_or(version_str_full);
+                                 let revision = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                                 let version_str_padded = if version_part.split('.').count() < 3 {
+                                     let v_parts: Vec<&str> = version_part.split('.').collect();
+                                     match v_parts.len() {
+                                         1 => format!("{}.0.0", v_parts[0]),
+                                         2 => format!("{}.{}.0", v_parts[0], v_parts[1]),
+                                         _ => version_part.to_string(),
+                                     }
+                                 } else { version_part.to_string() };
+
+                                 if let Ok(version) = Version::parse(&version_str_padded) {
+                                     installed_kegs.push(InstalledKeg {
+                                         name: formula_name.to_string(),
+                                         version,
+                                         revision,
+                                         path: version_path.clone(),
+                                     });
+                                 }
+                             }
+                         }
+                     }
+                 }
+             }
+        }
+
+        Ok(installed_kegs)
+    }
+
 
     /// Returns the root path of the Cellar.
     pub fn cellar_path(&self) -> &Path {

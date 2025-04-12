@@ -6,11 +6,12 @@ use crate::build; // Import the build module itself for get_homebrew_prefix
 use crate::build::extract_archive_strip_components; // Import the specific function
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
-use std::io::copy;
+use std::io::copy; // Added Write trait
 use reqwest::Client;
 use std::io::Cursor;
 use std::process::Command;
-// Removed: use std::rc::Rc;
+use std::collections::HashMap; // For Go bootstrap env var
+use log::{debug, info, warn}; // Use logging
 
 
 /// Download source code for the formula
@@ -32,12 +33,10 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
         }
     };
 
-    println!("==> Downloading source for {}", formula.name);
+    info!("==> Downloading source for {}", formula.name);
 
     download_url(&url, config).await
 }
-
-// Removed get_formula_url function as logic is simple enough inline
 
 /// Download a specific URL to the cache
 async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
@@ -51,11 +50,11 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
 
     // Skip download if the file already exists and is valid (optional: add SHA check later)
     if source_path.exists() {
-        println!("Using cached source: {}", source_path.display());
+        info!("Using cached source: {}", source_path.display());
         return Ok(source_path);
     }
 
-    println!("Downloading {}", url);
+    info!("Downloading {}", url);
     // Download the source
     let client = Client::new();
     let response = client.get(url)
@@ -78,7 +77,7 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
     let mut content_cursor = Cursor::new(content);
     copy(&mut content_cursor, &mut file)?;
 
-    println!("Downloaded source to {}", source_path.display());
+    info!("Downloaded source to {}", source_path.display());
 
     Ok(source_path)
 }
@@ -88,10 +87,25 @@ pub fn build_from_source(
     source_path: &Path,
     formula: &Formula, // Keep as reference
     config: &Config,
-    build_dep_opt_paths: &[PathBuf], // Added parameter for build dep paths
+    all_installed_paths: &[PathBuf], // Changed parameter name
 ) -> Result<PathBuf> {
     // Get the installation directory
     let install_dir = super::get_formula_cellar_path(formula);
+
+    // --- Handle Single-File Formulas (e.g., ca-certificates) ---
+    let recognised_archive_extensions = ["tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zip"];
+    let source_extension = source_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+
+    if !recognised_archive_extensions.contains(&source_extension) {
+        info!("==> Installing single file formula: {}", formula.name);
+        fs::create_dir_all(&install_dir)?; // Ensure install dir exists
+        install_single_file(source_path, formula, &install_dir)?;
+        // Write receipt for single file installs too
+        super::write_receipt(formula, &install_dir)?;
+        return Ok(install_dir);
+    }
+
+    // --- Proceed with Archive Extraction and Build ---
 
     // Create a temporary directory for building
     let temp_dir_base = config.cache_dir.join("build-temp");
@@ -102,41 +116,39 @@ pub fn build_from_source(
         .map_err(|e| SapphireError::Io(e))?
         .into_path(); // Get PathBuf and keep the directory
 
-
-    println!("==> Extracting source to {}", temp_dir.display());
+    info!("==> Extracting source to {}", temp_dir.display());
 
     // Extract the source, stripping the top-level component
-    // Use the imported function directly
     extract_archive_strip_components(source_path, &temp_dir, 1)?;
-
 
     // The build directory is now the temp directory itself after stripping
     let build_dir = temp_dir; // Use the temp dir as the build dir
 
-
-    println!("==> Building {} from source in {}", formula.name, build_dir.display());
+    info!("==> Building {} from source in {}", formula.name, build_dir.display());
 
     // --- Setup Build Environment ---
-    println!("==> Setting up build environment");
+    info!("==> Setting up build environment");
     let sapphire_prefix = build::get_homebrew_prefix(); // Use helper from build mod
-    // Create BuildEnvironment, passing the build dependency paths
+    // Create BuildEnvironment, passing ALL known installed dependency paths
     let build_env = BuildEnvironment::new(
         formula,
         &sapphire_prefix,
         &config.cellar,
-        build_dep_opt_paths, // Pass the resolved build dep paths here
+        all_installed_paths, // Pass ALL paths here
     )?;
 
-
     // Detect and build using the appropriate build system
-    detect_and_build(&build_dir, &install_dir, &build_env)?;
+    // Pass the formula itself to detect_and_build for specific checks like Perl
+    detect_and_build(formula, &build_dir, &install_dir, &build_env, all_installed_paths)?; // Pass paths again for Go bootstrap check
 
     // Write the receipt
     super::write_receipt(formula, &install_dir)?;
 
     // Explicitly clean up the temp build directory (optional, but good practice)
-    if let Err(e) = fs::remove_dir_all(&build_dir) {
-        eprintln!("Warning: Failed to clean up temporary build directory {}: {}", build_dir.display(), e);
+    if build_dir.exists() { // Check existence before trying to remove
+        if let Err(e) = fs::remove_dir_all(&build_dir) {
+            warn!("Warning: Failed to clean up temporary build directory {}: {}", build_dir.display(), e);
+        }
     }
 
 
@@ -144,143 +156,152 @@ pub fn build_from_source(
 }
 
 
-// find_build_directory is deprecated
+/// Install a single file formula by copying it.
+fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path) -> Result<()> {
+    // Determine the target directory within the installation path.
+    let target_path = if formula.name == "ca-certificates" {
+         // Special case for ca-certs: install to share/ca-certificates/cacert.pem (or similar)
+         let share_dir = install_dir.join("share").join(formula.name());
+         fs::create_dir_all(&share_dir)?;
+         share_dir.join(source_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("cacert.pem")))
+    } else {
+        // Default: install into share/{formula_name}/
+        let target_share_dir = install_dir.join("share").join(formula.name());
+        fs::create_dir_all(&target_share_dir)?;
+        let target_file_name = source_path.file_name().ok_or_else(|| SapphireError::Generic("Source path has no filename.".to_string()))?;
+        target_share_dir.join(target_file_name)
+    };
+
+
+    info!("Copying {} to {}", source_path.display(), target_path.display());
+    fs::copy(source_path, &target_path)?;
+
+    Ok(())
+}
+
 
 /// Detect the build system and use the appropriate build method
 fn detect_and_build(
+    formula: &Formula, // Pass formula to check name
     build_dir: &Path,
     install_dir: &Path,
     build_env: &BuildEnvironment,
+    all_installed_paths: &[PathBuf], // Pass build dep paths for Go bootstrap check
 ) -> Result<()> {
-    // First, ensure build directory exists and is accessible
-    if !build_dir.exists() {
-        return Err(SapphireError::Io(std::io::Error::new(
+    // Ensure build directory exists and is accessible
+    if !build_dir.exists() { /* ... error handling ... */
+         return Err(SapphireError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("Build directory does not exist: {}", build_dir.display()),
         )));
     }
-
-    // Check if we can access it
-    std::fs::read_dir(build_dir).map_err(|e| {
-        SapphireError::Io(std::io::Error::new(
+    std::fs::read_dir(build_dir).map_err(|e| { /* ... error handling ... */
+         SapphireError::Io(std::io::Error::new(
             e.kind(),
             format!("Cannot access build directory {}: {}", build_dir.display(), e),
         ))
     })?;
 
+
     // Change to the build directory *before* running any build commands
-    // Store the original CWD to restore later
     let original_cwd = std::env::current_dir()?;
     std::env::set_current_dir(build_dir)?;
-    println!("Changed working directory to: {}", build_dir.display());
-
-    // Use a guard to ensure we change back the CWD even on errors
-    let _cwd_guard = CurrentWorkingDirectoryGuard::new(original_cwd);
+    info!("Changed working directory to: {}", build_dir.display());
+    let _cwd_guard = CurrentWorkingDirectoryGuard::new(original_cwd); // RAII guard
 
 
-    // 1. Check for autogen.sh (usually needs to run before configure)
-    let autogen_script = build_dir.join("autogen.sh");
-    if autogen_script.exists() {
-        println!("==> Running ./autogen.sh");
+    // --- Build System Detection Order ---
 
-        // Ensure the script is executable
-        if cfg!(unix) {
-             use std::os::unix::fs::PermissionsExt;
-             let mut perms = fs::metadata(&autogen_script)?.permissions();
-             perms.set_mode(perms.mode() | 0o111); // Add execute permissions u+x, g+x, o+x
-             fs::set_permissions(&autogen_script, perms)?;
-        }
-
-
-        let mut cmd = Command::new("./autogen.sh");
-        // Apply the environment AFTER creating the Command struct
-        build_env.apply_to_command(&mut cmd);
-        let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute autogen.sh: {}", e)))?;
-
-
-        if !output.status.success() {
-            eprintln!("autogen.sh stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-            eprintln!("autogen.sh stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(SapphireError::Generic(format!(
-                "autogen.sh failed with status: {}", output.status
-            )));
-        }
-    }
-    // 2. Check for configure.ac or configure.in (needs autoconf/autoreconf)
-    else if build_dir.join("configure.ac").exists() || build_dir.join("configure.in").exists() {
-        // Check if autoreconf exists in the environment's PATH
-        let autoreconf_path = match which::which_in("autoreconf", build_env.get_path_string(), build_dir) {
-             Ok(path) => path,
-             Err(_) => return Err(SapphireError::BuildEnvError(
-                 "autoreconf command not found in build environment PATH. Ensure autoconf is installed and in build dependencies.".to_string()
-             ))
-        };
-
-        println!("==> Running autoreconf -fvi");
-        let mut cmd = Command::new(autoreconf_path);
-        cmd.args(["-fvi"]); // Force, verbose, install missing aux files
-         // Apply the environment AFTER creating the Command struct
-         build_env.apply_to_command(&mut cmd);
-        let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute autoreconf: {}", e)))?;
-
-        if !output.status.success() {
-            eprintln!("autoreconf stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-            eprintln!("autoreconf stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(SapphireError::Generic(format!(
-                "autoreconf failed with status: {}", output.status
-            )));
-        }
-        // After autoreconf, a 'configure' script should exist, so fall through to configure_and_make
+    // 0. Perl Specific Check (Configure script has different args)
+    if formula.name == "perl" && build_dir.join("Configure").exists() {
+        return perl_build(build_dir, install_dir, build_env);
     }
 
+    // 1. Autotools (configure.ac needs autoreconf first)
+    if build_dir.join("configure.ac").exists() || build_dir.join("configure.in").exists() {
+        // Check if autoreconf exists *before* trying to run it
+        match which::which_in("autoreconf", build_env.get_path_string(), build_dir) {
+            Ok(autoreconf_path) => {
+                 // Only run autoreconf if configure doesn't already exist
+                 if !build_dir.join("configure").exists() {
+                     info!("==> Running autoreconf -fvi");
+                     let mut cmd = Command::new(autoreconf_path);
+                     cmd.args(["-fvi"]);
+                     build_env.apply_to_command(&mut cmd);
+                     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute autoreconf: {}", e)))?;
 
-    // 3. Check for configure script
+                     if !output.status.success() { /* ... error handling ... */
+                         println!("autoreconf failed with status: {}", output.status);
+                         eprintln!("autoreconf stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+                         eprintln!("autoreconf stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+                         return Err(SapphireError::Generic(format!(
+                             "autoreconf failed with status: {}", output.status
+                         )));
+                     }
+                 } else {
+                     info!("Skipping autoreconf, configure script already exists.");
+                 }
+            }
+            Err(_) => {
+                 // Autoreconf not found, but configure.ac exists. This might be an error,
+                 // but some projects ship a pre-generated configure script. Proceed to check for configure.
+                 warn!("configure.ac found but autoreconf not found in PATH. Will proceed to check for 'configure' script.");
+            }
+        }
+        // Fall through to configure script check
+    }
+
+    // 2. Autotools (configure script)
     let configure_script = build_dir.join("configure");
     if configure_script.exists() {
-        // Ensure the configure script is executable
-        if cfg!(unix) {
+        if cfg!(unix) { /* ... set executable ... */
              use std::os::unix::fs::PermissionsExt;
-             // Handle potential error during metadata read or permission setting
              match fs::metadata(&configure_script) {
                 Ok(metadata) => {
                     let mut perms = metadata.permissions();
-                    perms.set_mode(perms.mode() | 0o111);
+                    perms.set_mode(perms.mode() | 0o111); // Add execute
                     if let Err(e) = fs::set_permissions(&configure_script, perms) {
-                        eprintln!("Warning: Failed to set executable permission on configure script: {}", e);
+                        warn!("Warning: Failed to set executable permission on configure script: {}", e);
                     }
                 }
-                Err(e) => eprintln!("Warning: Failed to read metadata for configure script: {}", e),
+                Err(e) => warn!("Warning: Failed to read metadata for configure script: {}", e),
              }
         }
-
         return configure_and_make(build_dir, install_dir, build_env);
     }
 
-    // 4. Check for CMakeLists.txt
+    // 3. CMake
     if build_dir.join("CMakeLists.txt").exists() {
         return cmake_build(build_dir, install_dir, build_env);
     }
 
-    // 5. Check for meson.build
+    // 4. Meson
     if build_dir.join("meson.build").exists() {
         return meson_build(build_dir, install_dir, build_env);
     }
 
-    // 6. Check for Cargo.toml (Rust project)
+    // 5. Go
+    let go_make_script = build_dir.join("src/make.bash");
+    let go_all_script = build_dir.join("src/all.bash");
+    if go_make_script.exists() || go_all_script.exists() {
+         // Pass all installed paths to handle bootstrap
+         return go_build(build_dir, install_dir, build_env, all_installed_paths);
+    }
+
+    // 6. Cargo (Rust)
     if build_dir.join("Cargo.toml").exists() {
         return cargo_build(build_dir, install_dir, build_env);
     }
 
-    // 7. Check for setup.py (Python project)
+    // 7. Python setup.py
     if build_dir.join("setup.py").exists() {
         return python_build(build_dir, install_dir, build_env);
     }
 
-    // 8. Check for Makefile directly (simple make project)
+    // 8. Simple Makefile
     if build_dir.join("Makefile").exists() || build_dir.join("makefile").exists() {
         return simple_make(build_dir, install_dir, build_env);
     }
-
 
     // If we get here, we couldn't determine the build system
     Err(SapphireError::Generic(format!(
@@ -291,80 +312,183 @@ fn detect_and_build(
 
 /// Configure and build with autotools (./configure && make && make install)
 fn configure_and_make(
-    build_dir: &Path, // Should be CWD already
+    _build_dir: &Path, // Is CWD
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    println!("==> Running ./configure --prefix={}", install_dir.display());
+    info!("==> Running ./configure --prefix={}", install_dir.display());
 
     let mut cmd = Command::new("./configure");
     cmd.arg(format!("--prefix={}", install_dir.display()));
+    // cmd.args(&["--disable-dependency-tracking", "--disable-silent-rules"]); // Optional common flags
     build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute configure: {}", e)))?;
 
-
-    // Log output for debugging
-    println!("Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-
-    if !output.status.success() {
-        // Attempt to find config.log for more details
-        let config_log_path = build_dir.join("config.log");
+    if !output.status.success() { /* ... error handling ... */
+        println!("Configure failed with status: {}", output.status);
+        eprintln!("Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        let config_log_path = PathBuf::from("config.log"); // configure usually creates this in CWD
         if config_log_path.exists() {
              eprintln!("--- config.log ---");
              if let Ok(content) = fs::read_to_string(&config_log_path) {
-                  // Print only last N lines for brevity?
                  let lines: Vec<&str> = content.lines().rev().take(50).collect();
-                 for line in lines.iter().rev() {
-                     eprintln!("{}", line);
-                 }
+                 for line in lines.iter().rev() { eprintln!("{}", line); }
              }
              eprintln!("--- end config.log ---");
         }
         return Err(SapphireError::Generic(format!(
             "Configure failed with status: {}", output.status
         )));
+    } else {
+         debug!("Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+         debug!("Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
     }
 
     // Run make
-    println!("==> Running make");
-    let make_exe = which::which_in("make", build_env.get_path_string(), build_dir)
+    info!("==> Running make");
+    let make_exe = which::which_in("make", build_env.get_path_string(), Path::new(".")) // Check in CWD/PATH
          .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
-    let mut cmd = Command::new(make_exe.clone()); // Clone make_exe for install command
-    build_env.apply_to_command(&mut cmd); // MAKEFLAGS should be in build_env
+    let mut cmd = Command::new(make_exe.clone());
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make: {}", e)))?;
 
-
-    // Log output for debugging
-    println!("Make stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("Make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-
     if !output.status.success() {
-        return Err(SapphireError::Generic(format!(
+        println!("Make failed with status: {}", output.status);
+        eprintln!("Make stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+         return Err(SapphireError::Generic(format!(
             "Make failed with status: {}", output.status
         )));
+    } else {
+         debug!("Make completed successfully.");
+          // Optionally log stdout/stderr even on success for debugging
+          // debug!("Make stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+          // debug!("Make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
     }
 
     // Run make install
-    println!("==> Running make install");
+    info!("==> Running make install");
     let mut cmd = Command::new(make_exe);
     cmd.arg("install");
     build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make install: {}", e)))?;
 
-
-    // Log output for debugging
-    println!("Make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("Make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-
     if !output.status.success() {
+        println!("Make install failed with status: {}", output.status);
+        eprintln!("Make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
         return Err(SapphireError::Generic(format!(
             "Make install failed with status: {}", output.status
         )));
+    } else {
+         debug!("Make install completed successfully.");
+         // debug!("Make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+         // debug!("Make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
     }
 
     Ok(())
 }
+
+/// Build Perl using its Configure script
+fn perl_build(
+    _build_dir: &Path, // Should be CWD already
+    install_dir: &Path,
+    build_env: &BuildEnvironment,
+) -> Result<()> {
+    info!("==> Building with Perl Configure script...");
+
+    let configure_script = PathBuf::from("Configure"); // Relative to CWD
+    if !configure_script.exists() {
+        return Err(SapphireError::BuildEnvError(format!("Perl Configure script not found at {}", configure_script.display())));
+    }
+
+    // Find sh (needed to run Configure)
+    let sh_exe = which::which_in("sh", build_env.get_path_string(), Path::new("."))
+        .map_err(|_| SapphireError::BuildEnvError("sh command not found in build environment PATH (needed for Perl Configure).".to_string()))?;
+
+
+    let mut cmd = Command::new(sh_exe);
+    cmd.arg(configure_script); // Pass Configure script path to sh
+    cmd.arg("-des"); // Defaults, non-interactive, silent
+    cmd.arg(format!("-Dprefix={}", install_dir.display()));
+    // cmd.args(&["-D", "usethreads"]); // Example
+
+    build_env.apply_to_command(&mut cmd);
+    info!("Running Perl Configure: {:?}", cmd);
+    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute Perl Configure: {}", e)))?;
+
+
+    if !output.status.success() {
+        println!("Perl Configure failed with status: {}", output.status);
+        eprintln!("Perl Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Perl Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        return Err(SapphireError::Generic(format!(
+            "Perl Configure failed with status: {}", output.status
+        )));
+    } else {
+         debug!("Perl Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+         debug!("Perl Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // Run make
+    info!("==> Running make for Perl");
+    let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
+         .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
+    let mut cmd = Command::new(make_exe.clone());
+    build_env.apply_to_command(&mut cmd);
+    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make for Perl: {}", e)))?;
+
+    if !output.status.success() {
+        println!("Perl make failed with status: {}", output.status);
+        eprintln!("Perl make stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Perl make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+         return Err(SapphireError::Generic(format!(
+            "Perl make failed with status: {}", output.status
+        )));
+    } else {
+         info!("Perl make completed successfully.");
+    }
+
+
+    // Run make test (Recommended for Perl builds)
+    info!("==> Running make test for Perl (may take a while)...");
+    let mut cmd = Command::new(make_exe.clone());
+    cmd.arg("test");
+    build_env.apply_to_command(&mut cmd);
+    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make test for Perl: {}", e)))?;
+
+    if !output.status.success() {
+        // Don't necessarily fail the build if tests fail, but log it verbosely
+        println!("Perl 'make test' failed with status: {}. Continuing installation.", output.status);
+        eprintln!("Perl make test stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Perl make test stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    } else {
+        info!("Perl 'make test' passed.");
+    }
+
+
+    // Run make install
+    info!("==> Running make install for Perl");
+    let mut cmd = Command::new(make_exe);
+    cmd.arg("install");
+    build_env.apply_to_command(&mut cmd);
+    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make install for Perl: {}", e)))?;
+
+    if !output.status.success() {
+        println!("Perl make install failed with status: {}", output.status);
+        eprintln!("Perl make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Perl make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        return Err(SapphireError::Generic(format!(
+            "Perl make install failed with status: {}", output.status
+        )));
+    } else {
+         info!("Perl make install completed successfully.");
+    }
+
+    Ok(())
+}
+
 
 /// Build with CMake
 fn cmake_build(
@@ -372,59 +496,59 @@ fn cmake_build(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    println!("==> Building with CMake");
+    info!("==> Building with CMake");
     let build_subdir_name = "sapphire-cmake-build";
     let build_subdir = source_dir.join(build_subdir_name);
     fs::create_dir_all(&build_subdir).map_err(|e| SapphireError::Io(e))?;
 
-    println!("==> Running cmake .. -DCMAKE_INSTALL_PREFIX={}", install_dir.display());
-    let cmake_exe = which::which_in("cmake", build_env.get_path_string(), source_dir)
+     let cmake_exe = which::which_in("cmake", build_env.get_path_string(), Path::new("."))
         .map_err(|_| SapphireError::BuildEnvError("cmake command not found in build environment PATH.".to_string()))?;
-
+     info!("==> Running {} .. -DCMAKE_INSTALL_PREFIX={}", cmake_exe.display(), install_dir.display());
 
     let mut cmd = Command::new(cmake_exe);
-    cmd.arg("..") // Configure from parent directory (source_dir)
+    cmd.arg("..")
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install_dir.display()))
         .args(&[
-            "-DCMAKE_FIND_FRAMEWORK=LAST", // Standard Homebrew flags
+            "-DCMAKE_FIND_FRAMEWORK=LAST",
             "-DCMAKE_VERBOSE_MAKEFILE=ON",
-            "-Wno-dev", // Suppress -Wdev warnings
-            // Add CMAKE_BUILD_TYPE ? e.g., Release
-            // "-DCMAKE_BUILD_TYPE=Release", // Uncomment if needed
+            "-Wno-dev",
+            // "-DCMAKE_BUILD_TYPE=Release",
         ])
-        .current_dir(&build_subdir); // Run cmake *in* the build subdir
+        .current_dir(&build_subdir);
     build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute cmake: {}", e)))?;
 
-
-    println!("CMake configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("CMake configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-
     if !output.status.success() {
+        println!("CMake configure failed with status: {}", output.status);
+        eprintln!("CMake configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("CMake configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
         return Err(SapphireError::Generic(format!(
             "CMake configure failed with status: {}", output.status
         )));
+    } else {
+         debug!("CMake configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+         debug!("CMake configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
     }
 
-    println!("==> Running make install in {}", build_subdir.display());
-    let make_exe = which::which_in("make", build_env.get_path_string(), source_dir)
+    info!("==> Running make install in {}", build_subdir.display());
+     let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
         .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
-
 
     let mut cmd = Command::new(make_exe);
     cmd.arg("install")
-        .current_dir(&build_subdir); // Run make install *in* the build subdir
+        .current_dir(&build_subdir);
     build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make install (CMake): {}", e)))?;
 
-
-    println!("CMake make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("CMake make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-
     if !output.status.success() {
+        println!("CMake make install failed with status: {}", output.status);
+        eprintln!("CMake make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("CMake make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
         return Err(SapphireError::Generic(format!(
             "CMake make install failed with status: {}", output.status
         )));
+    } else {
+         debug!("CMake install completed successfully.");
     }
 
     Ok(())
@@ -436,88 +560,217 @@ fn meson_build(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-     println!("==> Building with Meson");
+     info!("==> Building with Meson");
      let build_subdir_name = "sapphire-meson-build";
      let build_subdir = source_dir.join(build_subdir_name);
 
-     // Meson setup command
-     println!("==> Running meson setup --prefix={} {}", install_dir.display(), build_subdir.display());
-     let meson_exe = which::which_in("meson", build_env.get_path_string(), source_dir)
+     let meson_exe = which::which_in("meson", build_env.get_path_string(), Path::new("."))
          .map_err(|_| SapphireError::BuildEnvError("meson command not found in build environment PATH.".to_string()))?;
+     info!("==> Running {} setup --prefix={} {}", meson_exe.display(), install_dir.display(), build_subdir.display());
 
-     let mut cmd_setup = Command::new(&meson_exe); // Borrow meson_exe
+     let mut cmd_setup = Command::new(&meson_exe);
      cmd_setup.arg("setup")
          .arg(format!("--prefix={}", install_dir.display()))
-         // Add other standard meson options if needed (e.g., buildtype)
          // .arg("--buildtype=release")
-         .arg(&build_subdir) // The build directory to create/use
-         .arg(".");          // The source directory
-     build_env.apply_to_command(&mut cmd_setup); // Apply env vars
+         .arg(&build_subdir) // Build dir
+         .arg(".");          // Source dir
+     build_env.apply_to_command(&mut cmd_setup);
      let output_setup = cmd_setup.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute meson setup: {}", e)))?;
 
-     println!("Meson setup stdout:\n{}", String::from_utf8_lossy(&output_setup.stdout));
-     println!("Meson setup stderr:\n{}", String::from_utf8_lossy(&output_setup.stderr));
-
-     if !output_setup.status.success() {
-         return Err(SapphireError::Generic(format!(
+    if !output_setup.status.success() {
+        println!("Meson setup failed with status: {}", output_setup.status);
+        eprintln!("Meson setup stdout:\n{}", String::from_utf8_lossy(&output_setup.stdout));
+        eprintln!("Meson setup stderr:\n{}", String::from_utf8_lossy(&output_setup.stderr));
+        return Err(SapphireError::Generic(format!(
              "Meson setup failed with status: {}", output_setup.status
          )));
+     } else {
+          debug!("Meson setup stdout:\n{}", String::from_utf8_lossy(&output_setup.stdout));
+          debug!("Meson setup stderr:\n{}", String::from_utf8_lossy(&output_setup.stderr));
      }
 
-     // Meson install command (uses ninja implicitly)
-     println!("==> Running meson install -C {}", build_subdir.display());
-     // Check if ninja exists, as meson install relies on it.
-     let _ninja_exe = which::which_in("ninja", build_env.get_path_string(), source_dir)
-         .map_err(|_| SapphireError::BuildEnvError("ninja command not found in build environment PATH (needed for meson install).".to_string()))?;
 
+     // Meson install (implicitly uses ninja)
+     let _ninja_exe = which::which_in("ninja", build_env.get_path_string(), Path::new("."))
+         .map_err(|_| SapphireError::BuildEnvError("ninja command not found (needed for meson install). Ensure ninja is installed and in build dependencies.".to_string()))?;
+     info!("==> Running {} install -C {}", meson_exe.display(), build_subdir.display());
 
-     let mut cmd_install = Command::new(&meson_exe); // Borrow meson_exe again
+     let mut cmd_install = Command::new(&meson_exe);
      cmd_install.arg("install")
          .arg("-C") // Specify build directory
          .arg(&build_subdir);
-     build_env.apply_to_command(&mut cmd_install); // Apply env vars
+     build_env.apply_to_command(&mut cmd_install);
      let output_install = cmd_install.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute meson install: {}", e)))?;
 
-     println!("Meson install stdout:\n{}", String::from_utf8_lossy(&output_install.stdout));
-     println!("Meson install stderr:\n{}", String::from_utf8_lossy(&output_install.stderr));
 
      if !output_install.status.success() {
+        println!("Meson install failed with status: {}", output_install.status);
+        eprintln!("Meson install stdout:\n{}", String::from_utf8_lossy(&output_install.stdout));
+        eprintln!("Meson install stderr:\n{}", String::from_utf8_lossy(&output_install.stderr));
          return Err(SapphireError::Generic(format!(
              "Meson install failed with status: {}", output_install.status
          )));
+     } else {
+          debug!("Meson install completed successfully.");
      }
 
     Ok(())
 }
 
+/// Build Go project
+fn go_build(
+    build_dir: &Path, // Is CWD
+    install_dir: &Path,
+    build_env: &BuildEnvironment,
+    all_installed_paths: &[PathBuf], // Changed parameter name
+) -> Result<()> {
+    info!("==> Building with Go build script");
+
+    // Determine which script to use
+    let script_path = if build_dir.join("src/make.bash").exists() {
+        build_dir.join("src/make.bash")
+    } else if build_dir.join("src/all.bash").exists() {
+        build_dir.join("src/all.bash")
+    } else {
+        return Err(SapphireError::Generic(
+            "Go build script (src/make.bash or src/all.bash) not found.".to_string()
+        ));
+    };
+
+     // Find bash (needed to run the script)
+     let bash_exe = which::which_in("bash", build_env.get_path_string(), Path::new("."))
+         .map_err(|_| SapphireError::BuildEnvError("bash command not found in build environment PATH (needed for Go build script).".to_string()))?;
+     info!("==> Running {} {}", bash_exe.display(), script_path.display());
+
+    // Ensure script is executable
+    if cfg!(unix) { /* ... set executable ... */
+         use std::os::unix::fs::PermissionsExt;
+         match fs::metadata(&script_path) {
+            Ok(metadata) => {
+                let mut perms = metadata.permissions();
+                perms.set_mode(perms.mode() | 0o111); // Add execute
+                if let Err(e) = fs::set_permissions(&script_path, perms) {
+                    warn!("Warning: Failed to set executable permission on Go build script: {}", e);
+                }
+            }
+            Err(e) => warn!("Warning: Failed to read metadata for Go build script: {}", e),
+         }
+    }
+
+    // --- Go Bootstrap Handling ---
+    let mut go_build_specific_env = HashMap::new(); // Start with empty map for cmd specific vars
+    let bootstrap_go_path = all_installed_paths.iter() // Check ALL installed paths
+        .find(|p| p.file_name().map(|n| n.to_string_lossy().starts_with("go@")).unwrap_or(false));
+
+    if let Some(path) = bootstrap_go_path {
+         info!("Found bootstrap Go path: {}", path.display());
+         go_build_specific_env.insert("GOROOT_BOOTSTRAP".to_string(), path.to_string_lossy().to_string());
+    } else if build_env.get_var("GOROOT_BOOTSTRAP").is_none() {
+         // If bootstrap path not found in deps AND not already set in env, build might fail.
+         warn!("GOROOT_BOOTSTRAP not set and no bootstrap Go dependency path provided/found. Go build might fail if required.");
+    }
+    // --- End Go Bootstrap Handling ---
+
+
+    // Run the Go build script
+    let mut cmd = Command::new(bash_exe);
+    cmd.arg(&script_path); // Pass the script path as argument to bash
+    cmd.current_dir(build_dir.join("src")); // Run script from within src/
+    // Apply the main build env first, then overwrite/add specific vars like GOROOT_BOOTSTRAP
+    build_env.apply_to_command(&mut cmd); // Applies vars from BuildEnvironment
+    cmd.envs(&go_build_specific_env);      // Adds/overwrites GOROOT_BOOTSTRAP if found
+
+    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute Go build script {}: {}", script_path.display(), e)))?;
+
+
+    if !output.status.success() {
+        println!("Go build script failed with status: {}", output.status);
+        eprintln!("Go build stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Go build stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        return Err(SapphireError::Generic(format!(
+            "Go build script failed with status: {}", output.status
+        )));
+    } else {
+         debug!("Go build stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+         debug!("Go build stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // Install artifacts
+    info!("==> Installing Go build artifacts to {}", install_dir.display());
+    fs::create_dir_all(install_dir).map_err(SapphireError::Io)?;
+
+    let go_output_bin_dir = build_dir.join("bin");
+    let go_output_pkg_dir = build_dir.join("pkg");
+
+    if go_output_bin_dir.is_dir() {
+        info!("Copying contents from {}/bin", build_dir.display());
+        let target_bin = install_dir.join("bin");
+        fs::create_dir_all(&target_bin).map_err(SapphireError::Io)?;
+        copy_directory_contents(&go_output_bin_dir, &target_bin)?;
+    } else {
+        warn!("Go output bin directory not found: {}", go_output_bin_dir.display());
+    }
+
+    if go_output_pkg_dir.is_dir() {
+        info!("Copying contents from {}/pkg", build_dir.display());
+        let target_pkg = install_dir.join("pkg");
+        fs::create_dir_all(&target_pkg).map_err(SapphireError::Io)?;
+        copy_directory_contents(&go_output_pkg_dir, &target_pkg)?;
+    } else {
+         debug!("Go output pkg directory not found: {}", go_output_pkg_dir.display());
+    }
+
+    Ok(())
+}
+
+/// Recursively copies the contents of a source directory to a target directory.
+fn copy_directory_contents(from: &Path, to: &Path) -> Result<()> {
+    for entry_result in fs::read_dir(from).map_err(SapphireError::Io)? {
+        let entry = entry_result.map_err(SapphireError::Io)?;
+        let src_path = entry.path();
+        let dest_path = to.join(entry.file_name());
+
+        if src_path.is_dir() {
+            fs::create_dir_all(&dest_path).map_err(SapphireError::Io)?;
+            copy_directory_contents(&src_path, &dest_path)?;
+        } else if src_path.is_file() {
+            fs::copy(&src_path, &dest_path).map_err(SapphireError::Io)?;
+        }
+    }
+    Ok(())
+}
+
+
 /// Build with Cargo
 fn cargo_build(
-    source_dir: &Path, // Source dir (which is also CWD)
+    _source_dir: &Path, // Is CWD
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-     println!("==> Building with Cargo");
-     let cargo_exe = which::which_in("cargo", build_env.get_path_string(), source_dir)
+     info!("==> Building with Cargo");
+     let cargo_exe = which::which_in("cargo", build_env.get_path_string(), Path::new("."))
          .map_err(|_| SapphireError::BuildEnvError("cargo command not found in build environment PATH.".to_string()))?;
 
-     // Cargo install --path . --root <prefix> installs directly into the cellar structure
-     println!("==> Running cargo install --path . --root {}", install_dir.display());
+     info!("==> Running {} install --path . --root {}", cargo_exe.display(), install_dir.display());
      let mut cmd = Command::new(cargo_exe);
      cmd.arg("install")
          .arg("--path")
-         .arg(".") // Install the crate in the current directory (source_dir)
+         .arg(".") // Install the crate in the current directory
          .arg("--root")
          .arg(install_dir); // Install into the formula's cellar directory
      build_env.apply_to_command(&mut cmd);
      let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute cargo install: {}", e)))?;
 
-     println!("Cargo install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-     println!("Cargo install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
      if !output.status.success() {
+        println!("Cargo install failed with status: {}", output.status);
+        eprintln!("Cargo install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Cargo install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
          return Err(SapphireError::Generic(format!(
              "Cargo install failed with status: {}", output.status
          )));
+     } else {
+          debug!("Cargo install completed successfully.");
      }
 
      Ok(())
@@ -525,33 +778,32 @@ fn cargo_build(
 
 /// Build with Python setup.py
 fn python_build(
-    source_dir: &Path, // Source dir (which is also CWD)
+    _source_dir: &Path, // Is CWD
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    println!("==> Building with Python setup.py");
-     // Find the python executable
-     let python_exe = which::which_in("python3", build_env.get_path_string(), source_dir)
-         .or_else(|_| which::which_in("python", build_env.get_path_string(), source_dir))
+    info!("==> Building with Python setup.py");
+     let python_exe = which::which_in("python3", build_env.get_path_string(), Path::new("."))
+         .or_else(|_| which::which_in("python", build_env.get_path_string(), Path::new(".")))
          .map_err(|_| SapphireError::BuildEnvError("python3 or python command not found in build environment PATH.".to_string()))?;
 
-    println!("==> Running {} setup.py install --prefix={}", python_exe.display(), install_dir.display());
+    info!("==> Running {} setup.py install --prefix={}", python_exe.display(), install_dir.display());
     let mut cmd = Command::new(python_exe);
     cmd.arg("setup.py")
         .arg("install")
         .arg(format!("--prefix={}", install_dir.display()));
-        // Add other common Python flags if needed, e.g., --optimize=1
     build_env.apply_to_command(&mut cmd);
     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute python setup.py install: {}", e)))?;
 
-
-    println!("Python install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-    println!("Python install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-
     if !output.status.success() {
+        println!("Python setup.py install failed with status: {}", output.status);
+        eprintln!("Python install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("Python install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
         return Err(SapphireError::Generic(format!(
             "Python setup.py install failed with status: {}", output.status
         )));
+    } else {
+         debug!("Python install completed successfully.");
     }
 
     Ok(())
@@ -559,81 +811,64 @@ fn python_build(
 
 /// Build with a simple Makefile
 fn simple_make(
-    build_dir: &Path, // Is CWD
+    _build_dir: &Path, // Is CWD
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-     println!("==> Building with simple Makefile");
-      let make_exe = which::which_in("make", build_env.get_path_string(), build_dir)
+     info!("==> Building with simple Makefile");
+      let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
          .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
 
 
-     println!("==> Running make");
+     info!("==> Running make");
      let mut cmd_make = Command::new(make_exe.clone()); // Clone for install command
      build_env.apply_to_command(&mut cmd_make);
      let output_make = cmd_make.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make (simple): {}", e)))?;
 
-     println!("Make stdout:\n{}", String::from_utf8_lossy(&output_make.stdout));
-     println!("Make stderr:\n{}", String::from_utf8_lossy(&output_make.stderr));
-
-    if !output_make.status.success() {
+     if !output_make.status.success() {
+        println!("Make failed with status: {}", output_make.status);
+        eprintln!("Make stdout:\n{}", String::from_utf8_lossy(&output_make.stdout));
+        eprintln!("Make stderr:\n{}", String::from_utf8_lossy(&output_make.stderr));
         return Err(SapphireError::Generic(format!(
             "Make failed with status: {}", output_make.status
         )));
-    }
+     } else {
+          info!("Make completed successfully.");
+     }
 
-    println!("==> Running make install PREFIX={}", install_dir.display());
+
+    info!("==> Running make install PREFIX={}", install_dir.display());
     let mut cmd_install = Command::new(make_exe);
     cmd_install.arg("install");
-     // Common convention for simple Makefiles: pass PREFIX variable
+    // Common convention for simple Makefiles: pass PREFIX variable
     cmd_install.env("PREFIX", install_dir.as_os_str()); // Set PREFIX env var as well/instead?
     // Or pass as argument: cmd_install.arg(format!("PREFIX={}", install_dir.display()));
     build_env.apply_to_command(&mut cmd_install);
     let output_install = cmd_install.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make install (simple): {}", e)))?;
 
-    println!("Make install stdout:\n{}", String::from_utf8_lossy(&output_install.stdout));
-    println!("Make install stderr:\n{}", String::from_utf8_lossy(&output_install.stderr));
-
-    if !output_install.status.success() {
-        // Some Makefiles might not have an install target, this might be okay
-         println!("Warning: 'make install' failed. Formula might be installed correctly if it doesn't use a standard install target.");
+     if !output_install.status.success() {
+         // Some Makefiles might not have an install target, this might be okay
+         warn!("'make install' failed with status {}. Formula might be installed correctly if it doesn't use a standard install target or PREFIX variable.", output_install.status);
          // Check if install_dir/bin or install_dir/lib has files?
          let bin_dir = install_dir.join("bin");
          let lib_dir = install_dir.join("lib");
          let bin_exists = bin_dir.exists() && fs::read_dir(&bin_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
          let lib_exists = lib_dir.exists() && fs::read_dir(&lib_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
          if !bin_exists && !lib_exists {
+              println!("Make install failed with status: {} and no files found in {}/bin or {}/lib",
+                  output_install.status, install_dir.display(), install_dir.display());
              return Err(SapphireError::Generic(format!(
-                 "Make install failed with status: {} and no files found in {}/bin or {}/lib",
-                 output_install.status, install_dir.display(), install_dir.display()
+                 "Make install failed with status: {} and no files found in relevant install directories",
+                 output_install.status
              )));
          } else {
-              println!("Proceeding despite 'make install' error as installation directory seems populated.");
+              info!("Proceeding despite 'make install' error as installation directory seems populated.");
          }
+    } else {
+         info!("Make install completed successfully.");
     }
 
     Ok(())
-}
-
-/// Check if a file is executable (on Unix)
-//#[cfg(unix)]
-//fn is_executable(path: &Path) -> Result<bool> {
-//    use std::os::unix::fs::PermissionsExt;
-//    let metadata = fs::metadata(path)?;
-//    let permissions = metadata.permissions();
-//    // Check if user, group, or other has execute permission
-//    Ok(permissions.mode() & 0o111 != 0)
-//}
-
-/// Check if a file is executable (fallback for non-Unix)
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> Result<bool> {
-     // Simple check for common executable extensions on non-Unix
-     Ok(path.is_file() &&
-        path.extension().map_or(false, |ext| {
-            let ext_lower = ext.to_string_lossy().to_lowercase();
-            ext_lower == "exe" || ext_lower == "bat" || ext_lower == "cmd" || ext_lower == "sh"
-        }))
 }
 
 
@@ -651,13 +886,13 @@ impl CurrentWorkingDirectoryGuard {
 impl Drop for CurrentWorkingDirectoryGuard {
     fn drop(&mut self) {
         if let Err(e) = std::env::set_current_dir(&self.original_cwd) {
-            eprintln!(
+            println!(
                 "Error: Failed to restore original working directory to {}: {}",
                 self.original_cwd.display(),
                 e
             );
         } else {
-             println!("Restored working directory to: {}", self.original_cwd.display());
+             debug!("Restored working directory to: {}", self.original_cwd.display());
         }
     }
 }
