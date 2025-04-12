@@ -5,7 +5,7 @@ use thiserror::Error;
 
 // Define a top-level error enum for the application using thiserror
 #[derive(Error, Debug)]
-pub enum BrewRsError {
+pub enum SapphireError {
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -38,10 +38,22 @@ pub enum BrewRsError {
 
     #[error("Parsing Error in {0}: {1}")]
     ParseError(&'static str, String),
+
+    #[error("Version error: {0}")]
+    VersionError(String),
+
+    #[error("Dependency Error: {0}")]
+    DependencyError(String),
+
+    #[error("Build environment setup failed: {0}")]
+    BuildEnvError(String),
+
+    #[error("Failed to execute command: {0}")]
+    CommandExecError(String),
 }
 
 // Define a convenience Result type alias using our custom error
-pub type Result<T> = std::result::Result<T, BrewRsError>;
+pub type Result<T> = std::result::Result<T, SapphireError>;
 
 // Manual implementations of Error, Display, and From are no longer needed
 // as they are handled by thiserror using the #[derive(Error)] and #[from] attributes.

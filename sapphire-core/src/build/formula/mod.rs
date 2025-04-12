@@ -2,7 +2,7 @@
 // Contains the logic for downloading and building formulae
 
 use std::path::{Path, PathBuf};
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
 use std::fs;
@@ -26,15 +26,12 @@ pub async fn download_formula(formula: &Formula, config: &Config) -> Result<Path
 
 /// Check if a bottle is available for the current platform
 pub fn has_bottle_for_current_platform(formula: &Formula) -> bool {
-    if formula.bottle.bottles.is_empty() {
-        return false;
+    if let Some(stable) = &formula.bottle.stable {
+        let platform = get_current_platform();
+        !stable.files.is_empty() && stable.files.contains_key(&platform)
+    } else {
+        false
     }
-
-    // Determine current platform
-    let platform = get_current_platform();
-
-    // Check if we have a bottle for this platform
-    formula.bottle.bottles.contains_key(&platform)
 }
 
 /// Get the current platform identifier used in bottle filenames
@@ -135,7 +132,7 @@ pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
         "bz2" => extract_tar_bz2(archive_path, target_dir),
         "xz" => extract_tar_xz(archive_path, target_dir),
         "zip" => extract_zip(archive_path, target_dir),
-        _ => Err(BrewRsError::Generic(format!("Unsupported archive format: {}", extension)))
+        _ => Err(SapphireError::Generic(format!("Unsupported archive format: {}", extension)))
     }
 }
 
@@ -149,7 +146,7 @@ fn extract_tar(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(
+        return Err(SapphireError::Generic(
             format!("Failed to extract tar archive: {}", String::from_utf8_lossy(&output.stderr))
         ));
     }
@@ -167,7 +164,7 @@ fn extract_tar_gz(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(
+        return Err(SapphireError::Generic(
             format!("Failed to extract tar.gz archive: {}", String::from_utf8_lossy(&output.stderr))
         ));
     }
@@ -185,7 +182,7 @@ fn extract_tar_bz2(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(
+        return Err(SapphireError::Generic(
             format!("Failed to extract tar.bz2 archive: {}", String::from_utf8_lossy(&output.stderr))
         ));
     }
@@ -203,7 +200,7 @@ fn extract_tar_xz(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(
+        return Err(SapphireError::Generic(
             format!("Failed to extract tar.xz archive: {}", String::from_utf8_lossy(&output.stderr))
         ));
     }
@@ -221,7 +218,7 @@ fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(
+        return Err(SapphireError::Generic(
             format!("Failed to extract zip archive: {}", String::from_utf8_lossy(&output.stderr))
         ));
     }
@@ -241,8 +238,8 @@ pub fn get_cellar_path() -> PathBuf {
 /// Get the path where a formula should be installed in the Cellar
 pub fn get_formula_cellar_path(formula: &Formula) -> PathBuf {
     let cellar = get_cellar_path();
-    let version = formula.versions.stable.as_deref().unwrap_or("HEAD");
-    cellar.join(&formula.name).join(version)
+    let version = formula.version.clone();
+    cellar.join(&formula.name).join(version.to_string())
 }
 
 /// Create a receipt file to record formula installation
@@ -252,7 +249,7 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
 
     let receipt = serde_json::json!({
         "name": formula.name,
-        "version": formula.versions.stable,
+        "version": formula.version,
         "time": chrono::Utc::now().to_rfc3339(),
         "source": {
             "path": formula.homepage,

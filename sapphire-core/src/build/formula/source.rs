@@ -1,17 +1,16 @@
 // src/build/source.rs
 // Contains logic for downloading and building from source
 
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
-use crate::build::env::{self, ResolvedDependency};
+use crate::build::env::BuildEnvironment;
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use std::io::copy;
 use reqwest::Client;
 use std::io::Cursor;
 use std::process::Command;
-use std::collections::HashMap;
 
 /// Download source code for the formula
 pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathBuf> {
@@ -21,18 +20,14 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
     } else {
         // Fallback to creating a URL from the formula name and homepage
         if let Some(homepage) = &formula.homepage {
-            if let Some(version) = &formula.versions.stable {
-                if homepage.contains("github.com") {
-                    // Create a typical GitHub release URL as fallback
-                    format!("{}/archive/v{}.tar.gz", homepage.trim_end_matches('/'), version)
-                } else {
-                    return Err(BrewRsError::Generic("No source URL available".to_string()));
-                }
+            if homepage.contains("github.com") {
+                // Create a typical GitHub release URL as fallback
+                format!("{}/archive/v{}.tar.gz", homepage.trim_end_matches('/'), formula.version)
             } else {
-                return Err(BrewRsError::Generic("No source URL available".to_string()));
+                return Err(SapphireError::Generic("No source URL available".to_string()));
             }
         } else {
-            return Err(BrewRsError::Generic("No source URL available".to_string()));
+            return Err(SapphireError::Generic("No source URL available".to_string()));
         }
     };
 
@@ -43,21 +38,11 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
 
 /// Get the main URL for a formula, trying stable URL first
 fn get_formula_url(formula: &Formula) -> Option<String> {
-    // Try to get the stable URL first
-    for (url_type, url_info) in &formula.urls.urls {
-        if url_type == "stable" {
-            return url_info.url.clone();
-        }
+    if !formula.url.is_empty() {
+        Some(formula.url.clone())
+    } else {
+        None
     }
-
-    // If no stable URL, take any URL
-    for (_, url_info) in &formula.urls.urls {
-        if let Some(url) = &url_info.url {
-            return Some(url.clone());
-        }
-    }
-
-    None
 }
 
 /// Download a specific URL to the cache
@@ -81,15 +66,15 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
     let response = client.get(url)
         .send()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     if !response.status().is_success() {
-        return Err(BrewRsError::Generic(format!("Failed to download: HTTP status {}", response.status())));
+        return Err(SapphireError::Generic(format!("Failed to download: HTTP status {}", response.status())));
     }
 
     let content = response.bytes()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     // Write the source to disk
     let mut file = File::create(&source_path)?;
@@ -105,7 +90,6 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
 pub fn build_from_source(
     source_path: &Path,
     formula: &Formula,
-    resolved_dependencies: &[ResolvedDependency],
 ) -> Result<PathBuf> {
     // Get the installation directory
     let install_dir = super::get_formula_cellar_path(formula);
@@ -133,14 +117,15 @@ pub fn build_from_source(
 
     // --- Setup Build Environment ---
     println!("==> Setting up build environment");
-    let env_map = env::setup_build_environment(formula, resolved_dependencies)?;
+    let sapphire_prefix = super::super::get_homebrew_prefix();
+    let build_env = BuildEnvironment::new(formula, &sapphire_prefix)?;
     // Optional: Print the environment for debugging
-    // for (key, value) in &env_map {
+    // for (key, value) in build_env.as_map().iter() {
     //     println!("  Env: {}={}", key, value);
     // }
 
     // Detect and build using the appropriate build system
-    detect_and_build(&build_dir, &install_dir, &env_map)?;
+    detect_and_build(&build_dir, &install_dir, &build_env)?;
 
     // Write the receipt
     super::write_receipt(formula, &install_dir)?;
@@ -193,7 +178,7 @@ fn find_build_directory(temp_dir: &Path, formula_name: &str) -> Result<PathBuf> 
         }
     }
 
-    Err(BrewRsError::Generic(format!(
+    Err(SapphireError::Generic(format!(
         "Could not find build directory for {} in {}",
         formula_name, temp_dir.display()
     )))
@@ -203,11 +188,11 @@ fn find_build_directory(temp_dir: &Path, formula_name: &str) -> Result<PathBuf> 
 fn detect_and_build(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     // First, ensure build directory exists and is accessible
     if !build_dir.exists() {
-        return Err(BrewRsError::Io(std::io::Error::new(
+        return Err(SapphireError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("Build directory does not exist: {}", build_dir.display()),
         )));
@@ -215,7 +200,7 @@ fn detect_and_build(
 
     // Check if we can access it
     std::fs::read_dir(build_dir).map_err(|e| {
-        BrewRsError::Io(std::io::Error::new(
+        SapphireError::Io(std::io::Error::new(
             e.kind(),
             format!("Cannot access build directory {}: {}", build_dir.display(), e),
         ))
@@ -238,16 +223,13 @@ fn detect_and_build(
 
         let mut cmd = Command::new("./autogen.sh");
         cmd.current_dir(build_dir); // Explicitly set working directory
-        cmd.env_clear();
-        for (key, value) in env_map {
-            cmd.env(key, value);
-        }
+        build_env.apply_to_command(&mut cmd);
         let output = cmd.output()?;
 
         if !output.status.success() {
             eprintln!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
             eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(BrewRsError::Generic(format!(
+            return Err(SapphireError::Generic(format!(
                 "autogen.sh failed with status: {}", output.status
             )));
         }
@@ -257,7 +239,7 @@ fn detect_and_build(
         println!("==> Running autoconf");
 
         // Explicitly set M4 environment variable to ensure autoconf uses the right version
-        let mut modified_env_map = env_map.clone();
+        let mut modified_env_map = build_env.get_vars().clone();
 
         // --- M4 Detection Logic (inspired by Homebrew) ---
         let m4_var_name = "M4";
@@ -309,7 +291,7 @@ fn detect_and_build(
         let final_m4_path = match m4_cmd_path {
             Some(path) => path,
             None => {
-                 return Err(BrewRsError::Generic(
+                 return Err(SapphireError::Generic(
                     "GNU m4 (or system m4) is required for autoconf but could not be found. Please install m4 (e.g., `brew install m4`).".to_string()
                  ));
             }
@@ -384,14 +366,14 @@ fn detect_and_build(
                 eprintln!("Failed to execute autoconf: {}", e);
                 eprintln!("Autoconf command: {:?}", autoconf_cmd);
                 eprintln!("Working directory: {}", build_dir.display());
-                return Err(BrewRsError::Io(e));
+                return Err(SapphireError::Io(e));
             }
         };
 
         if !output.status.success() {
             eprintln!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
             eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(BrewRsError::Generic(format!(
+            return Err(SapphireError::Generic(format!(
                 "autoconf failed with status: {}", output.status
             )));
         }
@@ -409,32 +391,32 @@ fn detect_and_build(
             eprintln!("Warning: Failed to set executable permission on configure script: {}", e);
         }
 
-        return configure_and_make(build_dir, install_dir, env_map);
+        return configure_and_make(build_dir, install_dir, build_env);
     }
 
     // 4. Check for CMakeLists.txt
     if build_dir.join("CMakeLists.txt").exists() {
-        return cmake_build(build_dir, install_dir, env_map);
+        return cmake_build(build_dir, install_dir, build_env);
     }
 
     // 5. Check for meson.build
     if build_dir.join("meson.build").exists() {
-        return meson_build(build_dir, install_dir, env_map);
+        return meson_build(build_dir, install_dir, build_env);
     }
 
     // 6. Check for Cargo.toml (Rust project)
     if build_dir.join("Cargo.toml").exists() {
-        return cargo_build(build_dir, install_dir, env_map);
+        return cargo_build(build_dir, install_dir, build_env);
     }
 
     // 7. Check for setup.py (Python project)
     if build_dir.join("setup.py").exists() {
-        return python_build(build_dir, install_dir, env_map);
+        return python_build(build_dir, install_dir, build_env);
     }
 
     // 8. Check for Makefile directly (simple make project)
     if build_dir.join("Makefile").exists() || build_dir.join("makefile").exists() {
-        return simple_make(build_dir, install_dir, env_map);
+        return simple_make(build_dir, install_dir, build_env);
     }
 
     // 9. Check for dist/configure (non-standard setup)
@@ -451,11 +433,11 @@ fn detect_and_build(
             eprintln!("Warning: Failed to set executable permission on dist/configure: {}", e);
         }
 
-        return configure_and_make(&dist_configure.parent().unwrap(), install_dir, env_map);
+        return configure_and_make(&dist_configure.parent().unwrap(), install_dir, build_env);
     }
 
     // If we get here, we couldn't determine the build system
-    Err(BrewRsError::Generic(format!(
+    Err(SapphireError::Generic(format!(
         "Could not determine build system for {}",
         build_dir.display()
     )))
@@ -465,7 +447,7 @@ fn detect_and_build(
 fn configure_and_make(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Running ./configure --prefix={}", install_dir.display());
 
@@ -479,10 +461,7 @@ fn configure_and_make(
 
     let mut cmd = Command::new("./configure");
     cmd.arg(format!("--prefix={}", install_dir.display()));
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     // Log output for debugging
@@ -490,7 +469,7 @@ fn configure_and_make(
     println!("Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Configure failed with status: {}", output.status
         )));
     }
@@ -498,10 +477,7 @@ fn configure_and_make(
     // Run make
     println!("==> Running make");
     let mut cmd = Command::new("make");
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     // Log output for debugging
@@ -509,7 +485,7 @@ fn configure_and_make(
     println!("Make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Make failed with status: {}", output.status
         )));
     }
@@ -518,10 +494,7 @@ fn configure_and_make(
     println!("==> Running make install");
     let mut cmd = Command::new("make");
     cmd.arg("install");
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     // Log output for debugging
@@ -529,7 +502,7 @@ fn configure_and_make(
     println!("Make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Make install failed with status: {}", output.status
         )));
     }
@@ -541,7 +514,7 @@ fn configure_and_make(
 fn cmake_build(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Building with CMake");
     let build_subdir = build_dir.join("brew-rs-build");
@@ -557,17 +530,14 @@ fn cmake_build(
             "-Wno-dev",
         ])
         .current_dir(&build_subdir);
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("CMake configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("CMake configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "CMake configure failed with status: {}", output.status
         )));
     }
@@ -576,17 +546,14 @@ fn cmake_build(
     let mut cmd = Command::new("make");
     cmd.arg("install")
         .current_dir(&build_subdir);
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("CMake make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("CMake make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "CMake make install failed with status: {}", output.status
         )));
     }
@@ -598,7 +565,7 @@ fn cmake_build(
 fn meson_build(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Building with Meson");
     let build_subdir = build_dir.join("brew-rs-build");
@@ -610,17 +577,14 @@ fn meson_build(
         .arg(&build_subdir)
         .arg(".")
         .current_dir(build_dir);
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("Meson setup stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("Meson setup stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Meson setup failed with status: {}", output.status
         )));
     }
@@ -631,17 +595,14 @@ fn meson_build(
         .arg("-C")
         .arg(&build_subdir)
         .current_dir(build_dir);
-    cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("Meson install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("Meson install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Meson install failed with status: {}", output.status
         )));
     }
@@ -653,7 +614,7 @@ fn meson_build(
 fn cargo_build(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Building with Cargo");
 
@@ -667,16 +628,14 @@ fn cargo_build(
         .arg("--release")
         .current_dir(build_dir);
     cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("Cargo build stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("Cargo build stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Cargo build failed with status: {}", output.status
         )));
     }
@@ -726,7 +685,7 @@ fn cargo_build(
 fn python_build(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Building with Python setup.py");
     // Find the python executable, preferably one managed by Homebrew if available
@@ -740,16 +699,14 @@ fn python_build(
         .arg(format!("--prefix={}", install_dir.display()))
         .current_dir(build_dir);
     cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("Python install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("Python install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Python setup.py install failed with status: {}", output.status
         )));
     }
@@ -761,7 +718,7 @@ fn python_build(
 fn simple_make(
     build_dir: &Path,
     install_dir: &Path,
-    env_map: &HashMap<String, String>,
+    build_env: &BuildEnvironment,
 ) -> Result<()> {
     println!("==> Building with simple Makefile");
 
@@ -769,16 +726,14 @@ fn simple_make(
     let mut cmd = Command::new("make");
     cmd.current_dir(build_dir);
     cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("Make stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     println!("Make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Make failed with status: {}", output.status
         )));
     }
@@ -789,9 +744,7 @@ fn simple_make(
         .arg(format!("PREFIX={}", install_dir.display()))
         .current_dir(build_dir);
     cmd.env_clear();
-    for (key, value) in env_map {
-        cmd.env(key, value);
-    }
+    build_env.apply_to_command(&mut cmd);
     let output = cmd.output()?;
 
     println!("Make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
@@ -801,7 +754,7 @@ fn simple_make(
         // Some Makefiles might not have an install target, this might be okay
         // but we should probably check if files were actually installed.
         // For now, treat it as an error if the command fails.
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Make install failed with status: {}", output.status
         )));
     }

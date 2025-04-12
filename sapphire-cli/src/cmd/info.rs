@@ -4,7 +4,7 @@
 use sapphire_core::fetch::api;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
-use sapphire_core::utils::error::{BrewRsError, Result};
+use sapphire_core::utils::error::{SapphireError, Result};
 use sapphire_core::model::formula::Formula;
 use serde_json::Value;
 
@@ -23,7 +23,7 @@ pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
             return Ok(());
         }
         // If specified as a cask but not found, return an error
-        return Err(BrewRsError::NotFound(format!("Cask '{}' not found", name)));
+        return Err(SapphireError::NotFound(format!("Cask '{}' not found", name)));
     } else {
         // Try as formula first
         if let Ok(info) = get_formula_info_raw(&cache, name).await {
@@ -39,7 +39,7 @@ pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
     }
 
     // If we get here, the package was not found
-    Err(BrewRsError::NotFound(format!("Package '{}' not found", name)))
+    Err(SapphireError::NotFound(format!("Package '{}' not found", name)))
 }
 
 /// Public function that retrieves formula information and returns the Formula model
@@ -53,7 +53,7 @@ pub async fn get_formula_info(name: &str) -> Result<Formula> {
 
     // Parse the JSON into a Formula struct
     let formula: Formula = serde_json::from_value(raw_info)
-        .map_err(|e| BrewRsError::Json(e))?;
+        .map_err(|e| SapphireError::Json(e))?;
 
     Ok(formula)
 }

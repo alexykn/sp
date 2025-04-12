@@ -2,11 +2,11 @@
 
 pub mod formula;
 pub mod cask;
+pub mod devtools;
 pub mod env;
 
 // Re-export common functionality
 pub use formula::{get_cellar_path, get_formula_cellar_path, extract_archive, write_receipt};
-pub use env::{setup_build_environment, ResolvedDependency};
 
 // Helper function to get Homebrew prefix (used by build modules)
 pub fn get_homebrew_prefix() -> std::path::PathBuf {

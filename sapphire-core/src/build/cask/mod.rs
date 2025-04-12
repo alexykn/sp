@@ -7,7 +7,7 @@ pub mod pkg;
 pub mod zip;
 
 use std::path::{Path, PathBuf};
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
 use crate::utils::cache::Cache;
 use reqwest::Url;
@@ -44,18 +44,18 @@ pub fn get_cask_path(cask: &Cask) -> PathBuf {
 /// Download a cask
 pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     let urls = cask.url.as_ref().ok_or_else(|| {
-        BrewRsError::Generic(format!("Cask {} has no URL", cask.token))
+        SapphireError::Generic(format!("Cask {} has no URL", cask.token))
     })?;
 
     if urls.is_empty() {
-        return Err(BrewRsError::Generic(format!("Cask {} has empty URL list", cask.token)));
+        return Err(SapphireError::Generic(format!("Cask {} has empty URL list", cask.token)));
     }
 
     let url_str = &urls[0];
     println!("==> Downloading cask from {}", url_str);
 
     let url = Url::parse(url_str).map_err(|e| {
-        BrewRsError::Generic(format!("Invalid URL '{}': {}", url_str, e))
+        SapphireError::Generic(format!("Invalid URL '{}': {}", url_str, e))
     })?;
 
     let file_name = url.path_segments()
@@ -78,17 +78,17 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         .send()
         .await
         .map_err(|e| {
-            BrewRsError::Generic(format!("Failed to download cask: {}", e))
+            SapphireError::Generic(format!("Failed to download cask: {}", e))
         })?;
 
     if !response.status().is_success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Failed to download cask: HTTP status {}", response.status()
         )));
     }
 
     let bytes = response.bytes().await.map_err(|e| {
-        BrewRsError::Generic(format!("Failed to read download response: {}", e))
+        SapphireError::Generic(format!("Failed to read download response: {}", e))
     })?;
 
     // Ensure cache directory exists before writing
@@ -124,7 +124,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path) -> Result<()> {
         "dmg" => dmg::install_from_dmg(cask, download_path, &caskroom_path),
         "pkg" | "mpkg" => pkg::install_pkg_from_path(cask, download_path, &caskroom_path),
         "zip" => zip::install_from_zip(cask, download_path, &caskroom_path),
-        _ => Err(BrewRsError::Generic(format!(
+        _ => Err(SapphireError::Generic(format!(
             "Unsupported file type: {}", extension
         ))),
     };
@@ -175,7 +175,7 @@ pub fn write_receipt(cask: &Cask, caskroom_path: &Path, artifacts: Vec<String>) 
     // Create receipt data
     // Map SystemTimeError explicitly
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
-        .map_err(|e: SystemTimeError| BrewRsError::Generic(format!("System time error: {}", e)))?
+        .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {}", e)))?
         .as_secs();
 
     let receipt_data = json!({

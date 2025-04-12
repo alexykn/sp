@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::os::unix::fs as unix_fs;
 use serde_json;
-use crate::utils::error::BrewRsError;
+use crate::utils::error::SapphireError;
 
 /// Link binaries from a formula's installation directory to the bin directory
 pub fn link_formula_binaries(formula: &Formula, formula_dir: &Path) -> Result<()> {
@@ -57,7 +57,7 @@ pub fn link_formula_binaries(formula: &Formula, formula_dir: &Path) -> Result<()
     if !symlinks.is_empty() {
         let manifest_path = formula_dir.join("INSTALL_MANIFEST.json");
         let manifest_json = serde_json::to_string_pretty(&symlinks)
-            .map_err(|e| BrewRsError::Generic(e.to_string()))?;
+            .map_err(|e| SapphireError::Generic(e.to_string()))?;
         fs::write(&manifest_path, manifest_json)?;
         println!("Wrote install manifest: {}", manifest_path.display());
     }
@@ -118,7 +118,7 @@ pub fn link_formula_artifacts(formula: &Formula, formula_dir: &Path) -> Result<(
     if !symlinks.is_empty() {
         let manifest_path = formula_dir.join("INSTALL_MANIFEST.json");
         let manifest_json = serde_json::to_string_pretty(&symlinks)
-            .map_err(|e| BrewRsError::Generic(e.to_string()))?;
+            .map_err(|e| SapphireError::Generic(e.to_string()))?;
         fs::write(&manifest_path, manifest_json)?;
         println!("Wrote install manifest: {}", manifest_path.display());
     }

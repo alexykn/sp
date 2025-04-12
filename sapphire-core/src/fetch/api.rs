@@ -1,7 +1,7 @@
 // src/fetch/api.rs
 // This module handles API interactions with the Homebrew API.
 
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use reqwest;
 use serde_json::Value;
 use reqwest::Client;
@@ -22,17 +22,17 @@ pub async fn fetch_raw_json(endpoint: &str) -> Result<String> {
         .await
         .map_err(|e| {
             log::error!("HTTP request failed: {}", e);
-            BrewRsError::Http(e)
+            SapphireError::Http(e)
         })?;
 
     if !response.status().is_success() {
         log::error!("HTTP request returned non-success status: {}", response.status());
-        return Err(BrewRsError::Api(format!("HTTP status: {}", response.status())));
+        return Err(SapphireError::Api(format!("HTTP status: {}", response.status())));
     }
 
     let body = response.text().await.map_err(|e| {
         log::error!("Failed to read response body: {}", e);
-        BrewRsError::Http(e)
+        SapphireError::Http(e)
     })?;
 
     Ok(body)
@@ -70,7 +70,7 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
             }
         }
         // If not found after checking all
-        Err(BrewRsError::NotFound(format!("Formula '{}' not found", name)))
+        Err(SapphireError::NotFound(format!("Formula '{}' not found", name)))
     }
 }
 
@@ -96,7 +96,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
             }
         }
         // If not found after checking all
-        Err(BrewRsError::NotFound(format!("Cask '{}' not found", token)))
+        Err(SapphireError::NotFound(format!("Cask '{}' not found", token)))
     }
 }
 
@@ -121,7 +121,7 @@ pub async fn get_cask(name: &str) -> Result<Cask> {
     // Parse the response as a single Cask object
     let cask: Cask = serde_json::from_str(&response).map_err(|e| {
         log::error!("Failed to parse cask JSON: {}", e);
-        BrewRsError::ParseError("Cask", e.to_string())
+        SapphireError::ParseError("Cask", e.to_string())
     })?;
 
     Ok(cask)
@@ -141,17 +141,17 @@ async fn fetch_json(url: &str) -> Result<Value> {
     let response = client.get(url)
         .send()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     if !response.status().is_success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Failed to fetch data: HTTP status {}", response.status()
         )));
     }
 
     let value = response.json::<Value>()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     Ok(value)
 }
@@ -162,17 +162,17 @@ async fn fetch_and_parse_json<T: serde::de::DeserializeOwned>(url: &str) -> Resu
     let response = client.get(url)
         .send()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     if !response.status().is_success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Failed to fetch data: HTTP status {}", response.status()
         )));
     }
 
     let parsed = response.json::<T>()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     Ok(parsed)
 }

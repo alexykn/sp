@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use std::fs;
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 
 // TODO: Define cache directory structure (e.g., ~/.cache/brew-rs-client)
@@ -23,7 +23,7 @@ impl Cache {
     /// Creates a new Cache instance with the specified cache directory
     pub fn new(cache_dir: &Path) -> Result<Self> {
         if !cache_dir.exists() {
-            fs::create_dir_all(cache_dir).map_err(|e| BrewRsError::Io(e))?;
+            fs::create_dir_all(cache_dir).map_err(|e| SapphireError::Io(e))?;
         }
 
         Ok(Self {
@@ -40,7 +40,7 @@ impl Cache {
     pub fn store_raw(&self, filename: &str, data: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
         log::debug!("Saving raw data to cache file: {:?}", path);
-        fs::write(&path, data).map_err(|e| BrewRsError::Io(e))?;
+        fs::write(&path, data).map_err(|e| SapphireError::Io(e))?;
         Ok(())
     }
 
@@ -50,10 +50,10 @@ impl Cache {
         log::debug!("Loading raw data from cache file: {:?}", path);
 
         if !path.exists() {
-            return Err(BrewRsError::Cache(format!("Cache file {} does not exist", filename)));
+            return Err(SapphireError::Cache(format!("Cache file {} does not exist", filename)));
         }
 
-        fs::read_to_string(&path).map_err(|e| BrewRsError::Io(e))
+        fs::read_to_string(&path).map_err(|e| SapphireError::Io(e))
     }
 
     /// Checks if a cache file exists and is valid (within TTL)
@@ -66,7 +66,7 @@ impl Cache {
         let metadata = fs::metadata(&path)?;
         let modified_time = metadata.modified()?;
         let age = SystemTime::now().duration_since(modified_time)
-            .map_err(|e| BrewRsError::Cache(format!("System time error: {}", e)))?;
+            .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
 
         Ok(age <= CACHE_TTL)
     }
@@ -75,7 +75,7 @@ impl Cache {
     pub fn clear_file(&self, filename: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
         if path.exists() {
-            fs::remove_file(&path).map_err(|e| BrewRsError::Io(e))?;
+            fs::remove_file(&path).map_err(|e| SapphireError::Io(e))?;
         }
         Ok(())
     }
@@ -83,8 +83,8 @@ impl Cache {
     /// Clears all cache files
     pub fn clear_all(&self) -> Result<()> {
         if self.cache_dir.exists() {
-            fs::remove_dir_all(&self.cache_dir).map_err(|e| BrewRsError::Io(e))?;
-            fs::create_dir_all(&self.cache_dir).map_err(|e| BrewRsError::Io(e))?;
+            fs::remove_dir_all(&self.cache_dir).map_err(|e| SapphireError::Io(e))?;
+            fs::create_dir_all(&self.cache_dir).map_err(|e| SapphireError::Io(e))?;
         }
         Ok(())
     }
@@ -94,13 +94,13 @@ impl Cache {
 /// Uses dirs::cache_dir() to find the appropriate system cache location.
 pub fn get_cache_dir() -> Result<PathBuf> {
     let base_cache_dir = dirs::cache_dir()
-        .ok_or_else(|| BrewRsError::Cache("Could not determine system cache directory".to_string()))?;
+        .ok_or_else(|| SapphireError::Cache("Could not determine system cache directory".to_string()))?;
     let app_cache_dir = base_cache_dir.join(CACHE_SUBDIR);
 
     if !app_cache_dir.exists() {
         log::debug!("Creating cache directory at {:?}", app_cache_dir);
         fs::create_dir_all(&app_cache_dir).map_err(|e| {
-            BrewRsError::Io(e)
+            SapphireError::Io(e)
             // Consider a specific Cache error variant: Cache(format!("Failed to create cache dir: {}", e))
         })?;
     }
@@ -131,18 +131,18 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
 
     if !path.exists() {
         log::debug!("Cache file not found.");
-        return Err(BrewRsError::Cache("Cache file does not exist".to_string()));
+        return Err(SapphireError::Cache("Cache file does not exist".to_string()));
     }
 
     // Check cache file age
     let metadata = fs::metadata(&path)?;
     let modified_time = metadata.modified()?;
     let age = SystemTime::now().duration_since(modified_time)
-        .map_err(|e| BrewRsError::Cache(format!("System time error: {}", e)))?;
+        .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
 
     if age > CACHE_TTL {
         log::debug!("Cache file expired (age: {:?}, TTL: {:?}).", age, CACHE_TTL);
-        return Err(BrewRsError::Cache(format!(
+        return Err(SapphireError::Cache(format!(
             "Cache file expired ({} > {})",
             humantime::format_duration(age),
             humantime::format_duration(CACHE_TTL)
@@ -174,6 +174,6 @@ pub fn is_cache_valid(filename: &str) -> Result<bool> {
     let metadata = fs::metadata(&path)?;
     let modified_time = metadata.modified()?;
     let age = SystemTime::now().duration_since(modified_time)
-        .map_err(|e| BrewRsError::Cache(format!("System time error: {}", e)))?;
+        .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
     Ok(age <= CACHE_TTL)
 }

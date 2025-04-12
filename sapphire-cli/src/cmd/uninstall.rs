@@ -1,7 +1,7 @@
 // src/cmd/uninstall.rs
 // Contains the logic for the `uninstall` command.
 
-use sapphire_core::utils::error::{BrewRsError, Result};
+use sapphire_core::utils::error::{SapphireError, Result};
 use crate::cmd::info;
 use sapphire_core::build;
 use std::fs;
@@ -23,7 +23,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
         let cellar_path = build::formula::get_formula_cellar_path(&formula);
 
         if !cellar_path.exists() {
-            return Err(BrewRsError::NotFound(format!("Formula '{}' is not installed (no keg at {})", name, cellar_path.display())));
+            return Err(SapphireError::NotFound(format!("Formula '{}' is not installed (no keg at {})", name, cellar_path.display())));
         }
 
         // Count files before removal
@@ -76,7 +76,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
         let caskroom_path = build::cask::get_cask_path(&cask);
 
         if !caskroom_path.exists() {
-            return Err(BrewRsError::NotFound(format!("Cask '{}' is not installed (no caskroom at {})", name, caskroom_path.display())));
+            return Err(SapphireError::NotFound(format!("Cask '{}' is not installed (no caskroom at {})", name, caskroom_path.display())));
         }
 
         // Count files before removal (might be less accurate for casks)
@@ -169,7 +169,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
     }
 
     // If not found as formula or cask
-    Err(BrewRsError::NotFound(format!("Formula or Cask '{}' not found or not installed", name)))
+    Err(SapphireError::NotFound(format!("Formula or Cask '{}' not found or not installed", name)))
 }
 
 /// Count files and calculate total size in a directory
@@ -179,11 +179,11 @@ fn count_files_and_size(path: &PathBuf) -> Result<(usize, u64)> {
 
     // Walk the directory recursively
     for entry in walkdir::WalkDir::new(path) {
-        let entry = entry.map_err(|e| BrewRsError::Generic(e.to_string()))?;
+        let entry = entry.map_err(|e| SapphireError::Generic(e.to_string()))?;
         if entry.file_type().is_file() {
             file_count += 1;
             total_size += entry.metadata()
-                .map_err(|e| BrewRsError::Generic(e.to_string()))?
+                .map_err(|e| SapphireError::Generic(e.to_string()))?
                 .len();
         }
     }

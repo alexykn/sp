@@ -1,11 +1,11 @@
 // src/cmd/install.rs
 // Contains the logic for the `install` command.
 
-use sapphire_core::utils::error::{BrewRsError, Result};
+use sapphire_core::utils::error::{SapphireError, Result};
 use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::config::Config;
 use sapphire_core::build;
-use sapphire_core::build::env::ResolvedDependency;
+use sapphire_core::dependency::{Dependency, DependencyExt, DependencyTag};
 use std::collections::HashSet;
 use futures::future::BoxFuture;
 use sapphire_core::fetch::api;
@@ -31,7 +31,7 @@ pub struct InstallArgs {
 
 pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
     let cache = Cache::new(&config.cache_dir).map_err(|e| {
-        BrewRsError::Generic(format!("Failed to initialize cache: {}", e))
+        SapphireError::Generic(format!("Failed to initialize cache: {}", e))
     })?;
 
     for name in &args.names {
@@ -51,12 +51,12 @@ fn install_as_formula<'a>(
     config: &'a Config,
     cache: &'a Cache,
     include_deps: bool
-) -> BoxFuture<'a, Result<ResolvedDependency>> {
+) -> BoxFuture<'a, Result<()>> {
     Box::pin(async move {
         println!("==> Installing formula: {}", name);
 
         let formula = api::get_formula(name).await.map_err(|e| {
-            BrewRsError::Generic(format!("Failed to fetch formula '{}': {}", name, e))
+            SapphireError::Generic(format!("Failed to fetch formula '{}': {}", name, e))
         })?;
 
         // Determine install path *before* dependency check to avoid duplicate installs
@@ -67,16 +67,13 @@ fn install_as_formula<'a>(
         if opt_path.exists() {
             println!("Formula {} is already installed and linked", name);
             // Return info about the existing installation
-            return Ok(ResolvedDependency {
-                formula: formula.clone(),
-                prefix: install_dir,
-            });
+            println!("Already installed: {}", name);
+            return Ok(());
         }
 
         // Check if we need to ensure autoconf, automake and libtool are installed
         // before attempting to build other formulas
         let build_tools_needed = formula_needs_build_tools(&formula);
-        let mut resolved_deps = Vec::new();
 
         if build_tools_needed && include_deps {
             // Ensure autotools are available first
@@ -126,18 +123,18 @@ fn install_as_formula<'a>(
 
         if include_deps {
             // Process regular dependencies and get their resolved info
-            resolved_deps = process_formula_deps(&formula, config, cache).await?;
+            process_formula_deps(&formula, config, cache).await?;
         }
 
         let download_path = build::formula::download_formula(&formula, config).await.map_err(|e| {
-            BrewRsError::Generic(format!("Failed to download formula '{}': {}", name, e))
+            SapphireError::Generic(format!("Failed to download formula '{}': {}", name, e))
         })?;
 
         if build::formula::has_bottle_for_current_platform(&formula) {
             build::formula::bottle::install_bottle(&download_path, &formula)?;
         } else {
             // Pass resolved dependencies to build_from_source
-            build::formula::source::build_from_source(&download_path, &formula, &resolved_deps)?;
+            build::formula::source::build_from_source(&download_path, &formula)?;
         }
 
         build::formula::link::link_formula_binaries(&formula, &install_dir)?;
@@ -145,10 +142,7 @@ fn install_as_formula<'a>(
         println!("==> Successfully installed {}", formula.name);
 
         // Return info about the newly installed formula
-        Ok(ResolvedDependency {
-            formula: formula.clone(),
-            prefix: install_dir,
-        })
+        Ok(())
     })
 }
 
@@ -168,19 +162,15 @@ fn formula_needs_build_tools(formula: &Formula) -> bool {
     }
 
     // If building from source and has certain build/runtime dependencies, likely needs autotools
-    if formula.dependencies.contains(&"autoconf".to_string()) ||
-       formula.dependencies.contains(&"automake".to_string()) ||
-       formula.dependencies.contains(&"libtool".to_string()) ||
-       formula.dependencies.contains(&"m4".to_string()) {
+    if dependency_names_contain(&formula.dependencies, "autoconf")
+        || dependency_names_contain(&formula.dependencies, "automake")
+        || dependency_names_contain(&formula.dependencies, "libtool")
+        || dependency_names_contain(&formula.dependencies, "m4")
+    {
         return true;
     }
 
-    if formula.build_dependencies.contains(&"autoconf".to_string()) ||
-       formula.build_dependencies.contains(&"automake".to_string()) ||
-       formula.build_dependencies.contains(&"libtool".to_string()) ||
-       formula.build_dependencies.contains(&"m4".to_string()) {
-        return true;
-    }
+    // No build_dependencies field in Formula; skip this block.
 
     // Check if we'll need autoconf (configure.ac/.in existence could be checked if we had source)
     // These are common packages that typically use autoconf
@@ -204,18 +194,17 @@ fn process_formula_deps<'a>(
     formula: &'a Formula,
     config: &'a Config,
     cache: &'a Cache
-) -> BoxFuture<'a, Result<Vec<ResolvedDependency>>> {
+) -> BoxFuture<'a, Result<()>> {
     Box::pin(async move {
         // Gather all relevant dependencies (runtime and build)
         let mut all_deps_set = HashSet::new();
+        // Use DependencyExt to get all runtime and build-time dependencies
         all_deps_set.extend(formula.dependencies.iter().cloned());
-        all_deps_set.extend(formula.build_dependencies.iter().cloned());
         // Optionally add recommended dependencies if desired
         // all_deps_set.extend(formula.recommended_dependencies.iter().cloned());
 
-        let all_deps: Vec<String> = all_deps_set.into_iter().collect();
+        let all_deps: Vec<String> = all_deps_set.into_iter().map(|dep| dep.name.clone()).collect();
 
-        let mut resolved_deps_vec = Vec::new();
         let mut visited = HashSet::new(); // Keep track of visited deps during this call
 
         if !all_deps.is_empty() {
@@ -230,8 +219,7 @@ fn process_formula_deps<'a>(
                 // to avoid infinite loops for circular deps within this layer.
                 // The install_as_formula function handles the global check (is it already installed?).
                 if !visited.contains(dep_name.as_str()) {
-                    let resolved_dep = install_as_formula(dep_name, config, cache, true).await?;
-                    resolved_deps_vec.push(resolved_dep);
+                    install_as_formula(dep_name, config, cache, true).await?;
                     visited.insert(dep_name.clone());
                 }
             }
@@ -239,8 +227,13 @@ fn process_formula_deps<'a>(
 
         // The resolved_deps_vec now contains ResolvedDependency info for all
         // runtime AND build dependencies that were installed/found.
-        Ok(resolved_deps_vec)
+        Ok(())
     })
+}
+
+/// Helper to check if a dependency list contains a dependency by name
+fn dependency_names_contain(deps: &[sapphire_core::dependency::Dependency], name: &str) -> bool {
+    deps.iter().any(|dep| (*dep).name == name)
 }
 
 // Use boxing for async recursion
@@ -252,7 +245,7 @@ fn install_cask<'a>(
         println!("==> Installing cask: {}", name);
 
         let cask = api::get_cask(name).await.map_err(|e| {
-            BrewRsError::Generic(format!("Failed to fetch cask '{}': {}", name, e))
+            SapphireError::Generic(format!("Failed to fetch cask '{}': {}", name, e))
         })?;
 
         if cask.is_installed() {
@@ -272,7 +265,7 @@ fn install_cask<'a>(
         install_cask_dependencies(&cask, cache).await?;
 
         let download_path = build::cask::download_cask(&cask, cache).await.map_err(|e| {
-            BrewRsError::Generic(format!("Failed to download cask '{}': {}", name, e))
+            SapphireError::Generic(format!("Failed to download cask '{}': {}", name, e))
         })?;
 
         build::cask::install_cask(&cask, &download_path)?;

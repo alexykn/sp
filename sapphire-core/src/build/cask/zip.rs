@@ -1,7 +1,7 @@
 // src/build/cask/zip.rs
 // Contains logic for extracting ZIP files for cask installation
 
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,7 +26,7 @@ pub fn install_from_zip(cask: &Cask, zip_path: &Path, caskroom_path: &Path) -> R
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Failed to extract ZIP file: {}", String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -57,7 +57,7 @@ fn process_zip_content(cask: &Cask, extract_dir: &Path, caskroom_path: &Path) ->
     }
 
     // If we couldn't find anything to install, return an error
-    Err(BrewRsError::Generic(format!(
+    Err(SapphireError::Generic(format!(
         "Couldn't find any installable artifacts in ZIP: {}", extract_dir.display()
     )))
 }
@@ -68,7 +68,7 @@ fn find_executable_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => return Err(BrewRsError::Generic(format!(
+        Err(e) => return Err(SapphireError::Generic(format!(
             "Failed to read directory {}: {}", dir.display(), e
         ))),
     };
@@ -76,7 +76,7 @@ fn find_executable_files(dir: &Path) -> Result<Vec<PathBuf>> {
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(e) => return Err(BrewRsError::Generic(format!(
+            Err(e) => return Err(SapphireError::Generic(format!(
                 "Failed to read directory entry: {}", e
             ))),
         };
@@ -126,7 +126,7 @@ fn install_binary_files(cask: &Cask, binary_paths: &[PathBuf], caskroom_path: &P
     // Copy each binary to the bin directory
     for binary_path in binary_paths {
         let binary_name = binary_path.file_name()
-            .ok_or_else(|| BrewRsError::Generic("Invalid binary path".to_string()))?;
+            .ok_or_else(|| SapphireError::Generic("Invalid binary path".to_string()))?;
 
         let destination = bin_dir.join(binary_name);
 
@@ -151,7 +151,7 @@ fn install_binary_files(cask: &Cask, binary_paths: &[PathBuf], caskroom_path: &P
 
     for binary_path in binary_paths {
         let binary_name = binary_path.file_name()
-            .ok_or_else(|| BrewRsError::Generic("Invalid binary path".to_string()))?;
+            .ok_or_else(|| SapphireError::Generic("Invalid binary path".to_string()))?;
 
         let source = bin_dir.join(binary_name); // Source is the copied binary in caskroom/bin
         let link_path = homebrew_bin.join(binary_name); // Target is the link in Homebrew's bin

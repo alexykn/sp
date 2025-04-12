@@ -2,139 +2,206 @@
 // This module defines structures and logic related to Formulas.
 // Formulas are typically recipes for building software from source.
 
+use crate::dependency::{Dependency, Requirement, DependencyTag};
+use crate::model::version::Version;
+use crate::utils::error::{Result, SapphireError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BottleFileSpec {
+    pub url: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BottleSpec {
+    pub stable: Option<BottleStableSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BottleStableSpec {
+    pub rebuild: u32,
+    #[serde(default)]
+    pub files: HashMap<String, BottleFileSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Formula {
+    pub name: String,
+    pub version: Version,
+    #[serde(default)]
+    pub revision: u32,
+    #[serde(default)]
+    pub desc: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+
+    /// Source download URL (stable version)
+    pub url: String,
+    /// SHA256 checksum for the source archive
+    pub sha256: String,
+
+    /// Optional mirrors for the source archive
+    #[serde(default)]
+    pub mirrors: Vec<String>,
+
+    /// Bottle information (pre-compiled binaries)
+    #[serde(default)]
+    pub bottle: BottleSpec,
+
+    /// Parsed dependencies from the formula definition.
+    #[serde(default)]
+    pub dependencies: Vec<Dependency>,
+
+    /// Parsed requirements from the formula definition.
+    #[serde(default)]
+    pub requirements: Vec<Requirement>,
+
+    /// Installation path - determined *after* installation, not part of definition
+    #[serde(skip)]
+    install_keg_path: Option<PathBuf>,
+}
+
+impl Formula {
+    pub fn new(name: impl Into<String>, version_str: &str, url: String, sha256: String) -> Result<Self> {
+        Ok(Self {
+            name: name.into(),
+            version: Version::parse(version_str)?,
+            revision: 0,
+            desc: None,
+            homepage: None,
+            url,
+            sha256,
+            mirrors: Vec::new(),
+            bottle: BottleSpec::default(),
+            dependencies: Vec::new(),
+            requirements: Vec::new(),
+            install_keg_path: None,
+        })
+    }
+
+    pub fn new_dummy(name: &str) -> Self {
+        let (version, url, sha) = match name {
+            "curl" => ("8.7.1", "https://curl.se/download/curl-8.7.1.tar.gz", "EXAMPLE_SHA_CURL"),
+            "openssl" => ("3.3.0", "https://www.openssl.org/source/openssl-3.3.0.tar.gz", "EXAMPLE_SHA_OPENSSL"),
+            "pkg-config" => ("0.29.2", "https://pkgconfig.freedesktop.org/releases/pkg-config-0.29.2.tar.gz", "EXAMPLE_SHA_PKGCONF"),
+            "ca-certificates" => ("2024-03-11", "https://curl.se/ca/cacert-2024-03-11.pem", "EXAMPLE_SHA_CACERTS"),
+            _ => ("1.0.0", "http://example.com/dummy-1.0.0.tar.gz", "EXAMPLE_SHA_DUMMY")
+        };
+
+        let mut f = Self::new(name, version, url.to_string(), sha.to_string()).expect("Dummy creation failed");
+
+        if name == "curl" {
+            f.dependencies.push(Dependency::new_runtime("openssl"));
+            f.dependencies.push(Dependency::new_with_tags("pkg-config", DependencyTag::BUILD));
+        } else if name == "openssl" {
+            f.dependencies.push(Dependency::new_runtime("ca-certificates"));
+        }
+        f
+    }
+
+    pub fn dependencies(&self) -> Result<Vec<Dependency>> {
+        Ok(self.dependencies.clone())
+    }
+
+    pub fn requirements(&self) -> Result<Vec<Requirement>> {
+        Ok(self.requirements.clone())
+    }
+
+    pub fn set_keg_path(&mut self, path: PathBuf) {
+        self.install_keg_path = Some(path);
+    }
+
+    pub fn version_str_full(&self) -> String {
+        if self.revision > 0 {
+            format!("{}_{}", self.version, self.revision)
+        } else {
+            self.version.to_string()
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    /// Gets the primary source download URL.
+    pub fn source_url(&self) -> &str {
+        &self.url
+    }
+
+    /// Gets the expected SHA256 for the source download.
+    pub fn source_sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Gets the bottle information for a specific tag (e.g., "arm64_sonoma").
+    pub fn get_bottle_spec(&self, bottle_tag: &str) -> Option<&BottleFileSpec> {
+        self.bottle.stable.as_ref()?.files.get(bottle_tag)
+    }
+}
 
 // TODO: Define a struct `Formula` to represent the data parsed from the API.
 // This might include fields like: name, full_name, desc, version, homepage, urls, dependencies, etc.
 
 // Defines the Formula struct based on Homebrew API JSON structure.
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Formula {
-    pub name: String,
-    pub full_name: String,
-    pub tap: Option<String>,
 
-    #[serde(default)]
-    pub oldnames: Vec<String>,
+// --- BuildEnvironment Dependency Interface ---
 
-    #[serde(default)]
-    pub aliases: Vec<String>,
 
-    #[serde(default)]
-    pub versioned_formulae: Vec<String>,
+/// Trait defining the interface expected by BuildEnvironment for formula objects.
+pub trait FormulaDependencies {
+    /// Returns the formula's name (for temp dir, logging, etc).
+    fn name(&self) -> &str;
 
-    #[serde(alias = "desc")] // Allow "desc" or "description"
-    pub description: Option<String>,
+    /// Returns the install prefix for this formula.
+    fn install_prefix(&self) -> Result<PathBuf>;
 
-    pub homepage: Option<String>,
-    pub license: Option<String>, // License can be null
+    /// Returns the resolved installation paths (keg roots) for runtime dependencies.
+    fn resolved_runtime_dependency_paths(&self) -> Result<Vec<PathBuf>>;
 
-    // Capture the versions object directly
-    #[serde(default)]
-    pub versions: FormulaVersions,
+    /// Returns the resolved installation paths (keg roots) for build-time dependencies.
+    fn resolved_build_dependency_paths(&self) -> Result<Vec<PathBuf>>;
 
-    // Capture the urls object directly
-    #[serde(default)]
-    pub urls: UrlMap,
+    /// Returns all resolved dependency paths (runtime + build).
+    fn all_resolved_dependency_paths(&self) -> Result<Vec<PathBuf>> {
+        let mut runtime = self.resolved_runtime_dependency_paths()?;
+        let build = self.resolved_build_dependency_paths()?;
+        runtime.extend(build);
+        runtime.sort();
+        runtime.dedup();
+        Ok(runtime)
+    }
+}
 
-    #[serde(default)]
-    pub revision: u32,
+impl FormulaDependencies for Formula {
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    #[serde(default)]
-    pub version_scheme: u32,
+    fn install_prefix(&self) -> Result<PathBuf> {
+        // Placeholder: In a real implementation, this would compute the install prefix
+        // based on the formula's name, tap, and the Sapphire/Homebrew prefix.
+        // For now, return an error to indicate this needs to be implemented.
+        Err(SapphireError::BuildEnvError(
+            "install_prefix() not yet implemented for Formula".to_string(),
+        ))
+    }
 
-    // Bottle information
-    #[serde(default)]
-    pub bottle: BottleMap,
+    fn resolved_runtime_dependency_paths(&self) -> Result<Vec<PathBuf>> {
+        // Placeholder: Would resolve runtime dependencies to their keg paths.
+        Ok(Vec::new())
+    }
 
-    #[serde(default)]
-    pub pour_bottle_only_if: Option<serde_json::Value>,
-
-    #[serde(default)]
-    pub keg_only: bool,
-
-    pub keg_only_reason: Option<serde_json::Value>,
-
-    // Dependencies
-    #[serde(default)]
-    pub dependencies: Vec<String>,
-
-    #[serde(default)]
-    pub build_dependencies: Vec<String>,
-
-    #[serde(default)]
-    pub test_dependencies: Vec<String>,
-
-    #[serde(default)]
-    pub recommended_dependencies: Vec<String>,
-
-    #[serde(default)]
-    pub optional_dependencies: Vec<String>,
-
-    #[serde(default)]
-    pub uses_from_macos: Vec<serde_json::Value>,
-
-    #[serde(default)]
-    pub uses_from_macos_bounds: Vec<serde_json::Value>,
-
-    #[serde(default)]
-    pub conflicts_with: Vec<String>,
-
-    #[serde(default)]
-    pub conflicts_with_reasons: Vec<String>,
-
-    #[serde(default)]
-    pub link_overwrite: Vec<String>,
-
-    // Other fields
-    pub caveats: Option<String>,
-
-    #[serde(default)]
-    pub installed: Vec<serde_json::Value>, // Installation information
-
-    pub linked_keg: Option<String>,
-
-    #[serde(default)]
-    pub pinned: bool,
-
-    #[serde(default)]
-    pub outdated: bool,
-
-    // Deprecation and disablement info
-    #[serde(default)]
-    pub deprecated: bool,
-
-    pub deprecation_date: Option<String>,
-    pub deprecation_reason: Option<String>,
-    pub deprecation_replacement: Option<String>,
-
-    #[serde(default)]
-    pub disabled: bool,
-
-    pub disable_date: Option<String>,
-    pub disable_reason: Option<String>,
-    pub disable_replacement: Option<String>,
-
-    // Metadata
-    #[serde(default)]
-    pub post_install_defined: bool,
-
-    pub service: Option<serde_json::Value>,
-    pub tap_git_head: Option<String>,
-    pub ruby_source_path: Option<String>,
-
-    pub ruby_source_checksum: Option<HashMap<String, String>>,
-
-    #[serde(default)]
-    pub variations: HashMap<String, serde_json::Value>,
-    /// Whether this formula requires C++11 (Homebrew DSL: `needs :cxx11`)
-    #[serde(default)]
-    pub requires_cpp11: Option<bool>,
-
-    /// The C++ standard library to use, e.g. "libc++" or "libstdc++"
-    #[serde(default)]
-    pub stdlib: Option<String>,
+    fn resolved_build_dependency_paths(&self) -> Result<Vec<PathBuf>> {
+        // Placeholder: Would resolve build dependencies to their keg paths.
+        Ok(Vec::new())
+    }
 }
 
 // Represents the versions object in the JSON

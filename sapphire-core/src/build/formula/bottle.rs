@@ -1,9 +1,8 @@
 // src/build/formula/bottle.rs
 // Contains logic for downloading and handling bottle files
 
-use crate::utils::error::{BrewRsError, Result};
-use crate::model::formula::Formula;
-use crate::model::formula::BottleFile;
+use crate::utils::error::{SapphireError, Result};
+use crate::model::formula::{Formula, BottleFileSpec};
 use crate::utils::config::Config;
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
@@ -16,10 +15,11 @@ pub async fn download_bottle(formula: &Formula, config: &Config) -> Result<PathB
     // Get the bottle URL for the current platform
     let (platform, bottle_file) = get_bottle_for_platform(formula)?;
 
-    let url = match &bottle_file.url {
-        Some(url) => url,
-        None => return Err(BrewRsError::Generic(format!("No URL for bottle on platform {}", platform)))
-    };
+    // Adjust URL handling since BottleFileSpec.url is a String
+    if bottle_file.url.is_empty() {
+        return Err(SapphireError::Generic(format!("No URL for bottle on platform {}", platform)));
+    }
+    let url = &bottle_file.url;
 
     println!("==> Downloading bottle for {} ({})", formula.name, platform);
 
@@ -30,7 +30,7 @@ pub async fn download_bottle(formula: &Formula, config: &Config) -> Result<PathB
     // Generate a filename for the bottle
     let filename = format!("{}-{}.{}.bottle.tar.gz",
         formula.name,
-        formula.versions.stable.as_deref().unwrap_or("unknown"),
+        formula.version.to_string(),
         platform);
 
     let bottle_path = cache_dir.join(&filename);
@@ -46,15 +46,15 @@ pub async fn download_bottle(formula: &Formula, config: &Config) -> Result<PathB
     let response = client.get(url)
         .send()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     if !response.status().is_success() {
-        return Err(BrewRsError::Generic(format!("Failed to download: HTTP status {}", response.status())));
+        return Err(SapphireError::Generic(format!("Failed to download: HTTP status {}", response.status())));
     }
 
     let content = response.bytes()
         .await
-        .map_err(|e| BrewRsError::Http(e))?;
+        .map_err(|e| SapphireError::Http(e))?;
 
     // Write the bottle to disk
     let mut file = File::create(&bottle_path)?;
@@ -67,31 +67,23 @@ pub async fn download_bottle(formula: &Formula, config: &Config) -> Result<PathB
 }
 
 /// Find the bottle information for the current platform
-fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFile)> {
-    // Iterate through all bottle variants
-    for (_bottle_tag, bottle_info) in &formula.bottle.bottles {
-        // Iterate through architecture-specific files for this bottle variant
-        for (platform, bottle_file) in &bottle_info.files {
-            // Check if this platform matches the current platform
+fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
+    if let Some(stable) = &formula.bottle.stable {
+        // Iterate through all architecture-specific files for the stable bottle spec
+        for (platform, bottle_file) in &stable.files {
             if platform == &super::get_current_platform() {
                 return Ok((platform.clone(), bottle_file));
             }
-
-            // Try alternative platform matching (e.g., for Rosetta 2 compatibility)
             if std::env::consts::ARCH == "aarch64" && !platform.contains("arm64") {
                 return Ok((platform.clone(), bottle_file));
             }
         }
-    }
-
-    // If no direct match found, take the first available architecture
-    for (_bottle_tag, bottle_info) in &formula.bottle.bottles {
-        if let Some((platform, bottle_file)) = bottle_info.files.iter().next() {
+        // If no direct match found, take the first available architecture
+        if let Some((platform, bottle_file)) = stable.files.iter().next() {
             return Ok((platform.clone(), bottle_file));
         }
     }
-
-    Err(BrewRsError::Generic("No compatible bottle found".to_string()))
+    Err(SapphireError::Generic("No compatible bottle found".to_string()))
 }
 
 /// Verify the SHA256 checksum of a downloaded bottle
@@ -107,7 +99,7 @@ pub fn verify_bottle_checksum(bottle_path: &Path, expected_sha256: &str) -> Resu
     let hash_hex = format!("{:x}", hash_result);
 
     if hash_hex != expected_sha256 {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Checksum mismatch for bottle. Expected: {}, got: {}",
             expected_sha256, hash_hex
         )));

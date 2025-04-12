@@ -1,7 +1,7 @@
 // src/build/cask/dmg.rs
 // Contains logic for mounting DMG files for cask installation
 
-use crate::utils::error::{BrewRsError, Result};
+use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,7 +23,7 @@ pub fn mount_dmg(dmg_path: &Path) -> Result<PathBuf> {
         .output()?;
 
     if !output.status.success() {
-        return Err(BrewRsError::Generic(format!(
+        return Err(SapphireError::Generic(format!(
             "Failed to mount DMG: {}", String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -57,7 +57,7 @@ pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
             .output()?;
 
         if !diskutil_output.status.success() {
-            return Err(BrewRsError::Generic(format!(
+            return Err(SapphireError::Generic(format!(
                 "Failed to unmount DMG: {}", String::from_utf8_lossy(&diskutil_output.stderr)
             )));
         }
@@ -99,7 +99,7 @@ fn process_dmg(cask: &Cask, mount_point: &Path, caskroom_path: &Path) -> Result<
     }
 
     // If we couldn't find anything to install, return an error
-    Err(BrewRsError::Generic(format!(
+    Err(SapphireError::Generic(format!(
         "Couldn't find any installable artifacts in DMG: {}", mount_point.display()
     )))
 }
@@ -133,7 +133,7 @@ fn parse_mount_point(output: &[u8]) -> Result<PathBuf> {
         }
     }
 
-    mount_point.ok_or_else(|| BrewRsError::Generic(
+    mount_point.ok_or_else(|| SapphireError::Generic(
         "Failed to determine mount point from hdiutil output".to_string()
     ))
 }
