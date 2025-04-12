@@ -133,7 +133,7 @@ fn install_as_formula<'a>(
             build::formula::bottle::install_bottle(&download_path, &formula)?;
         } else {
             // Pass resolved dependencies to build_from_source
-            build::formula::source::build_from_source(&download_path, &formula)?;
+            build::formula::source::build_from_source(&download_path, &formula, config)?;
         }
 
         build::formula::link::link_formula_binaries(&formula, &install_dir)?;

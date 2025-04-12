@@ -101,7 +101,7 @@ impl BuildEnvironment {
     /// # Arguments
     /// * `formula` - A reference to the formula being built, implementing `FormulaDependencies`.
     /// * `sapphire_prefix` - The root directory of the Sapphire installation.
-    pub fn new<F: FormulaDependencies>(formula: &F, sapphire_prefix: &Path) -> Result<Self> {
+    pub fn new<F: FormulaDependencies>(formula: &F, sapphire_prefix: &Path, cellar_path: &Path) -> Result<Self> {
         println!("Creating BuildEnvironment for formula..."); // Add formula name if available
 
         let mut vars = HashMap::new();
@@ -114,7 +114,7 @@ impl BuildEnvironment {
 
         for (key, value) in initial_env.iter() {
             let key_upper = key.to_uppercase(); // Normalize for checks like HOMEBREW_*
-
+        
             // Remove explicitly blacklisted variables
             if vars_to_remove_set.contains(key.as_str()) {
                 println!("Removing env var: {}", key);
@@ -145,7 +145,7 @@ impl BuildEnvironment {
         let sdk_path = devtools::find_sdk_path()?;
         let macos_version = devtools::get_macos_version()?;
         let arch_flag = devtools::get_arch_flag();
-        let formula_install_prefix = formula.install_prefix()?; // Get the target install dir
+        let formula_install_prefix = formula.install_prefix(cellar_path)?; // Get the target install dir
 
         println!(
             "Resolved tools: CC={}, CXX={}, SDK={}, macOS={}, ArchFlag='{}', InstallPrefix={}",

@@ -3,7 +3,7 @@
 // Formulas are typically recipes for building software from source.
 
 use crate::dependency::{Dependency, Requirement, DependencyTag};
-use crate::utils::error::{Result, SapphireError};
+use crate::utils::error::Result;
 use serde::{Deserialize, Serialize, Deserializer};
 use serde::de;
 use serde_json::Value;
@@ -239,16 +239,21 @@ pub trait FormulaDependencies {
     /// Returns the formula's name (for temp dir, logging, etc).
     fn name(&self) -> &str;
 
-    /// Returns the install prefix for this formula.
-    fn install_prefix(&self) -> Result<PathBuf>;
+    /// Returns the *full* install prefix path for this formula version.
+    /// Requires the cellar root path to be provided.
+    fn install_prefix(&self, cellar_path: &std::path::Path) -> Result<PathBuf>;
 
     /// Returns the resolved installation paths (keg roots) for runtime dependencies.
+    /// Placeholder - This should ideally be handled by the resolver.
     fn resolved_runtime_dependency_paths(&self) -> Result<Vec<PathBuf>>;
 
     /// Returns the resolved installation paths (keg roots) for build-time dependencies.
+    /// Placeholder - This should ideally be handled by the resolver.
     fn resolved_build_dependency_paths(&self) -> Result<Vec<PathBuf>>;
 
     /// Returns all resolved dependency paths (runtime + build).
+    /// Placeholder - This implementation might be misleading now.
+    /// Consider removing or marking as deprecated if BuildEnvironment relies on externally resolved paths.
     fn all_resolved_dependency_paths(&self) -> Result<Vec<PathBuf>> {
         let mut runtime = self.resolved_runtime_dependency_paths()?;
         let build = self.resolved_build_dependency_paths()?;
@@ -264,24 +269,27 @@ impl FormulaDependencies for Formula {
         &self.name
     }
 
-    fn install_prefix(&self) -> Result<PathBuf> {
-        // Placeholder: In a real implementation, this would compute the install prefix
-        // based on the formula's name, tap, and the Sapphire/Homebrew prefix.
-        // For now, return an error to indicate this needs to be implemented.
-        Err(SapphireError::BuildEnvError(
-            "install_prefix() not yet implemented for Formula".to_string(),
-        ))
+    /// Calculates the installation prefix based on the provided cellar path.
+    fn install_prefix(&self, cellar_path: &std::path::Path) -> Result<PathBuf> {
+        let version_string = self.version_str_full();
+        Ok(cellar_path.join(self.name()).join(version_string))
     }
 
+    // --- Placeholder implementations - These should not be relied upon by BuildEnvironment ---
     fn resolved_runtime_dependency_paths(&self) -> Result<Vec<PathBuf>> {
-        // Placeholder: Would resolve runtime dependencies to their keg paths.
+        // Warning: This method should likely be deprecated. Dependency paths
+        // should be resolved by the DependencyResolver and passed explicitly
+        // to the build environment. Returning an empty vec to satisfy the trait.
+        println!("Warning: Formula::resolved_runtime_dependency_paths() called - this might indicate outdated usage.");
         Ok(Vec::new())
     }
 
     fn resolved_build_dependency_paths(&self) -> Result<Vec<PathBuf>> {
-        // Placeholder: Would resolve build dependencies to their keg paths.
+        // Warning: See above.
+        println!("Warning: Formula::resolved_build_dependency_paths() called - this might indicate outdated usage.");
         Ok(Vec::new())
     }
+    // all_resolved_dependency_paths uses the above, so it's also placeholder
 }
 
 // Represents the versions object in the JSON

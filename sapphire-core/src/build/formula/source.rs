@@ -90,6 +90,7 @@ async fn download_url(url: &str, config: &Config) -> Result<PathBuf> {
 pub fn build_from_source(
     source_path: &Path,
     formula: &Formula,
+    config: &Config,
 ) -> Result<PathBuf> {
     // Get the installation directory
     let install_dir = super::get_formula_cellar_path(formula);
@@ -118,7 +119,7 @@ pub fn build_from_source(
     // --- Setup Build Environment ---
     println!("==> Setting up build environment");
     let sapphire_prefix = super::super::get_homebrew_prefix();
-    let build_env = BuildEnvironment::new(formula, &sapphire_prefix)?;
+    let build_env = BuildEnvironment::new(formula, &sapphire_prefix, Path::new(&config.cellar))?;
     // Optional: Print the environment for debugging
     // for (key, value) in build_env.as_map().iter() {
     //     println!("  Env: {}={}", key, value);
