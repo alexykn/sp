@@ -13,6 +13,7 @@ use std::sync::Arc; // Use Arc for formula sharing across threads
 use std::collections::{HashMap, HashSet}; // Added for state tracking
 use std::path::PathBuf; // Added for path handling
 use log; // Import log crate
+use reqwest::Client;
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
@@ -406,6 +407,8 @@ async fn install_formula_internal(
     let name = formula.name();
     println!("==> Starting installation process for: {}", name);
 
+    let client = Client::new();
+
     // Check status from resolved dependency info passed in
     match resolved_info.status {
         ResolutionStatus::Missing | ResolutionStatus::Requested => {
@@ -448,10 +451,12 @@ async fn install_formula_internal(
 
     // Attempt download (bottle or source)
     let download_path_result = if use_bottle {
-         build::formula::bottle::download_bottle(&formula, config).await
-     } else {
-         build::formula::source::download_source(&formula, config).await
-     };
+        // *** Pass the client reference here ***
+        build::formula::bottle::download_bottle(&formula, config, &client).await
+    } else {
+        // download_source doesn't need the client directly, it creates its own
+        build::formula::source::download_source(&formula, config).await
+    };
 
     // Handle download result - NO FALLBACK
     let source_or_bottle_path = match download_path_result {
