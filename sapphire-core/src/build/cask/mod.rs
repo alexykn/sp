@@ -16,6 +16,7 @@ use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH, SystemTimeError};
 use serde_json::json;
 
+
 /// Get the Applications directory
 pub fn get_applications_dir() -> PathBuf {
     // On macOS, applications are installed in /Applications

@@ -238,26 +238,32 @@ pub fn get_cellar_path() -> PathBuf {
 /// Get the path where a formula should be installed in the Cellar
 pub fn get_formula_cellar_path(formula: &Formula) -> PathBuf {
     let cellar = get_cellar_path();
-    let version = formula.version.clone();
-    cellar.join(&formula.name).join(version.to_string())
+    // Use version_str_full() to include revision if present
+    let version_string = formula.version_str_full();
+    cellar.join(&formula.name).join(version_string)
 }
+
 
 /// Create a receipt file to record formula installation
 pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
-    let receipt_dir = install_dir.join("INSTALL_RECEIPT.json");
+    let receipt_dir = install_dir.join("INSTALL_RECEIPT.json"); // Changed filename
     let mut receipt_file = File::create(receipt_dir)?;
 
     let receipt = serde_json::json!({
         "name": formula.name,
-        "version": formula.version,
+        "version": formula.version_str_full(), // Use full version string
         "time": chrono::Utc::now().to_rfc3339(),
         "source": {
-            "path": formula.homepage,
+            // Store information about where it came from (API, tap, etc.) if available
+             "type": "api", // Placeholder, enhance later
+             "url": formula.url, // Store source URL maybe?
         },
         "built_on": {
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
-        }
+            "platform_tag": get_current_platform(), // Record platform tag used for bottle (if applicable)
+        },
+         // Add dependencies, build options used, etc. later
     });
 
     let receipt_json = serde_json::to_string_pretty(&receipt)?;
@@ -269,4 +275,4 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
 // Re-export relevant items
 pub use source::{build_from_source, download_source};
 pub use bottle::install_bottle;
-pub use link::link_formula_binaries;
+pub use link::link_formula_artifacts; // Use the main linking function now
