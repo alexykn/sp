@@ -3,7 +3,6 @@
 pub mod formula;
 pub mod cask;
 pub mod devtools;
-pub mod fallback;
 pub mod env;
 
 use crate::utils::error::{Result, SapphireError};

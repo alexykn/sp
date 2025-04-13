@@ -73,20 +73,28 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
             for target_name in &args.names {
                  let resolved_dep = match resolved_graph.install_plan.iter().find(|d| d.formula.name() == target_name) {
                      Some(dep) => dep,
-                     None => { continue; } // Already warned
+                     // If the target itself wasn't resolved (e.g., doesn't exist), resolver would have errored.
+                     // If it was resolved but skipped (e.g., optional), resolver handles it.
+                     // If it's just not in the final plan for some reason, skip here.
+                     None => {
+                         log::warn!("Target '{}' not found in final install plan despite resolution.", target_name);
+                         continue;
+                      }
                  };
 
+                // Check status from the resolved plan
                 if resolved_dep.status != ResolutionStatus::Installed {
                     println!("==> Installing target (deps skipped): {}", target_name);
+                    // Get paths of *already* installed kegs for the build env
                     let installed_paths_for_env = get_all_currently_installed_opt_paths(&resolver, &keg_registry)?;
-                    // Standard install call, build_from_source will handle potential fallback internally if download fails
+                    // Call internal install function
                     install_formula_internal(
                         resolved_dep.formula.clone(),
-                        resolved_dep,
+                        resolved_dep, // Pass the resolved dependency info
                         config,
-                        &installed_paths_for_env,
+                        &installed_paths_for_env, // Pass existing paths
                         args.build_from_source,
-                    ).await?;
+                    ).await?; // Removed fallback triggering logic here
                 } else {
                     println!("Target {} already installed.", target_name);
                 }
@@ -102,14 +110,24 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
             let mut installed_opt_paths: HashMap<String, PathBuf> = resolved_graph.install_plan
                 .iter()
                 .filter_map(|dep| {
+                    // Ensure opt path exists before adding
                     if dep.status == ResolutionStatus::Installed {
-                        dep.opt_path.as_ref().and_then(|p| if p.exists() { Some((dep.formula.name().to_string(), p.clone())) } else { None })
+                        dep.opt_path.as_ref().and_then(|p| {
+                            if p.exists() {
+                                Some((dep.formula.name().to_string(), p.clone()))
+                            } else {
+                                // Log if opt path for installed dep doesn't exist
+                                log::warn!("Opt path {} for installed dependency {} does not exist.", p.display(), dep.formula.name());
+                                None
+                            }
+                        })
                     } else {
                         None
                     }
                 })
                 .collect();
 
+             // Add paths/status for things installed outside this run
              add_globally_installed_paths(&resolver, &keg_registry, &mut installed_opt_paths, &mut install_status)?;
 
             let total_to_install_initially = install_status
@@ -119,133 +137,153 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
 
             let mut remaining_to_install = total_to_install_initially;
             let mut pass_count = 0;
-            let max_passes = install_status.len() + 2;
+            // Increase max_passes slightly, simple count might be too tight for complex graphs
+            let max_passes = resolved_graph.install_plan.len() + 2;
 
             while remaining_to_install > 0 && pass_count < max_passes {
                 pass_count += 1;
                 let mut progress_made_this_pass = false;
                 let mut newly_installed_in_pass = 0;
 
-                let keys_to_process: Vec<String> = install_status
+                // Get list of items needing installation in this pass
+                let keys_to_process: Vec<String> = resolved_graph.install_plan // Iterate over original plan order
                     .iter()
-                    .filter(|(name, status)| {
-                        (**status == ResolutionStatus::Missing || **status == ResolutionStatus::Requested)
-                        && resolved_graph.install_plan.iter().any(|d| d.formula.name() == *name)
+                    .filter_map(|resolved_dep| {
+                        let name = resolved_dep.formula.name();
+                        // Only consider items that are currently marked as Missing or Requested
+                        if install_status.get(name).map_or(false, |s| *s == ResolutionStatus::Missing || *s == ResolutionStatus::Requested) {
+                            Some(name.to_string())
+                        } else {
+                            None
+                        }
                     })
-                    .map(|(name, _)| name.clone())
                     .collect();
+
 
                 println!("--- Installation Pass {} ({} remaining) ---", pass_count, keys_to_process.len());
 
-                if keys_to_process.is_empty() { break; }
+                // If nothing left to process in the plan that needs installing, break
+                if keys_to_process.is_empty() {
+                     if remaining_to_install > 0 {
+                        // This state indicates inconsistency
+                        log::error!("Installation loop inconsistency: {} items reported remaining, but none found needing installation in plan.", remaining_to_install);
+                     }
+                     break;
+                 }
 
                 for name in keys_to_process {
-                     let current_status = install_status.get(&name).cloned().unwrap_or(ResolutionStatus::Missing);
+                    // Double-check status in case it was installed in this pass already
+                    let current_status = install_status.get(&name).cloned().unwrap_or(ResolutionStatus::Missing);
                     if current_status != ResolutionStatus::Missing && current_status != ResolutionStatus::Requested { continue; }
 
-                    let resolved_dep = match resolved_graph.install_plan.iter().find(|d| d.formula.name() == name) {
-                         Some(dep) => dep,
-                         None => { continue; } // Should not happen if keys_to_process is correct
-                    };
+                    // Find the corresponding ResolvedDependency in the original plan
+                    let resolved_dep = resolved_graph.install_plan.iter()
+                                         .find(|d| d.formula.name() == name)
+                                         .expect("Item in keys_to_process must be in install_plan"); // Should always find
 
+                    // Get dependencies defined within the formula itself
                     let direct_deps = match resolved_dep.formula.dependencies() {
                         Ok(deps) => deps,
-                        Err(_e) => { // Prefix unused variable
-                             eprintln!("Error getting dependencies for {}: {}. Skipping.", name, _e);
+                        Err(e) => {
+                             log::error!("Error getting dependencies for {}: {}. Skipping formula.", name, e);
+                             // Consider how to handle this - maybe mark as failed? For now, skip.
                              continue;
                         }
                     };
 
+                    // Check if all *required* dependencies are met (Installed)
                     let mut all_deps_met = true;
                     for dep in &direct_deps {
+                        // Skip optional/test/skipped-recommended dependencies based on flags
                         if !should_consider_dependency(dep, args) { continue; }
 
+                        // Check status from our live tracking map
                         let dep_status = install_status.get(&dep.name).cloned();
                         let is_met = match dep_status {
-                            Some(ResolutionStatus::Installed) => check_and_update_opt_path(&dep.name, &keg_registry, &mut installed_opt_paths),
-                            Some(ResolutionStatus::SkippedOptional) => true,
-                            _ => { // Check KegRegistry
-                                if keg_registry.get_installed_keg(&dep.name)?.is_some() {
-                                    if check_and_update_opt_path(&dep.name, &keg_registry, &mut installed_opt_paths) {
-                                         install_status.insert(dep.name.clone(), ResolutionStatus::Installed); // Update status map
-                                         true
-                                     } else { false }
-                                } else {
-                                    // Check if it was built via fallback
-                                    let fallback_prefix = build::fallback::get_fallback_install_prefix(&dep.name, config)?;
-                                    if fallback_prefix.exists() {
-                                        log::info!("Dependency '{}' met via fallback build at {}", dep.name, fallback_prefix.display());
-                                        // Add fallback prefix to installed paths (maybe opt path isn't linked yet)
-                                        // We should use the *standard* opt path conceptually,
-                                        // assuming the fallback build gets linked later.
-                                         if check_and_update_opt_path(&dep.name, &keg_registry, &mut installed_opt_paths) {
-                                            install_status.insert(dep.name.clone(), ResolutionStatus::Installed);
-                                            true
-                                        } else {
-                                            // Even if opt isn't linked, consider it met if fallback exists
-                                            log::warn!("Fallback for '{}' exists but opt path is not linked. Considering met.", dep.name);
-                                            install_status.insert(dep.name.clone(), ResolutionStatus::Installed);
-                                            true
-                                        }
-                                    } else {
-                                        false // Truly missing
-                                    }
-                                }
+                            Some(ResolutionStatus::Installed) => {
+                                // Verify opt path exists for installed deps
+                                check_and_update_opt_path(&dep.name, &keg_registry, &mut installed_opt_paths)
                             }
+                            Some(ResolutionStatus::SkippedOptional) => true, // Skipped = considered met
+                            _ => false, // Missing, Requested, or None means not met yet
                         };
 
                         if !is_met {
-                            println!("Dependency '{}' for '{}' not met.", dep.name, name);
+                            log::debug!("Dependency '{}' for '{}' not met (status: {:?}).", dep.name, name, dep_status);
                             all_deps_met = false;
-                            break;
+                            break; // No need to check further deps for this formula in this pass
                         }
                     }
 
 
                     if all_deps_met {
-                        println!("All dependencies met for: {}", name);
+                        log::info!("All dependencies met for: {}", name);
+                        // Get the current set of ALL installed opt paths for the build env
                         let all_current_installed_paths: Vec<PathBuf> = installed_opt_paths.values().cloned().collect();
 
+                        // Attempt to install the formula
                         match install_formula_internal(
                             resolved_dep.formula.clone(),
-                            resolved_dep,
+                            resolved_dep, // Pass resolved info
                             config,
-                            &all_current_installed_paths, // Pass ALL known installed paths
+                            &all_current_installed_paths,
                             args.build_from_source,
                         ).await {
                             Ok(installed_opt_path) => {
-                                println!("Successfully installed {} internally.", name);
+                                log::info!("Successfully installed {} internally.", name);
+                                // Update status and path maps
                                 install_status.insert(name.clone(), ResolutionStatus::Installed);
-                                installed_opt_paths.insert(name.clone(), installed_opt_path);
+                                // Only insert if opt path is valid and exists
+                                if installed_opt_path.exists() {
+                                     installed_opt_paths.insert(name.clone(), installed_opt_path);
+                                } else {
+                                     log::error!("install_formula_internal for {} succeeded but returned non-existent opt path {}", name, installed_opt_path.display());
+                                     // Decide how critical this is - maybe error out?
+                                     // For now, just warn and don't add to map.
+                                }
                                 progress_made_this_pass = true;
                                 newly_installed_in_pass += 1;
                             }
                             Err(e) => {
-                                eprintln!("Error installing {}: {}", name, e);
+                                log::error!("Error installing {}: {}", name, e);
+                                // Stop the entire installation process on error
                                 return Err(e);
                             }
                         }
                     } else {
-                         println!("Deferring installation of '{}' until dependencies are ready.", name);
+                         log::debug!("Deferring installation of '{}' until dependencies are ready.", name);
                     }
-                }
+                } // End loop through keys_to_process
 
                 remaining_to_install -= newly_installed_in_pass;
 
+                // Check for stall condition
                 if !progress_made_this_pass && remaining_to_install > 0 {
-                    let remaining_names: Vec<_> = install_status.iter().filter(|(_, s)| **s == ResolutionStatus::Missing || **s == ResolutionStatus::Requested).map(|(n, _)| n.clone()).collect();
-                    eprintln!("Error: No progress made in installation pass {}. Could not install: {:?}", pass_count, remaining_names);
+                    let remaining_names: Vec<_> = install_status
+                        .iter()
+                        .filter(|(_, s)| **s == ResolutionStatus::Missing || **s == ResolutionStatus::Requested)
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    log::error!("No progress made in installation pass {}. Could not install: {:?}", pass_count, remaining_names);
+                    // Also log dependencies of remaining items
+                    for r_name in &remaining_names {
+                         if let Some(r_dep) = resolved_graph.install_plan.iter().find(|d| d.formula.name() == r_name) {
+                             if let Ok(deps) = r_dep.formula.dependencies() {
+                                 log::error!("  Dependencies for {}: {:?}", r_name, deps.iter().map(|d| (&d.name, install_status.get(&d.name))).collect::<Vec<_>>());
+                             }
+                         }
+                    }
                     return Err(SapphireError::DependencyError(format!("Unresolved dependencies or cycle after pass {}. Remaining: {:?}", pass_count, remaining_names)));
                 }
 
             } // End while loop
 
-            // Final check
-             if remaining_to_install > 0 {
+            // Final check after loop
+            if remaining_to_install > 0 {
                  let remaining_names: Vec<_> = install_status.iter().filter(|(_, s)| **s == ResolutionStatus::Missing || **s == ResolutionStatus::Requested).map(|(n, _)| n.clone()).collect();
-                 eprintln!("Error: Installation incomplete (max passes {} reached or other issue): {:?}", max_passes, remaining_names);
+                 log::error!("Installation incomplete (max passes {} reached or other issue). Remaining: {:?}", max_passes, remaining_names);
                  return Err(SapphireError::DependencyError(format!("Installation incomplete. Remaining: {:?}", remaining_names)));
-             }
+            }
 
             println!("==> Installation plan processed successfully.");
         }
@@ -257,9 +295,13 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
 /// Helper function to decide if a dependency should be processed based on install args
 fn should_consider_dependency(dep: &sapphire_core::dependency::Dependency, args: &InstallArgs) -> bool {
     let tags = dep.tags;
+    // Ignore test dependencies during installation
     if tags.contains(DependencyTag::TEST) { return false; }
+    // Handle optional based on flag
     if tags.contains(DependencyTag::OPTIONAL) && !args.include_optional { return false; }
+    // Handle recommended based on flag
     if tags.contains(DependencyTag::RECOMMENDED) && args.skip_recommended { return false; }
+    // Otherwise, consider it (RUNTIME, BUILD, or included OPTIONAL/RECOMMENDED)
     true
 }
 
@@ -269,23 +311,25 @@ fn check_and_update_opt_path(
     keg_registry: &KegRegistry,
     installed_opt_paths: &mut HashMap<String, PathBuf>
 ) -> bool {
-    if installed_opt_paths.contains_key(name) {
+    // If already tracked with an existing path, it's met
+    if installed_opt_paths.get(name).map_or(false, |p| p.exists()) {
         return true;
     }
-    // Check standard opt path first
+    // Check standard opt path directly
     let opt_path = keg_registry.get_opt_path(name);
     if opt_path.exists() {
+         log::debug!("Found existing opt path for {}: {}", name, opt_path.display());
          installed_opt_paths.insert(name.to_string(), opt_path);
          return true;
     }
-    // Check if installed via keg registry (might not be linked yet)
+    // Check if keg exists even if opt link doesn't (means installed but not linked)
     if keg_registry.get_installed_keg(name).unwrap_or(None).is_some() {
-        // Opt path doesn't exist, but keg does. Still needs linking.
-        // For dependency checking, consider it met but don't add to map yet.
-        log::warn!("Keg found for {} but opt path {} doesn't exist.", name, opt_path.display());
+        log::warn!("Keg found for {} but opt path {} does not exist (needs linking). Considering dependency met.", name, opt_path.display());
         // Don't add to map yet, but return true for dependency check.
         return true;
     }
+    // --- Fallback Check Removed ---
+    log::debug!("Dependency {} not found in opt paths or keg registry.", name);
     false
 }
 
@@ -296,7 +340,7 @@ fn check_and_update_opt_path(
  ) -> Result<Vec<PathBuf>> {
      let mut paths = HashSet::new(); // Use HashSet to avoid duplicates
 
-     // Access the resolved map using pub(crate) field access
+     // Add paths from the current resolution context that are marked installed
      for (_, resolved_dep) in resolver.resolved.iter() {
          if resolved_dep.status == ResolutionStatus::Installed {
              if let Some(opt_path) = &resolved_dep.opt_path {
@@ -307,27 +351,18 @@ fn check_and_update_opt_path(
          }
      }
 
-     // Add paths from anything else installed according to KegRegistry (using list_installed_kegs)
-     if let Ok(installed_kegs) = keg_registry.list_installed_kegs() { // Corrected method call
+     // Add paths from anything *else* installed according to KegRegistry
+     if let Ok(installed_kegs) = keg_registry.list_installed_kegs() {
          for keg in installed_kegs {
              let opt_path = keg_registry.get_opt_path(&keg.name);
              if opt_path.exists() {
+                 // Insert adds if not present, harmless if already added from resolver map
                  paths.insert(opt_path);
              }
          }
      }
 
-     // Add paths from fallback builds if they exist
-     let config = Config::load()?; // Load config to get cache dir
-     for dep_name in ["m4", "autoconf", "libtool"] { // Check known fallback tools
-         let fallback_prefix = build::fallback::get_fallback_install_prefix(dep_name, &config)?;
-         if fallback_prefix.exists() {
-             // Conceptually, the 'opt' path for a fallback should be the fallback prefix itself
-             // if we're passing it to build environment.
-             paths.insert(fallback_prefix);
-         }
-     }
-
+     // --- Fallback Path Addition Removed ---
 
      Ok(paths.into_iter().collect())
  }
@@ -335,22 +370,25 @@ fn check_and_update_opt_path(
 
  /// Pre-populate installed_opt_paths and install_status with globally installed kegs
  fn add_globally_installed_paths(
-     _resolver: &DependencyResolver, // Use pub(crate) resolver.resolved directly
+     _resolver: &DependencyResolver, // Not strictly needed anymore? Maybe keep for future use.
      keg_registry: &KegRegistry,
      installed_opt_paths: &mut HashMap<String, PathBuf>,
      install_status: &mut HashMap<String, ResolutionStatus>
  ) -> Result<()> {
-      if let Ok(installed_kegs) = keg_registry.list_installed_kegs() { // Corrected method call
+      if let Ok(installed_kegs) = keg_registry.list_installed_kegs() {
          for keg in installed_kegs {
              let name = keg.name.clone();
              let opt_path = keg_registry.get_opt_path(&name);
-             if opt_path.exists() { // Only add if opt path exists
+             // If the opt path exists, record it and mark as installed
+             if opt_path.exists() {
                  installed_opt_paths.entry(name.clone()).or_insert(opt_path);
                  install_status.entry(name).or_insert(ResolutionStatus::Installed);
              } else if keg.path.exists() { // Keg exists but not linked
-                 // Still mark as installed in the status map
-                  install_status.entry(name).or_insert(ResolutionStatus::Installed);
+                 // Still mark as installed in the status map, but don't add to opt paths
+                 // This signals the dependency is met but needs linking later.
+                 install_status.entry(name).or_insert(ResolutionStatus::Installed);
              }
+             // If neither opt nor keg path exists, do nothing (shouldn't happen with list_installed_kegs)
          }
      }
      Ok(())
@@ -360,42 +398,43 @@ fn check_and_update_opt_path(
 /// Internal function to handle the actual installation of a single formula.
 async fn install_formula_internal(
     formula: Arc<Formula>,
-    resolved_info: &ResolvedDependency,
+    resolved_info: &ResolvedDependency, // Use resolved info for status checks
     config: &Config,
     all_installed_paths: &[PathBuf],
     force_build: bool,
-) -> Result<PathBuf> {
+) -> Result<PathBuf> { // Return the installed Opt path
     let name = formula.name();
     println!("==> Starting installation process for: {}", name);
 
+    // Check status from resolved dependency info passed in
     match resolved_info.status {
         ResolutionStatus::Missing | ResolutionStatus::Requested => {
             println!("==> Installing formula: {}", name);
-            // Proceed with download/build/fallback logic below
+            // Proceed with download/build logic below
         }
         ResolutionStatus::Installed => {
-            let keg_path_option = &resolved_info.keg_path; // Option<PathBuf>
-            let opt_path_option = &resolved_info.opt_path; // Option<PathBuf>
+            let keg_path = resolved_info.keg_path.as_deref().ok_or_else(|| SapphireError::Generic(format!("Installed formula {} missing keg path in resolved info", name)))?;
+            let opt_path = resolved_info.opt_path.as_deref().ok_or_else(|| SapphireError::Generic(format!("Installed formula {} missing opt path in resolved info", name)))?;
 
-            let keg_path = keg_path_option.as_deref().ok_or_else(|| SapphireError::Generic(format!("Installed formula {} missing keg path in resolved info", name)))?;
-            let opt_path = opt_path_option.as_deref().ok_or_else(|| SapphireError::Generic(format!("Installed formula {} missing opt path in resolved info", name)))?;
-
-            // Check if the actual keg directory exists
             if !keg_path.exists() {
                  log::warn!("Formula {} marked installed, but keg path {} does not exist. Attempting re-install.", name, keg_path.display());
-                 // Fall through to install logic
+                 // Fall through to install logic below
             } else {
-                // Keg exists, check if opt link exists
                  println!("Formula {} is already installed (Version: {} at {}).", name, resolved_info.formula.version_str_full(), keg_path.display());
+                 // Ensure it's linked
                  if !opt_path.exists() {
                     println!("==> Opt link missing, linking installed formula: {}", name);
+                    // Use the keg_path obtained from resolved_info
                     build::formula::link::link_formula_artifacts(&formula, keg_path)?;
                  }
-                 return Ok(opt_path.to_path_buf()); // Return the opt path
+                 // Return the opt_path associated with this installed version
+                 return Ok(opt_path.to_path_buf());
             }
         }
         ResolutionStatus::SkippedOptional => {
-            println!("Formula {} was skipped (optional/recommended).", name);
+            // This case should ideally be filtered out before calling internal install,
+            // but handle defensively.
+            log::warn!("Attempted to internally install skipped formula {}", name);
             return Err(SapphireError::Generic(format!("Attempted to install skipped formula {}", name)));
         }
     }
@@ -404,89 +443,57 @@ async fn install_formula_internal(
     let install_dir = build::formula::get_formula_cellar_path(&formula); // Standard cellar path
     let opt_path = build::get_formula_opt_path(&formula); // Standard opt path
 
-    let download_path_result = if build::formula::has_bottle_for_current_platform(&formula) && !force_build {
+    // Determine whether to use bottle or source
+    let use_bottle = build::formula::has_bottle_for_current_platform(&formula) && !force_build;
+
+    // Attempt download (bottle or source)
+    let download_path_result = if use_bottle {
          build::formula::bottle::download_bottle(&formula, config).await
      } else {
          build::formula::source::download_source(&formula, config).await
      };
 
-    let mut source_or_bottle_path: Option<PathBuf> = None;
-    let mut use_bottle = false;
-    let mut trigger_fallback = false;
-
-    match download_path_result {
-        Ok(path) => {
-            source_or_bottle_path = Some(path);
-            use_bottle = build::formula::has_bottle_for_current_platform(&formula) && !force_build;
-        }
-        Err(SapphireError::DownloadError(_, _, _)) => {
-            // Specific download error occurred, check if it's a fallback candidate
-            if ["m4", "autoconf", "libtool"].contains(&name) {
-                log::warn!("Download failed for {}. Attempting fallback build...", name);
-                trigger_fallback = true;
-                // source_or_bottle_path remains None
-            } else {
-                 log::error!("Download failed for {}: {}", name, download_path_result.unwrap_err());
-                 return Err(SapphireError::InstallError(format!("Download failed for {}", name)));
-            }
-        }
-        Err(e) => { // Other errors during download attempt
-             log::error!("Error during download attempt for {}: {}", name, e);
-             return Err(SapphireError::InstallError(format!("Download preparation failed for {}: {}", name, e)));
+    // Handle download result - NO FALLBACK
+    let source_or_bottle_path = match download_path_result {
+        Ok(path) => path,
+        Err(e) => {
+             log::error!("Download failed for {}: {}", name, e);
+             // Directly return the download error
+             return Err(SapphireError::InstallError(format!("Download failed for {}: {}", name, e)));
         }
     };
-
 
     // Ensure parent directory for install_dir exists
     if let Some(parent) = install_dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| SapphireError::Io(e))?;
     }
 
-
-    // Perform installation: bottle, source build, or fallback build
-    if use_bottle && source_or_bottle_path.is_some() {
-        let bottle_path = source_or_bottle_path.unwrap();
-        println!("==> Pouring bottle: {}", bottle_path.display());
-        build::formula::bottle::install_bottle(&bottle_path, &formula)?;
-    } else if trigger_fallback {
-         // Fallback is handled within build_from_source when path is None
-         // Pass None to signal fallback attempt
-         build::formula::source::build_from_source(None, &formula, config, all_installed_paths).await?;
-          // Fallback build might install to a different prefix. Need to link it.
-         let fallback_prefix = build::fallback::get_fallback_install_prefix(name, config)?;
-         if fallback_prefix.exists() {
-             println!("==> Linking fallback build from {} to standard prefix", fallback_prefix.display());
-             // This is complex: needs to find artifacts in fallback_prefix and link them
-             // to the standard locations (e.g., config.prefix/bin, config.prefix/lib).
-             // For now, just log a warning.
-             log::warn!("Post-fallback linking not fully implemented. Manual linking might be required.");
-             // Maybe try linking the entire fallback dir to the standard cellar location? Risky.
-             // Or link individual standard directories (bin, lib, include)
-             link_fallback_artifacts(&fallback_prefix, config, &install_dir, &formula)?;
-         } else {
-             return Err(SapphireError::InstallError(format!("Fallback build triggered for {} but no fallback directory found at {}", name, fallback_prefix.display())));
-         }
-
-    } else if let Some(source_path) = source_or_bottle_path {
-        // Build from source (standard path)
+    // Perform installation: bottle or source build
+    if use_bottle {
+        println!("==> Pouring bottle: {}", source_or_bottle_path.display());
+        // install_bottle should return the install_dir on success
+        build::formula::bottle::install_bottle(&source_or_bottle_path, &formula)?;
+    } else {
+        // Build from source
         if force_build {
             println!("==> Building from source (forced): {}", name);
         } else {
-            println!("==> Building from source (no bottle available or download failed for non-fallback tool): {}", name);
+            println!("==> Building from source (no bottle available): {}", name);
         }
-        // Pass the downloaded source path
-        build::formula::source::build_from_source(Some(source_path), &formula, config, all_installed_paths).await?;
-    } else {
-         // Should not happen if logic above is correct
-         return Err(SapphireError::Generic(format!("Installation logic error for {}", name)));
+        // Call build_from_source with the downloaded path (&Path)
+        build::formula::source::build_from_source(&source_or_bottle_path, &formula, config, all_installed_paths).await?;
     }
 
-    // Standard linking (should happen after bottle, source, or fallback install)
-    // Link from the *standard* cellar path, assuming fallback link step worked.
+    // --- Fallback Build Logic Removed ---
+    // --- Fallback Linking Logic Removed ---
+
+    // Standard linking (after successful bottle pour or source build)
     println!("==> Linking formula: {}", name);
+    // Ensure install_dir exists before linking
     if install_dir.exists() {
         build::formula::link::link_formula_artifacts(&formula, &install_dir)?;
     } else {
+        // This indicates a problem with the bottle pour or source build if dir doesn't exist
         log::error!("Standard install directory {} does not exist after installation attempt. Cannot link.", install_dir.display());
         return Err(SapphireError::InstallError(format!("Installation directory {} not found after build/install of {}", install_dir.display(), name)));
     }
@@ -494,78 +501,15 @@ async fn install_formula_internal(
 
     println!("🍺 Successfully installed {} ({})", formula.name(), install_dir.display());
 
-    Ok(opt_path) // Return the standard opt path
+    // Return the standard opt path upon successful installation
+    Ok(opt_path)
 }
 
 
-/// Links artifacts from a fallback build prefix to standard locations.
-/// This is a simplified version and might need refinement.
-fn link_fallback_artifacts(
-    fallback_prefix: &PathBuf,
-    config: &Config,
-    _standard_cellar_path: &PathBuf, // Unused for now, maybe needed later
-    formula: &Formula,
-) -> Result<()> {
-    log::info!("Attempting to link fallback artifacts from {} for {}", fallback_prefix.display(), formula.name());
-    let main_prefix = &config.prefix;
-    let mut symlinks_created: Vec<String> = Vec::new(); // Track links for potential manifest
-
-    // Link common directories (bin, lib, include, share)
-    for dir_name in ["bin", "lib", "include", "share"] {
-        let source_dir = fallback_prefix.join(dir_name);
-        let target_dir = main_prefix.join(dir_name);
-
-        if source_dir.is_dir() {
-            log::debug!("Linking contents of {}", source_dir.display());
-            std::fs::create_dir_all(&target_dir)?; // Ensure target parent exists
-
-            for entry_res in std::fs::read_dir(&source_dir)? {
-                let entry = entry_res?;
-                let source_item_path = entry.path();
-                let item_name = entry.file_name();
-                let target_item_path = target_dir.join(&item_name);
-
-                // Remove existing file/link at target if it exists
-                if target_item_path.exists() || target_item_path.symlink_metadata().is_ok() {
-                     log::warn!("Removing existing item at link target: {}", target_item_path.display());
-                     if target_item_path.is_dir() && !target_item_path.symlink_metadata()?.file_type().is_symlink() {
-                         std::fs::remove_dir_all(&target_item_path)?;
-                     } else {
-                         std::fs::remove_file(&target_item_path)?;
-                     }
-                }
-
-                // Create symlink
-                log::debug!("Linking {} -> {}", target_item_path.display(), source_item_path.display());
-                match std::os::unix::fs::symlink(&source_item_path, &target_item_path) {
-                    Ok(_) => symlinks_created.push(target_item_path.to_string_lossy().to_string()),
-                    Err(e) => log::error!("Failed to link {} -> {}: {}", target_item_path.display(), source_item_path.display(), e),
-                }
-            }
-        } else {
-             log::debug!("Source directory {} does not exist in fallback prefix, skipping.", source_dir.display());
-        }
-    }
-
-    // TODO: Write a manifest? Where should it live for fallback builds?
-    // Maybe write it inside the fallback_prefix directory?
-    if !symlinks_created.is_empty() {
-         let manifest_path = fallback_prefix.join("FALLBACK_MANIFEST.json");
-         log::info!("Writing fallback link manifest to {}", manifest_path.display());
-         let manifest_json = serde_json::to_string_pretty(&symlinks_created)
-             .map_err(|e| SapphireError::Generic(e.to_string()))?;
-         if let Err(e) = std::fs::write(&manifest_path, manifest_json) {
-              log::error!("Failed to write fallback manifest: {}", e);
-         }
-    }
+// --- Removed link_fallback_artifacts function ---
 
 
-    log::info!("Finished linking fallback artifacts for {}", formula.name());
-    Ok(())
-}
-
-
-// --- Cask Installation ---
+// --- Cask Installation (Remains the same) ---
 
 fn install_cask<'a>(
     name: &'a str,
@@ -588,18 +532,26 @@ fn install_cask<'a>(
                     return Ok(());
                 } else if installed_version != current_version {
                     println!("==> Upgrading cask '{}' from {} to {}", name, installed_version, current_version);
+                    // Consider adding uninstall logic here before proceeding if upgrading
                 } else {
                      println!("==> Reinstalling cask '{}' (version {}) due to force flag", name, installed_version);
+                     // Consider adding uninstall logic here before proceeding if reinstalling
                 }
+            } else {
+                 // Installed but couldn't determine version - treat as needing reinstall/upgrade
+                 println!("==> Cask '{}' is installed, but version unknown. Proceeding with installation.", name);
             }
         }
 
+        // Install dependencies first
         install_cask_dependencies(&cask, cache, force_build).await?;
 
+        // Download the cask artifact
         let download_path = build::cask::download_cask(&cask, cache).await.map_err(|e| {
             SapphireError::Generic(format!("Failed to download cask '{}': {}", name, e))
         })?;
 
+        // Install from the downloaded artifact
         build::cask::install_cask(&cask, &download_path)?;
 
         println!("==> Successfully installed cask {}", cask.display_name());
@@ -614,21 +566,24 @@ fn install_cask_dependencies<'a>(
 ) -> BoxFuture<'a, Result<()>> {
     Box::pin(async move {
         if let Some(deps) = &cask.depends_on {
-            let config = Config::load()?;
+            // Load config only if needed
+            let config_result = Config::load();
 
             // --- Handle Formula Dependencies for Cask ---
             if let Some(formula_deps) = &deps.formula {
                 if !formula_deps.is_empty() {
                     println!("==> Installing formula dependencies for cask {}: {:?}", cask.token, formula_deps);
-                    let args_for_deps = InstallArgs {
+                     let config = config_result.as_ref().map_err(|e| SapphireError::Generic(format!("{}", e)))?; // Convert error to SapphireError
+                     let args_for_deps = InstallArgs {
                         names: formula_deps.clone(),
-                        skip_deps: false,
+                        skip_deps: false, // Don't skip dependencies of dependencies
                         cask: false,
-                        build_from_source: force_build,
-                        include_optional: false,
+                        build_from_source: force_build, // Propagate flag? Maybe casks shouldn't force source for formula deps?
+                        include_optional: false, // Typically don't include optional deps for cask dependencies
                         skip_recommended: false,
                     };
-                    execute(&args_for_deps, &config).await?;
+                    // Recursively call execute for formula dependencies
+                    execute(&args_for_deps, config).await?;
                 }
             }
 
@@ -636,8 +591,9 @@ fn install_cask_dependencies<'a>(
             if let Some(cask_deps) = &deps.cask {
                 if !cask_deps.is_empty() {
                     println!("==> Installing cask dependencies for cask {}: {:?}", cask.token, cask_deps);
-                    for dep in cask_deps {
-                        install_cask(dep, cache, force_build).await?;
+                    for dep_name in cask_deps {
+                        // Recursively call install_cask for cask dependencies
+                        install_cask(dep_name, cache, force_build).await?;
                     }
                 }
             }
