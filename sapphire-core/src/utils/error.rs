@@ -21,6 +21,9 @@ pub enum SapphireError {
     #[error("API Error: {0}")]
     Api(String),
 
+    #[error("API Request Error: {0}")]
+    ApiRequestError(String),
+
     #[error("Semantic Versioning Error: {0}")]
     SemVer(#[from] semver::Error),
 
@@ -39,6 +42,15 @@ pub enum SapphireError {
     #[error("Generic Error: {0}")]
     Generic(String),
 
+    #[error("HttpError: {0}")]
+    HttpError(String),
+
+    #[error("Checksum Mismatch: {0}")]
+    ChecksumMismatch(String),
+
+    #[error("Checksum Error: {0}")]
+    ChecksumError(String),
+
     #[error("Parsing Error in {0}: {1}")]
     ParseError(&'static str, String),
 
@@ -50,6 +62,9 @@ pub enum SapphireError {
 
     #[error("Build environment setup failed: {0}")]
     BuildEnvError(String),
+
+    #[error("IoError: {0}")]
+    IoError(String),
 
     #[error("Failed to execute command: {0}")]
     CommandExecError(String),

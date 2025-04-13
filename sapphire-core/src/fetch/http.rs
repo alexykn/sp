@@ -1,11 +1,10 @@
-use crate::config::Config;
+use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, ACCEPT, USER_AGENT};
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,38 +23,38 @@ pub fn fetch_resource(
     mirrors: &[String],
     config: &Config,
 ) -> Result<PathBuf> {
-    let filename = url.split('/').last().unwrap_or_else(|| {
-        format!("{}-download", formula_name)
-    });
-    let cache_path = config.cache_dir.join(filename);
+    let filename = url.split('/').last()
+        .map(|s| s.to_string()) // Convert Option<&str> to Option<String>
+        .unwrap_or_else(|| format!("{}-download", formula_name)); // Provide String fallback
+    let cache_path = config.cache_dir.join(&filename); // Join with &String
 
-    debug!(
+    log::debug!(
         "Preparing to fetch resource for '{}' from URL: {}",
         formula_name, url
     );
-    debug!("Target cache path: {}", cache_path.display());
-    debug!("Expected SHA256: {}", sha256_expected);
+    log::debug!("Target cache path: {}", cache_path.display());
+    log::debug!("Expected SHA256: {}", sha256_expected);
 
     // Check cache first
     if cache_path.is_file() {
-        debug!("File exists in cache: {}", cache_path.display());
+        log::debug!("File exists in cache: {}", cache_path.display());
         match verify_checksum(&cache_path, sha256_expected) {
             Ok(_) => {
-                info!("Using cached file: {}", cache_path.display());
+                log::info!("Using cached file: {}", cache_path.display());
                 return Ok(cache_path);
             }
             Err(e) => {
-                warn!(
+                log::warn!(
                     "Cached file checksum mismatch ({}): {}. Redownloading.",
                     cache_path.display(), e
                 );
                 if let Err(remove_err) = fs::remove_file(&cache_path) {
-                    warn!("Failed to remove corrupted cached file {}: {}", cache_path.display(), remove_err);
+                    log::warn!("Failed to remove corrupted cached file {}: {}", cache_path.display(), remove_err);
                 }
             }
         }
     } else {
-        debug!("File not found in cache.");
+        log::debug!("File not found in cache.");
     }
 
     fs::create_dir_all(&config.cache_dir).map_err(|e| {
@@ -72,14 +71,14 @@ pub fn fetch_resource(
     let mut last_error: Option<SapphireError> = None;
 
     for current_url in urls_to_try {
-        debug!("Attempting download from: {}", current_url);
+        log::debug!("Attempting download from: {}", current_url);
         match download_and_verify(&client, current_url, &cache_path, sha256_expected) {
             Ok(path) => {
-                info!("Successfully downloaded and verified: {}", path.display());
+                log::info!("Successfully downloaded and verified: {}", path.display());
                 return Ok(path);
             }
             Err(e) => {
-                error!("Download attempt failed from {}: {}", current_url, e);
+                log::error!("Download attempt failed from {}: {}", current_url, e);
                 last_error = Some(e);
             }
         }
@@ -120,11 +119,11 @@ fn download_and_verify(
     );
     let temp_path = final_path.with_file_name(temp_filename);
 
-    debug!("Downloading to temporary path: {}", temp_path.display());
+    log::debug!("Downloading to temporary path: {}", temp_path.display());
 
     if temp_path.exists() {
         if let Err(e) = fs::remove_file(&temp_path) {
-            warn!("Could not remove existing temporary file {}: {}", temp_path.display(), e);
+            log::warn!("Could not remove existing temporary file {}: {}", temp_path.display(), e);
         }
     }
 
@@ -133,11 +132,11 @@ fn download_and_verify(
         .map_err(|e| SapphireError::HttpError(format!("HTTP request failed for {}: {}", url, e)))?;
 
     let status = response.status();
-    debug!("Received HTTP status: {} for {}", status, url);
+    log::debug!("Received HTTP status: {} for {}", status, url);
 
     if !status.is_success() {
         let body_text = response.text().unwrap_or_else(|_| "Failed to read response body".to_string());
-        error!("HTTP error {} for URL {}: {}", status, url, body_text);
+        log::error!("HTTP error {} for URL {}: {}", status, url, body_text);
         return match status {
             StatusCode::NOT_FOUND => Err(SapphireError::DownloadError(
                 final_path.file_name().map(|s|s.to_string_lossy().to_string()).unwrap_or_default(),
@@ -161,22 +160,22 @@ fn download_and_verify(
     response.copy_to(&mut temp_file)
         .map_err(|e| SapphireError::IoError(format!("Failed to write download stream to {}: {}", temp_path.display(), e)))?;
 
-    debug!("Finished writing download stream to temp file.");
+    log::debug!("Finished writing download stream to temp file.");
     drop(temp_file);
 
     verify_checksum(&temp_path, sha256_expected)?;
-    debug!("Checksum verified for temporary file: {}", temp_path.display());
+    log::debug!("Checksum verified for temporary file: {}", temp_path.display());
 
     fs::rename(&temp_path, final_path)
         .map_err(|e| SapphireError::IoError(format!("Failed to move temp file {} to {}: {}", temp_path.display(), final_path.display(), e)))?;
 
-    debug!("Moved verified file to final location: {}", final_path.display());
+    log::debug!("Moved verified file to final location: {}", final_path.display());
 
     Ok(final_path.to_path_buf())
 }
 
 fn verify_checksum(file_path: &Path, expected_sha256: &str) -> Result<()> {
-    debug!("Verifying checksum for: {}", file_path.display());
+    log::debug!("Verifying checksum for: {}", file_path.display());
     let mut file = File::open(file_path)
         .map_err(|e| SapphireError::IoError(format!("Failed to open file for checksum {}: {}", file_path.display(), e)))?;
 
@@ -187,17 +186,18 @@ fn verify_checksum(file_path: &Path, expected_sha256: &str) -> Result<()> {
     let hash_bytes = hasher.finalize();
     let actual_sha256 = hex::encode(hash_bytes);
 
-    debug!("Calculated SHA256: {} ({} bytes read)", actual_sha256, bytes_copied);
-    debug!("Expected SHA256:   {}", expected_sha256);
+    log::debug!("Calculated SHA256: {} ({} bytes read)", actual_sha256, bytes_copied);
+    log::debug!("Expected SHA256:   {}", expected_sha256);
 
     if actual_sha256.eq_ignore_ascii_case(expected_sha256) {
         Ok(())
     } else {
-        Err(SapphireError::ChecksumMismatch {
-            file: file_path.display().to_string(),
-            expected: expected_sha256.to_lowercase(),
-            actual: actual_sha256,
-        })
+        Err(SapphireError::ChecksumError(format!(
+            "Checksum mismatch for {}: expected {}, got {}",
+            file_path.display(),
+            expected_sha256,
+            actual_sha256
+        )))
     }
 }
 

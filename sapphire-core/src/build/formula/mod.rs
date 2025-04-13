@@ -15,10 +15,10 @@ pub mod source;
 pub mod link;
 
 /// Download formula resources from the internet
-pub async fn download_formula(formula: &Formula, config: &Config) -> Result<PathBuf> {
+pub async fn download_formula(formula: &Formula, config: &Config, client: &reqwest::Client) -> Result<PathBuf> {
     // Determine if we should download a bottle or source
     if has_bottle_for_current_platform(formula) {
-        bottle::download_bottle(formula, config).await
+        bottle::download_bottle(formula, config, client).await
     } else {
         source::download_source(formula, config).await
     }
