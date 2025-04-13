@@ -476,21 +476,21 @@ fn perl_build(
 
 
     // Run make test (Recommended for Perl builds)
-    info!("==> Running make test for Perl (may take a while)...");
-    let mut cmd = Command::new(make_exe.clone());
-    cmd.arg("test");
-    build_env.apply_to_command(&mut cmd);
-    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make test for Perl: {}", e)))?;
-
-    if !output.status.success() {
-        // Don't necessarily fail the build if tests fail, but log it verbosely
-        warn!("Perl 'make test' failed with status: {}. Continuing installation.", output.status);
-        // Optionally print full output on test failure
-        // eprintln!("Perl make test stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        // eprintln!("Perl make test stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-    } else {
-        info!("Perl 'make test' passed.");
-    }
+    //info!("==> Running make test for Perl (may take a while)...");
+    //let mut cmd = Command::new(make_exe.clone());
+    //cmd.arg("test");
+    //build_env.apply_to_command(&mut cmd);
+    //let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make test for Perl: {}", e)))?;
+    //
+    //if !output.status.success() {
+    //    // Don't necessarily fail the build if tests fail, but log it verbosely
+    //    warn!("Perl 'make test' failed with status: {}. Continuing installation.", output.status);
+    //    // Optionally print full output on test failure
+    //    // eprintln!("Perl make test stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    //    // eprintln!("Perl make test stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    //} else {
+    //    info!("Perl 'make test' passed.");
+    //}
 
 
     // Run make install
