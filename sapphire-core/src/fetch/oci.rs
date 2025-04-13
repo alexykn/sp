@@ -1,8 +1,8 @@
 // **File:** sapphire-core/src/fetch/oci.rs (Corrected with Config access for retry)
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
-use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use reqwest::header::{ACCEPT, AUTHORIZATION};
+use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 //use serde_json::Value;
 use std::collections::HashMap;
