@@ -11,7 +11,6 @@ use std::io::copy;
 use reqwest::Client;
 use std::io::Cursor;
 use std::process::Command;
-use std::collections::HashMap;
 use log::{debug, info, warn};
 
 mod make;

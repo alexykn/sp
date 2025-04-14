@@ -1,9 +1,8 @@
 use crate::utils::error::{SapphireError, Result};
 use crate::build::env::BuildEnvironment;
 use std::path::{Path, PathBuf};
-use std::fs;
 use std::process::Command;
-use log::{debug, info, warn};
+use log::{debug, info};
 
 /// Build Perl using its Configure script
 pub fn perl_build(

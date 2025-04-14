@@ -1,9 +1,8 @@
 use crate::utils::error::{SapphireError, Result};
 use crate::build::env::BuildEnvironment;
-use std::path::{Path, PathBuf};
-use std::fs;
+use std::path::Path;
 use std::process::Command;
-use log::{debug, info, warn};
+use log::{debug, info};
 
 /// Build with Meson
 pub fn meson_build(
