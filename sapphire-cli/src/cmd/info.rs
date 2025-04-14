@@ -2,10 +2,10 @@
 // Contains the logic for the `info` command.
 
 use sapphire_core::fetch::api;
+use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
-use sapphire_core::utils::error::{SapphireError, Result};
-use sapphire_core::model::formula::Formula;
+use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json::Value;
 
 /// Displays detailed information about a formula or cask.
@@ -23,7 +23,10 @@ pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
             return Ok(());
         }
         // If specified as a cask but not found, return an error
-        return Err(SapphireError::NotFound(format!("Cask '{}' not found", name)));
+        return Err(SapphireError::NotFound(format!(
+            "Cask '{}' not found",
+            name
+        )));
     } else {
         // Try as formula first
         if let Ok(info) = get_formula_info_raw(&cache, name).await {
@@ -39,7 +42,10 @@ pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
     }
 
     // If we get here, the package was not found
-    Err(SapphireError::NotFound(format!("Package '{}' not found", name)))
+    Err(SapphireError::NotFound(format!(
+        "Package '{}' not found",
+        name
+    )))
 }
 
 /// Public function that retrieves formula information and returns the Formula model
@@ -52,8 +58,7 @@ pub async fn get_formula_info(name: &str) -> Result<Formula> {
     let raw_info = get_formula_info_raw(&cache, name).await?;
 
     // Parse the JSON into a Formula struct
-    let formula: Formula = serde_json::from_value(raw_info)
-        .map_err(|e| SapphireError::Json(e))?;
+    let formula: Formula = serde_json::from_value(raw_info).map_err(|e| SapphireError::Json(e))?;
 
     Ok(formula)
 }
@@ -107,9 +112,19 @@ fn print_formula_info(_name: &str, formula: &Value) {
     println!("Formula Info:");
 
     // Print basic information
-    let full_name = formula.get("full_name").and_then(|f| f.as_str()).unwrap_or("N/A");
-    let version = formula.get("versions").and_then(|v| v.get("stable")).and_then(|s| s.as_str()).unwrap_or("N/A");
-    let license = formula.get("license").and_then(|l| l.as_str()).unwrap_or("N/A");
+    let full_name = formula
+        .get("full_name")
+        .and_then(|f| f.as_str())
+        .unwrap_or("N/A");
+    let version = formula
+        .get("versions")
+        .and_then(|v| v.get("stable"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("N/A");
+    let license = formula
+        .get("license")
+        .and_then(|l| l.as_str())
+        .unwrap_or("N/A");
     println!("{} ({}), license: {}", full_name, version, license);
 
     // Print homepage if available
@@ -154,7 +169,12 @@ fn print_cask_info(name: &str, cask: &Value) {
     println!("=== Cask: {} ===", name);
 
     // Print basic information
-    if let Some(name) = cask.get("name").and_then(|n| n.as_array()).and_then(|a| a.first()).and_then(|s| s.as_str()) {
+    if let Some(name) = cask
+        .get("name")
+        .and_then(|n| n.as_array())
+        .and_then(|a| a.first())
+        .and_then(|s| s.as_str())
+    {
         println!("Name: {}", name);
     }
 

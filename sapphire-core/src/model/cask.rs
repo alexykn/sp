@@ -1,7 +1,7 @@
 // src/model/cask.rs
 // Model for Homebrew casks
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -154,7 +154,7 @@ impl Cask {
                     }
                 }
                 None
-            },
+            }
             Err(_) => None,
         }
     }

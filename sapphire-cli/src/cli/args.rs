@@ -1,8 +1,8 @@
 // src/cli/args.rs
 // Defines the command-line argument structure using clap.
 
-use clap::{Parser, Subcommand};
 use crate::cmd::install::InstallArgs;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,5 +46,4 @@ pub enum Commands {
 
     /// Uninstall a formula or cask (placeholder)
     Uninstall { name: String },
-
 }

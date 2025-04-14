@@ -1,6 +1,6 @@
 pub mod api;
-pub mod oci;
 pub mod http;
+pub mod oci;
 
 // Re-export
 pub use api::*;

@@ -1,13 +1,12 @@
-use crate::utils::config::Config;
 use crate::model::formula::Formula;
-use crate::utils::error::{Result, SapphireError};
-use crate::utils::cache::Cache; // Import the Cache struct
-// Removed: use std::fs;
-// Removed: use std::path::PathBuf;
-// Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
+use crate::utils::cache::Cache;
+use crate::utils::config::Config;
+use crate::utils::error::{Result, SapphireError}; // Import the Cache struct
+                                                  // Removed: use std::fs;
+                                                  // Removed: use std::path::PathBuf;
+                                                  // Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
 use std::collections::HashMap; // For caching parsed formulas
 use std::sync::Arc; // Import Arc for thread-safe shared ownership
-
 
 /// Responsible for finding and loading Formula definitions from the API cache.
 #[derive()]
@@ -22,9 +21,9 @@ impl Formulary {
     pub fn new(config: Config) -> Self {
         // Initialize the cache helper using the directory from config
         let cache = Cache::new(&config.cache_dir).unwrap_or_else(|e| {
-             // Handle error appropriately - maybe panic or return Result?
-             // Using expect here for simplicity, but Result is better.
-             panic!("Failed to initialize cache in Formulary: {}", e);
+            // Handle error appropriately - maybe panic or return Result?
+            // Using expect here for simplicity, but Result is better.
+            panic!("Failed to initialize cache in Formulary: {}", e);
         });
         Self {
             // config,
@@ -54,8 +53,9 @@ impl Formulary {
         // 3. Parse the entire JSON array
         // This could be expensive, hence the parsed_cache above.
         println!("Parsing full formula list...");
-        let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data)
-            .map_err(|e| SapphireError::Cache(format!("Failed to parse cached formula data: {}", e)))?;
+        let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data).map_err(|e| {
+            SapphireError::Cache(format!("Failed to parse cached formula data: {}", e))
+        })?;
         println!("Parsed {} formulas.", all_formulas.len());
 
         // 4. Find the requested formula and populate the parsed cache
@@ -64,27 +64,40 @@ impl Formulary {
         parsed_cache_guard = self.parsed_cache.lock().unwrap();
         // Use entry API to avoid redundant lookups if another thread populated it
         for formula in all_formulas {
-             let formula_name = formula.name.clone(); // Clone name for insertion
-             let formula_arc = std::sync::Arc::new(formula); // Create Arc once
+            let formula_name = formula.name.clone(); // Clone name for insertion
+            let formula_arc = std::sync::Arc::new(formula); // Create Arc once
 
-             // If this is the formula we're looking for, store it for return value
-             if formula_name == name {
-                 found_formula = Some(Arc::clone(&formula_arc).as_ref().clone()); // Clone Formula out
-             }
+            // If this is the formula we're looking for, store it for return value
+            if formula_name == name {
+                found_formula = Some(Arc::clone(&formula_arc).as_ref().clone());
+                // Clone Formula out
+            }
 
-             // Insert into parsed cache using entry API
-             parsed_cache_guard.entry(formula_name).or_insert(formula_arc);
+            // Insert into parsed cache using entry API
+            parsed_cache_guard
+                .entry(formula_name)
+                .or_insert(formula_arc);
         }
 
         // 5. Return the found formula or an error
         match found_formula {
             Some(f) => {
-                println!("Successfully loaded formula '{}' version {}", f.name, f.version_str_full());
+                println!(
+                    "Successfully loaded formula '{}' version {}",
+                    f.name,
+                    f.version_str_full()
+                );
                 Ok(f)
             }
             None => {
-                 println!("Formula '{}' not found within the cached formula data.", name);
-                 Err(SapphireError::Generic(format!("Formula '{}' not found in cache.", name)))
+                println!(
+                    "Formula '{}' not found within the cached formula data.",
+                    name
+                );
+                Err(SapphireError::Generic(format!(
+                    "Formula '{}' not found in cache.",
+                    name
+                )))
             }
         }
     }

@@ -1,10 +1,10 @@
 // src/build/cask/app.rs
 // Contains logic for installing .app bundles from casks
 
-use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
-use std::path::{Path, PathBuf};
+use crate::utils::error::{Result, SapphireError};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Install an app from a mounted DMG
@@ -32,7 +32,8 @@ pub fn find_and_install_app(cask: &Cask, source_dir: &Path, caskroom_path: &Path
 
     if app_paths.is_empty() {
         return Err(SapphireError::Generic(format!(
-            "No .app bundles found in {}", source_dir.display()
+            "No .app bundles found in {}",
+            source_dir.display()
         )));
     }
 
@@ -46,11 +47,7 @@ fn get_app_name(cask: &Cask) -> String {
     if let Some(ref name) = cask.name {
         if !name.is_empty() {
             // Use the first name in the array if it's an array
-            let app_name = if name.len() > 0 {
-                &name[0]
-            } else {
-                ""
-            };
+            let app_name = if name.len() > 0 { &name[0] } else { "" };
 
             // Add .app extension if not present
             if !app_name.ends_with(".app") {
@@ -77,7 +74,9 @@ fn find_app_in_directory(dir: &Path, app_name: String) -> Result<PathBuf> {
 
     if app_paths.is_empty() {
         return Err(SapphireError::Generic(format!(
-            "App bundle '{}' not found in {}", app_name, dir.display()
+            "App bundle '{}' not found in {}",
+            app_name,
+            dir.display()
         )));
     }
 
@@ -91,17 +90,24 @@ fn find_all_apps_in_directory(dir: &Path) -> Result<Vec<PathBuf>> {
 
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => return Err(SapphireError::Generic(format!(
-            "Failed to read directory {}: {}", dir.display(), e
-        ))),
+        Err(e) => {
+            return Err(SapphireError::Generic(format!(
+                "Failed to read directory {}: {}",
+                dir.display(),
+                e
+            )))
+        }
     };
 
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(_e) => return Err(SapphireError::Generic(format!(
-                "Failed to read directory entry: {}", _e
-            ))),
+            Err(_e) => {
+                return Err(SapphireError::Generic(format!(
+                    "Failed to read directory entry: {}",
+                    _e
+                )))
+            }
         };
 
         let path = entry.path();
@@ -128,7 +134,8 @@ fn install_app(app_path: &Path, _cask: &Cask, caskroom_path: &Path) -> Result<()
     use serde_json;
 
     // Get the application name
-    let app_name = app_path.file_name()
+    let app_name = app_path
+        .file_name()
         .ok_or_else(|| SapphireError::Generic("Invalid app path".to_string()))?
         .to_string_lossy();
 
@@ -136,13 +143,17 @@ fn install_app(app_path: &Path, _cask: &Cask, caskroom_path: &Path) -> Result<()
     let applications_dir = super::get_applications_dir();
     let destination = applications_dir.join(&*app_name);
 
-    println!("==> Moving app '{}' to {}", app_name, applications_dir.display());
+    println!(
+        "==> Moving app '{}' to {}",
+        app_name,
+        applications_dir.display()
+    );
 
     // Remove existing app if it exists
     if destination.exists() {
         println!("==> Removing existing app at {}", destination.display());
         match fs::remove_dir_all(&destination) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_e) => {
                 // If we can't remove it directly, try with sudo
                 println!("==> Failed to remove app directly, trying with sudo...");
@@ -154,7 +165,8 @@ fn install_app(app_path: &Path, _cask: &Cask, caskroom_path: &Path) -> Result<()
 
                 if !output.status.success() {
                     return Err(SapphireError::Generic(format!(
-                        "Failed to remove existing app: {}", String::from_utf8_lossy(&output.stderr)
+                        "Failed to remove existing app: {}",
+                        String::from_utf8_lossy(&output.stderr)
                     )));
                 }
             }
@@ -171,7 +183,8 @@ fn install_app(app_path: &Path, _cask: &Cask, caskroom_path: &Path) -> Result<()
 
     if !output.status.success() {
         return Err(SapphireError::Generic(format!(
-            "Failed to copy app: {}", String::from_utf8_lossy(&output.stderr)
+            "Failed to copy app: {}",
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
 

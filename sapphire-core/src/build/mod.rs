@@ -1,14 +1,13 @@
 // build/mod.rs - Main module for build functionality
 
-pub mod formula;
 pub mod cask;
 pub mod devtools;
 pub mod env;
+pub mod formula;
 
 use crate::utils::error::{Result, SapphireError};
 use std::path::Path;
 use std::process::Command;
-
 
 // Re-export common functionality
 pub use formula::{get_cellar_path, get_formula_cellar_path, write_receipt};
@@ -17,9 +16,9 @@ pub use formula::{get_cellar_path, get_formula_cellar_path, write_receipt};
 pub fn get_homebrew_prefix() -> std::path::PathBuf {
     // Prioritize HOMEBREW_PREFIX env var if set
     if let Ok(prefix) = std::env::var("HOMEBREW_PREFIX") {
-         if !prefix.is_empty() {
-             return std::path::PathBuf::from(prefix);
-         }
+        if !prefix.is_empty() {
+            return std::path::PathBuf::from(prefix);
+        }
     }
     // Otherwise, check standard locations
     if std::path::Path::new("/opt/homebrew").exists() {
@@ -29,9 +28,9 @@ pub fn get_homebrew_prefix() -> std::path::PathBuf {
     } else {
         // Sensible default if others don't exist (e.g., clean install)
         if cfg!(target_arch = "aarch64") {
-             std::path::PathBuf::from("/opt/homebrew")
+            std::path::PathBuf::from("/opt/homebrew")
         } else {
-             std::path::PathBuf::from("/usr/local")
+            std::path::PathBuf::from("/usr/local")
         }
     }
 }
@@ -42,36 +41,47 @@ pub fn get_formula_opt_path(formula: &crate::model::formula::Formula) -> std::pa
     prefix.join("opt").join(formula.name()) // Use formula.name() method
 }
 
-
 /// Extract a downloaded archive to the target directory, stripping leading components.
 pub fn extract_archive_strip_components(
     archive_path: &Path,
     target_dir: &Path,
-    strip_components: usize
+    strip_components: usize,
 ) -> Result<()> {
     // Create target directory if it doesn't exist
     std::fs::create_dir_all(target_dir)?;
 
     // Check file extension to determine extraction method
-    let extension = archive_path.extension()
+    let extension = archive_path
+        .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("");
 
     let mut cmd = Command::new("tar");
     cmd.arg("-xf") // Extract files
-       .arg(archive_path)
-       .arg("-C") // Change to target directory
-       .arg(target_dir)
-       .arg(format!("--strip-components={}", strip_components)); // Strip leading components
+        .arg(archive_path)
+        .arg("-C") // Change to target directory
+        .arg(target_dir)
+        .arg(format!("--strip-components={}", strip_components)); // Strip leading components
 
     match extension {
-        "gz" | "tgz" => { cmd.arg("-z"); } // gzip
-        "bz2" | "tbz" | "tbz2" => { cmd.arg("-j"); } // bzip2
-        "xz" | "txz" => { cmd.arg("-J"); } // xz
+        "gz" | "tgz" => {
+            cmd.arg("-z");
+        } // gzip
+        "bz2" | "tbz" | "tbz2" => {
+            cmd.arg("-j");
+        } // bzip2
+        "xz" | "txz" => {
+            cmd.arg("-J");
+        } // xz
         "tar" => { /* No compression flag needed */ }
         // TODO: Add zip support if needed (would require a different command)
         // "zip" => return extract_zip_strip(archive_path, target_dir, strip_components),
-        _ => return Err(SapphireError::Generic(format!("Unsupported archive format for stripping: {}", extension)))
+        _ => {
+            return Err(SapphireError::Generic(format!(
+                "Unsupported archive format for stripping: {}",
+                extension
+            )))
+        }
     }
 
     println!("Executing tar command: {:?}", cmd);
@@ -80,14 +90,14 @@ pub fn extract_archive_strip_components(
     if !output.status.success() {
         eprintln!("Tar stdout:\n{}", String::from_utf8_lossy(&output.stdout));
         eprintln!("Tar stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-        return Err(SapphireError::Generic(
-            format!("Failed to extract archive with strip-components: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract archive with strip-components: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())
 }
-
 
 // --- Kept extract_archive for potential non-stripping use cases ---
 
@@ -97,7 +107,8 @@ pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(target_dir)?;
 
     // Check file extension to determine extraction method
-    let extension = archive_path.extension()
+    let extension = archive_path
+        .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("");
 
@@ -107,7 +118,10 @@ pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
         "bz2" | "tbz" | "tbz2" => extract_tar_bz2(archive_path, target_dir),
         "xz" | "txz" => extract_tar_xz(archive_path, target_dir),
         "zip" => extract_zip(archive_path, target_dir),
-        _ => Err(SapphireError::Generic(format!("Unsupported archive format: {}", extension)))
+        _ => Err(SapphireError::Generic(format!(
+            "Unsupported archive format: {}",
+            extension
+        ))),
     }
 }
 
@@ -121,9 +135,10 @@ fn extract_tar(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(SapphireError::Generic(
-            format!("Failed to extract tar archive: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())
@@ -139,9 +154,10 @@ fn extract_tar_gz(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(SapphireError::Generic(
-            format!("Failed to extract tar.gz archive: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar.gz archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())
@@ -157,9 +173,10 @@ fn extract_tar_bz2(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(SapphireError::Generic(
-            format!("Failed to extract tar.bz2 archive: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar.bz2 archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())
@@ -175,9 +192,10 @@ fn extract_tar_xz(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(SapphireError::Generic(
-            format!("Failed to extract tar.xz archive: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar.xz archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())
@@ -194,9 +212,10 @@ fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        return Err(SapphireError::Generic(
-            format!("Failed to extract zip archive: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract zip archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
 
     Ok(())

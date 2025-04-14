@@ -1,11 +1,11 @@
 // src/build/cask/zip.rs
 // Contains logic for extracting ZIP files for cask installation
 
-use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
+use crate::utils::error::{Result, SapphireError};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
 use tempfile::TempDir;
 
 /// Install a cask from a ZIP file
@@ -27,7 +27,8 @@ pub fn install_from_zip(cask: &Cask, zip_path: &Path, caskroom_path: &Path) -> R
 
     if !output.status.success() {
         return Err(SapphireError::Generic(format!(
-            "Failed to extract ZIP file: {}", String::from_utf8_lossy(&output.stderr)
+            "Failed to extract ZIP file: {}",
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
 
@@ -58,7 +59,8 @@ fn process_zip_content(cask: &Cask, extract_dir: &Path, caskroom_path: &Path) ->
 
     // If we couldn't find anything to install, return an error
     Err(SapphireError::Generic(format!(
-        "Couldn't find any installable artifacts in ZIP: {}", extract_dir.display()
+        "Couldn't find any installable artifacts in ZIP: {}",
+        extract_dir.display()
     )))
 }
 
@@ -68,17 +70,24 @@ fn find_executable_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => return Err(SapphireError::Generic(format!(
-            "Failed to read directory {}: {}", dir.display(), e
-        ))),
+        Err(e) => {
+            return Err(SapphireError::Generic(format!(
+                "Failed to read directory {}: {}",
+                dir.display(),
+                e
+            )))
+        }
     };
 
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(e) => return Err(SapphireError::Generic(format!(
-                "Failed to read directory entry: {}", e
-            ))),
+            Err(e) => {
+                return Err(SapphireError::Generic(format!(
+                    "Failed to read directory entry: {}",
+                    e
+                )))
+            }
         };
 
         let path = entry.path();
@@ -125,12 +134,17 @@ fn install_binary_files(cask: &Cask, binary_paths: &[PathBuf], caskroom_path: &P
 
     // Copy each binary to the bin directory
     for binary_path in binary_paths {
-        let binary_name = binary_path.file_name()
+        let binary_name = binary_path
+            .file_name()
             .ok_or_else(|| SapphireError::Generic("Invalid binary path".to_string()))?;
 
         let destination = bin_dir.join(binary_name);
 
-        println!("==> Copying binary '{}' to {}", binary_name.to_string_lossy(), bin_dir.display());
+        println!(
+            "==> Copying binary '{}' to {}",
+            binary_name.to_string_lossy(),
+            bin_dir.display()
+        );
         fs::copy(binary_path, &destination)?;
 
         // Set execute permission
@@ -151,7 +165,8 @@ fn install_binary_files(cask: &Cask, binary_paths: &[PathBuf], caskroom_path: &P
     let mut created_symlinks: Vec<String> = Vec::new();
 
     for binary_path in binary_paths {
-        let binary_name = binary_path.file_name()
+        let binary_name = binary_path
+            .file_name()
             .ok_or_else(|| SapphireError::Generic("Invalid binary path".to_string()))?;
 
         let source = bin_dir.join(binary_name); // Source is the copied binary in caskroom/bin
@@ -159,28 +174,41 @@ fn install_binary_files(cask: &Cask, binary_paths: &[PathBuf], caskroom_path: &P
 
         // Remove existing symlink if it exists
         if link_path.exists() {
-            if link_path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-                 fs::remove_file(&link_path)?;
+            if link_path
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                fs::remove_file(&link_path)?;
             } else {
-                 eprintln!("Warning: Existing file at link location {} is not a symlink. Skipping removal.", link_path.display());
-                 continue;
+                eprintln!("Warning: Existing file at link location {} is not a symlink. Skipping removal.", link_path.display());
+                continue;
             }
         }
 
         // Create the symlink
-        println!("==> Linking binary '{}' to {}", binary_name.to_string_lossy(), homebrew_bin.display());
+        println!(
+            "==> Linking binary '{}' to {}",
+            binary_name.to_string_lossy(),
+            homebrew_bin.display()
+        );
         if let Err(e) = std::os::unix::fs::symlink(&source, &link_path) {
-             eprintln!("Warning: Failed to create symlink {} -> {}: {}", link_path.display(), source.display(), e);
-             continue;
+            eprintln!(
+                "Warning: Failed to create symlink {} -> {}: {}",
+                link_path.display(),
+                source.display(),
+                e
+            );
+            continue;
         }
         created_symlinks.push(link_path.to_string_lossy().to_string());
     }
 
     let mut artifacts_to_record = created_symlinks;
     for binary_path in binary_paths {
-         let binary_name = binary_path.file_name().unwrap();
-         let caskroom_bin_path = bin_dir.join(binary_name);
-         artifacts_to_record.push(caskroom_bin_path.to_string_lossy().to_string());
+        let binary_name = binary_path.file_name().unwrap();
+        let caskroom_bin_path = bin_dir.join(binary_name);
+        artifacts_to_record.push(caskroom_bin_path.to_string_lossy().to_string());
     }
 
     super::write_receipt(cask, caskroom_path, artifacts_to_record)?;

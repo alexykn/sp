@@ -1,7 +1,7 @@
 // tap/tap.rs - Basic tap functionality
 
+use crate::utils::error::{Result, SapphireError};
 use std::path::PathBuf;
-use crate::utils::error::{SapphireError, Result};
 
 /// Represents a source of packages (formulas and casks)
 pub struct Tap {
@@ -20,7 +20,10 @@ impl Tap {
     pub fn new(name: &str) -> Result<Self> {
         let parts: Vec<&str> = name.split('/').collect();
         if parts.len() != 2 {
-            return Err(SapphireError::Generic(format!("Invalid tap name: {}", name)));
+            return Err(SapphireError::Generic(format!(
+                "Invalid tap name: {}",
+                name
+            )));
         }
         let user = parts[0].to_string();
         let repo = parts[1].to_string();
@@ -29,17 +32,19 @@ impl Tap {
         } else {
             PathBuf::from("/usr/local")
         };
-        let path = prefix.join("Library/Taps").join(&user).join(format!("homebrew-{}", repo));
+        let path = prefix
+            .join("Library/Taps")
+            .join(&user)
+            .join(format!("homebrew-{}", repo));
         Ok(Self { user, repo, path })
     }
 
     /// Update this tap by pulling latest changes
     pub fn update(&self) -> Result<()> {
-        use git2::{Repository, FetchOptions};
-        
-        let repo = Repository::open(&self.path).map_err(|e| {
-            SapphireError::Generic(format!("Failed to open tap repository: {}", e))
-        })?;
+        use git2::{FetchOptions, Repository};
+
+        let repo = Repository::open(&self.path)
+            .map_err(|e| SapphireError::Generic(format!("Failed to open tap repository: {}", e)))?;
 
         // Fetch updates from origin
         let mut remote = repo.find_remote("origin").map_err(|e| {
@@ -47,21 +52,28 @@ impl Tap {
         })?;
 
         let mut fetch_options = FetchOptions::new();
-        remote.fetch(&["refs/heads/*:refs/heads/*"], Some(&mut fetch_options), None)
+        remote
+            .fetch(
+                &["refs/heads/*:refs/heads/*"],
+                Some(&mut fetch_options),
+                None,
+            )
             .map_err(|e| SapphireError::Generic(format!("Failed to fetch updates: {}", e)))?;
 
         // Merge changes
-        let fetch_head = repo.find_reference("FETCH_HEAD").map_err(|e| {
-            SapphireError::Generic(format!("Failed to find FETCH_HEAD: {}", e))
-        })?;
+        let fetch_head = repo
+            .find_reference("FETCH_HEAD")
+            .map_err(|e| SapphireError::Generic(format!("Failed to find FETCH_HEAD: {}", e)))?;
 
-        let fetch_commit = repo.reference_to_annotated_commit(&fetch_head).map_err(|e| {
-            SapphireError::Generic(format!("Failed to get commit from FETCH_HEAD: {}", e))
-        })?;
+        let fetch_commit = repo
+            .reference_to_annotated_commit(&fetch_head)
+            .map_err(|e| {
+                SapphireError::Generic(format!("Failed to get commit from FETCH_HEAD: {}", e))
+            })?;
 
-        let analysis = repo.merge_analysis(&[&fetch_commit]).map_err(|e| {
-            SapphireError::Generic(format!("Failed to analyze merge: {}", e))
-        })?;
+        let analysis = repo
+            .merge_analysis(&[&fetch_commit])
+            .map_err(|e| SapphireError::Generic(format!("Failed to analyze merge: {}", e)))?;
 
         if analysis.0.is_up_to_date() {
             println!("Already up-to-date");
@@ -72,17 +84,16 @@ impl Tap {
             let mut reference = repo.find_reference("refs/heads/master").map_err(|e| {
                 SapphireError::Generic(format!("Failed to find master branch: {}", e))
             })?;
-            reference.set_target(fetch_commit.id(), "Fast-forward").map_err(|e| {
-                SapphireError::Generic(format!("Failed to fast-forward: {}", e))
-            })?;
-            repo.set_head("refs/heads/master").map_err(|e| {
-                SapphireError::Generic(format!("Failed to set HEAD: {}", e))
-            })?;
+            reference
+                .set_target(fetch_commit.id(), "Fast-forward")
+                .map_err(|e| SapphireError::Generic(format!("Failed to fast-forward: {}", e)))?;
+            repo.set_head("refs/heads/master")
+                .map_err(|e| SapphireError::Generic(format!("Failed to set HEAD: {}", e)))?;
             repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
                 .map_err(|e| SapphireError::Generic(format!("Failed to checkout: {}", e)))?;
         } else {
             return Err(SapphireError::Generic(
-                "Tap requires merge but automatic merging is not implemented".to_string()
+                "Tap requires merge but automatic merging is not implemented".to_string(),
             ));
         }
 
@@ -93,14 +104,13 @@ impl Tap {
     pub fn remove(&self) -> Result<()> {
         if !self.path.exists() {
             return Err(SapphireError::NotFound(format!(
-                "Tap {} is not installed", self.full_name()
+                "Tap {} is not installed",
+                self.full_name()
             )));
         }
         println!("==> Removing tap {}", self.full_name());
         std::fs::remove_dir_all(&self.path).map_err(|e| {
-            SapphireError::Generic(format!(
-                "Failed to remove tap {}: {}", self.full_name(), e
-            ))
+            SapphireError::Generic(format!("Failed to remove tap {}: {}", self.full_name(), e))
         })
     }
 
@@ -114,4 +124,3 @@ impl Tap {
         self.path.exists()
     }
 }
-

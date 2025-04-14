@@ -10,25 +10,24 @@ pub struct Version(semver::Version);
 impl Version {
     pub fn parse(s: &str) -> Result<Self> {
         // Attempt standard semver parse first
-        semver::Version::parse(s)
-            .map(Version)
-            .or_else(|_| {
-                 // Homebrew often uses versions like "1.2.3_1" (revision) or just "123"
-                 // Try to handle these by stripping suffixes or padding
-                 // This is a simplified handling, Homebrew's PkgVersion is complex
-                 let cleaned = s.split('_').next().unwrap_or(s); // Take part before _
-                 let parts: Vec<&str> = cleaned.split('.').collect();
-                 let padded = match parts.len() {
-                     1 => format!("{}.0.0", parts[0]),
-                     2 => format!("{}.{}.0", parts[0], parts[1]),
-                     _ => cleaned.to_string(), // Use original if 3+ parts
-                 };
-                  semver::Version::parse(&padded)
-                     .map(Version)
-                     .map_err(|e| SapphireError::VersionError(format!("Failed to parse version '{}' (tried '{}'): {}", s, padded, e)))
-
+        semver::Version::parse(s).map(Version).or_else(|_| {
+            // Homebrew often uses versions like "1.2.3_1" (revision) or just "123"
+            // Try to handle these by stripping suffixes or padding
+            // This is a simplified handling, Homebrew's PkgVersion is complex
+            let cleaned = s.split('_').next().unwrap_or(s); // Take part before _
+            let parts: Vec<&str> = cleaned.split('.').collect();
+            let padded = match parts.len() {
+                1 => format!("{}.0.0", parts[0]),
+                2 => format!("{}.{}.0", parts[0], parts[1]),
+                _ => cleaned.to_string(), // Use original if 3+ parts
+            };
+            semver::Version::parse(&padded).map(Version).map_err(|e| {
+                SapphireError::VersionError(format!(
+                    "Failed to parse version '{}' (tried '{}'): {}",
+                    s, padded, e
+                ))
             })
-
+        })
     }
 }
 
@@ -80,7 +79,6 @@ impl<'de> Deserialize<'de> for Version {
         Version::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
-
 
 // Add to sapphire-core/src/utils/error.rs:
 // #[error("Version error: {0}")]

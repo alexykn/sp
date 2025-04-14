@@ -1,11 +1,11 @@
 // src/build/cask/pkg.rs
 // Contains logic for installing .pkg packages from casks
 
-use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
+use crate::utils::error::{Result, SapphireError};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
 
 /// Install a pkg from a mounted DMG
 pub fn install_pkg_from_dmg(cask: &Cask, mount_point: &Path, caskroom_path: &Path) -> Result<()> {
@@ -36,17 +36,24 @@ fn find_pkg_in_directory(dir: &Path) -> Result<PathBuf> {
 
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => return Err(SapphireError::Generic(format!(
-            "Failed to read directory {}: {}", dir.display(), e
-        ))),
+        Err(e) => {
+            return Err(SapphireError::Generic(format!(
+                "Failed to read directory {}: {}",
+                dir.display(),
+                e
+            )))
+        }
     };
 
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(e) => return Err(SapphireError::Generic(format!(
-                "Failed to read directory entry: {}", e
-            ))),
+            Err(e) => {
+                return Err(SapphireError::Generic(format!(
+                    "Failed to read directory entry: {}",
+                    e
+                )))
+            }
         };
 
         let path = entry.path();
@@ -67,7 +74,8 @@ fn find_pkg_in_directory(dir: &Path) -> Result<PathBuf> {
 
     if pkg_paths.is_empty() {
         return Err(SapphireError::Generic(format!(
-            "No .pkg files found in {}", dir.display()
+            "No .pkg files found in {}",
+            dir.display()
         )));
     }
 
@@ -80,7 +88,8 @@ fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()>
     println!("==> Installing pkg file: {}", pkg_path.display());
 
     // Create a copy of the pkg in the caskroom for reference
-    let pkg_name = pkg_path.file_name()
+    let pkg_name = pkg_path
+        .file_name()
         .ok_or_else(|| SapphireError::Generic("Invalid pkg path".to_string()))?;
 
     let caskroom_pkg_path = caskroom_path.join(pkg_name);
@@ -101,7 +110,8 @@ fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()>
 
     if !output.status.success() {
         return Err(SapphireError::Generic(format!(
-            "Package installation failed: {}", String::from_utf8_lossy(&output.stderr)
+            "Package installation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         )));
     }
 

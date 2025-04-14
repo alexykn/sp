@@ -11,7 +11,7 @@ description = "Core library for the Sapphire package manager"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 
 # Core-specific dependencies (add others identified from moved code)
 serde_json = "1.0.140"

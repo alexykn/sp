@@ -1,11 +1,11 @@
 // src/utils/cache.rs
 // Handles caching of formula data and downloads
 
+use crate::utils::error::{Result, SapphireError};
+use serde::{de::DeserializeOwned, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
-use std::fs;
-use crate::utils::error::{SapphireError, Result};
-use serde::{de::DeserializeOwned, Serialize};
 
 // TODO: Define cache directory structure (e.g., ~/.cache/brew-rs-client)
 // TODO: Implement functions for storing, retrieving, and clearing cached data.
@@ -50,7 +50,10 @@ impl Cache {
         log::debug!("Loading raw data from cache file: {:?}", path);
 
         if !path.exists() {
-            return Err(SapphireError::Cache(format!("Cache file {} does not exist", filename)));
+            return Err(SapphireError::Cache(format!(
+                "Cache file {} does not exist",
+                filename
+            )));
         }
 
         fs::read_to_string(&path).map_err(|e| SapphireError::Io(e))
@@ -65,7 +68,8 @@ impl Cache {
 
         let metadata = fs::metadata(&path)?;
         let modified_time = metadata.modified()?;
-        let age = SystemTime::now().duration_since(modified_time)
+        let age = SystemTime::now()
+            .duration_since(modified_time)
             .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
 
         Ok(age <= CACHE_TTL)
@@ -93,8 +97,9 @@ impl Cache {
 /// Gets the path to the application's cache directory, creating it if necessary.
 /// Uses dirs::cache_dir() to find the appropriate system cache location.
 pub fn get_cache_dir() -> Result<PathBuf> {
-    let base_cache_dir = dirs::cache_dir()
-        .ok_or_else(|| SapphireError::Cache("Could not determine system cache directory".to_string()))?;
+    let base_cache_dir = dirs::cache_dir().ok_or_else(|| {
+        SapphireError::Cache("Could not determine system cache directory".to_string())
+    })?;
     let app_cache_dir = base_cache_dir.join(CACHE_SUBDIR);
 
     if !app_cache_dir.exists() {
@@ -131,13 +136,16 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
 
     if !path.exists() {
         log::debug!("Cache file not found.");
-        return Err(SapphireError::Cache("Cache file does not exist".to_string()));
+        return Err(SapphireError::Cache(
+            "Cache file does not exist".to_string(),
+        ));
     }
 
     // Check cache file age
     let metadata = fs::metadata(&path)?;
     let modified_time = metadata.modified()?;
-    let age = SystemTime::now().duration_since(modified_time)
+    let age = SystemTime::now()
+        .duration_since(modified_time)
         .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
 
     if age > CACHE_TTL {
@@ -173,7 +181,8 @@ pub fn is_cache_valid(filename: &str) -> Result<bool> {
     }
     let metadata = fs::metadata(&path)?;
     let modified_time = metadata.modified()?;
-    let age = SystemTime::now().duration_since(modified_time)
+    let age = SystemTime::now()
+        .duration_since(modified_time)
         .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
     Ok(age <= CACHE_TTL)
 }

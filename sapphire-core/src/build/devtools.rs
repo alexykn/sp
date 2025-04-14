@@ -21,10 +21,18 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
         if let Ok(compiler_path) = env::var(env_var_name) {
             let path = PathBuf::from(compiler_path);
             if path.is_file() {
-                println!("Using compiler from env var {}: {}", env_var_name, path.display());
+                println!(
+                    "Using compiler from env var {}: {}",
+                    env_var_name,
+                    path.display()
+                );
                 return Ok(path);
             } else {
-                println!("Env var {} points to non-existent file: {}", env_var_name, path.display());
+                println!(
+                    "Env var {} points to non-existent file: {}",
+                    env_var_name,
+                    path.display()
+                );
             }
         }
     }
@@ -43,32 +51,41 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
                 let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !path_str.is_empty() {
                     let path = PathBuf::from(path_str);
-                     if path.is_file() {
-                         println!("Found compiler via xcrun: {}", path.display());
-                         return Ok(path);
-                     } else {
-                         println!("xcrun found '{}' but path doesn't exist or isn't a file: {}", name, path.display());
-                     }
+                    if path.is_file() {
+                        println!("Found compiler via xcrun: {}", path.display());
+                        return Ok(path);
+                    } else {
+                        println!(
+                            "xcrun found '{}' but path doesn't exist or isn't a file: {}",
+                            name,
+                            path.display()
+                        );
+                    }
                 } else {
-                     println!("xcrun found '{}' but returned empty path.", name);
+                    println!("xcrun found '{}' but returned empty path.", name);
                 }
             }
-             Ok(out) => { // xcrun ran but failed
-                 let stderr = String::from_utf8_lossy(&out.stderr);
-                 // Don't treat xcrun failure as fatal, just means it couldn't find it this way
-                 println!("xcrun failed to find '{}': {}", name, stderr.trim());
+            Ok(out) => {
+                // xcrun ran but failed
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // Don't treat xcrun failure as fatal, just means it couldn't find it this way
+                println!("xcrun failed to find '{}': {}", name, stderr.trim());
             }
             Err(e) => {
                 // xcrun command itself failed to execute (likely not installed or not in PATH)
-                println!("Failed to execute xcrun: {}. Falling back to PATH search.", e);
+                println!(
+                    "Failed to execute xcrun: {}. Falling back to PATH search.",
+                    e
+                );
             }
         }
     }
 
     // 3. Fallback to searching PATH
     println!("Falling back to searching PATH for '{}'", name);
-    which::which(name)
-        .map_err(|e| SapphireError::BuildEnvError(format!("Failed to find compiler '{}' on PATH: {}", name, e)))
+    which::which(name).map_err(|e| {
+        SapphireError::BuildEnvError(format!("Failed to find compiler '{}' on PATH: {}", name, e))
+    })
 }
 
 /// Finds the path to the active macOS SDK.
@@ -81,7 +98,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
             .stderr(Stdio::piped())
             .output();
 
-         match output {
+        match output {
             Ok(out) if out.status.success() => {
                 let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if path_str.is_empty() || path_str == "/" {
@@ -93,22 +110,25 @@ pub fn find_sdk_path() -> Result<PathBuf> {
                 }
                 let sdk_path = PathBuf::from(path_str);
                 if !sdk_path.exists() {
-                     return Err(SapphireError::BuildEnvError(format!(
-                         "SDK path reported by xcrun does not exist: {}", sdk_path.display()
-                     )));
+                    return Err(SapphireError::BuildEnvError(format!(
+                        "SDK path reported by xcrun does not exist: {}",
+                        sdk_path.display()
+                    )));
                 }
                 println!("Found SDK path: {}", sdk_path.display());
                 Ok(sdk_path)
-            },
-             Ok(out) => { // xcrun ran but failed
-                 let stderr = String::from_utf8_lossy(&out.stderr);
-                 Err(SapphireError::BuildEnvError(format!(
-                     "xcrun failed to find SDK path: {}", stderr.trim()
-                 )))
-             },
+            }
+            Ok(out) => {
+                // xcrun ran but failed
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(SapphireError::BuildEnvError(format!(
+                    "xcrun failed to find SDK path: {}",
+                    stderr.trim()
+                )))
+            }
             Err(e) => {
                 // xcrun command itself failed to execute
-                 Err(SapphireError::BuildEnvError(format!(
+                Err(SapphireError::BuildEnvError(format!(
                     "Failed to execute 'xcrun --show-sdk-path': {}. Is Xcode or Command Line Tools installed?", e
                 )))
             }
@@ -124,39 +144,44 @@ pub fn find_sdk_path() -> Result<PathBuf> {
 /// Returns "0.0" on non-macOS platforms.
 pub fn get_macos_version() -> Result<String> {
     if cfg!(target_os = "macos") {
-         println!("Attempting to get macOS version using sw_vers");
-         let output = Command::new("sw_vers")
+        println!("Attempting to get macOS version using sw_vers");
+        let output = Command::new("sw_vers")
             .arg("-productVersion")
             .stderr(Stdio::piped())
             .output();
 
-         match output {
-             Ok(out) if out.status.success() => {
-                 let version_full = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                 // Homebrew often uses major.minor, let's try to replicate that
-                 let version_parts: Vec<&str> = version_full.split('.').collect();
-                 let version_short = if version_parts.len() >= 2 {
+        match output {
+            Ok(out) if out.status.success() => {
+                let version_full = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                // Homebrew often uses major.minor, let's try to replicate that
+                let version_parts: Vec<&str> = version_full.split('.').collect();
+                let version_short = if version_parts.len() >= 2 {
                     format!("{}.{}", version_parts[0], version_parts[1])
-                 } else {
-                     version_full.clone() // Fallback if format is unexpected
-                 };
-                 println!("Found macOS version: {} (short: {})", version_full, version_short);
-                 Ok(version_short)
-             },
-             Ok(out) => { // sw_vers ran but failed
-                 let stderr = String::from_utf8_lossy(&out.stderr);
-                  Err(SapphireError::BuildEnvError(format!(
-                     "sw_vers failed to get product version: {}", stderr.trim()
-                 )))
-             },
-             Err(e) => {
-                // sw_vers command itself failed to execute
-                 Err(SapphireError::BuildEnvError(format!(
-                    "Failed to execute 'sw_vers -productVersion': {}", e
+                } else {
+                    version_full.clone() // Fallback if format is unexpected
+                };
+                println!(
+                    "Found macOS version: {} (short: {})",
+                    version_full, version_short
+                );
+                Ok(version_short)
+            }
+            Ok(out) => {
+                // sw_vers ran but failed
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(SapphireError::BuildEnvError(format!(
+                    "sw_vers failed to get product version: {}",
+                    stderr.trim()
                 )))
             }
-         }
-
+            Err(e) => {
+                // sw_vers command itself failed to execute
+                Err(SapphireError::BuildEnvError(format!(
+                    "Failed to execute 'sw_vers -productVersion': {}",
+                    e
+                )))
+            }
+        }
     } else {
         println!("Not on macOS, returning '0.0' as version placeholder");
         Ok(String::from("0.0")) // Not applicable
@@ -181,11 +206,10 @@ pub fn get_arch_flag() -> String {
             String::new()
         }
     } else {
-         // On Linux/other, -march=native is common but less portable for distribution.
-         // Compilers usually target the host architecture by default without specific flags.
-         // Let's return an empty string for non-macOS for now. Flags can be added later if needed.
-         println!("Not on macOS, returning empty arch flag.");
-         String::new()
+        // On Linux/other, -march=native is common but less portable for distribution.
+        // Compilers usually target the host architecture by default without specific flags.
+        // Let's return an empty string for non-macOS for now. Flags can be added later if needed.
+        println!("Not on macOS, returning empty arch flag.");
+        String::new()
     }
 }
-

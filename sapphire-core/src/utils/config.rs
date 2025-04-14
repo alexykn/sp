@@ -1,10 +1,10 @@
 // Merged config module: combines logic from sapphire-core/src/config.rs and sapphire-core/src/utils/config.rs
 
-use crate::utils::error::Result;
 use crate::utils::cache; // Keep cache import if needed elsewhere
+use crate::utils::error::Result;
+use log::debug;
 use std::env;
-use std::path::PathBuf;
-use log::debug; // Use log crate
+use std::path::PathBuf; // Use log crate
 
 /// Default installation prefixes
 const DEFAULT_LINUX_PREFIX: &str = "/home/linuxbrew/.linuxbrew";
@@ -79,10 +79,18 @@ impl Config {
         let docker_registry_basic_auth = env::var("HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN").ok();
         let github_api_token = env::var("HOMEBREW_GITHUB_API_TOKEN").ok();
 
-        if artifact_domain.is_some() { debug!("Loaded HOMEBREW_ARTIFACT_DOMAIN"); }
-        if docker_registry_token.is_some() { debug!("Loaded HOMEBREW_DOCKER_REGISTRY_TOKEN"); }
-        if docker_registry_basic_auth.is_some() { debug!("Loaded HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN"); }
-        if github_api_token.is_some() { debug!("Loaded HOMEBREW_GITHUB_API_TOKEN"); }
+        if artifact_domain.is_some() {
+            debug!("Loaded HOMEBREW_ARTIFACT_DOMAIN");
+        }
+        if docker_registry_token.is_some() {
+            debug!("Loaded HOMEBREW_DOCKER_REGISTRY_TOKEN");
+        }
+        if docker_registry_basic_auth.is_some() {
+            debug!("Loaded HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN");
+        }
+        if github_api_token.is_some() {
+            debug!("Loaded HOMEBREW_GITHUB_API_TOKEN");
+        }
 
         debug!("Configuration loaded successfully.");
         Ok(Self {
@@ -104,7 +112,12 @@ impl Config {
         let parts: Vec<&str> = name.split('/').collect();
         if parts.len() == 2 {
             // Construct path like /prefix/Library/Taps/user/homebrew-repo
-            Some(self.prefix.join("Library/Taps").join(parts[0]).join(format!("homebrew-{}", parts[1])))
+            Some(
+                self.prefix
+                    .join("Library/Taps")
+                    .join(parts[0])
+                    .join(format!("homebrew-{}", parts[1])),
+            )
         } else {
             None // Invalid tap name format
         }
@@ -114,16 +127,23 @@ impl Config {
     /// Assumes standard formula location (e.g., Formula/*.rb or Formula/*.json).
     /// Note: Homebrew API doesn't rely on local taps as much now.
     pub fn get_formula_path_from_tap(&self, tap_name: &str, formula_name: &str) -> Option<PathBuf> {
-        self.get_tap_path(tap_name)
-            .and_then(|tap_path| {
-                // Check for both .rb (legacy) and .json (API cache mimic)
-                let json_path = tap_path.join("Formula").join(format!("{}.json", formula_name));
-                if json_path.exists() { return Some(json_path); }
-                let rb_path = tap_path.join("Formula").join(format!("{}.rb", formula_name));
-                if rb_path.exists() { return Some(rb_path); }
-                // Add check for Aliases if needed
-                None
-            })
+        self.get_tap_path(tap_name).and_then(|tap_path| {
+            // Check for both .rb (legacy) and .json (API cache mimic)
+            let json_path = tap_path
+                .join("Formula")
+                .join(format!("{}.json", formula_name));
+            if json_path.exists() {
+                return Some(json_path);
+            }
+            let rb_path = tap_path
+                .join("Formula")
+                .join(format!("{}.rb", formula_name));
+            if rb_path.exists() {
+                return Some(rb_path);
+            }
+            // Add check for Aliases if needed
+            None
+        })
     }
 }
 

@@ -1,8 +1,8 @@
-use crate::utils::error::{SapphireError, Result};
 use crate::build::env::BuildEnvironment;
+use crate::utils::error::{Result, SapphireError};
+use log::{debug, info};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use log::{debug, info};
 
 /// Build Perl using its Configure script
 pub fn perl_build(
@@ -14,11 +14,19 @@ pub fn perl_build(
 
     let configure_script = PathBuf::from("Configure");
     if !configure_script.exists() {
-        return Err(SapphireError::BuildEnvError(format!("Perl Configure script not found at {}", configure_script.display())));
+        return Err(SapphireError::BuildEnvError(format!(
+            "Perl Configure script not found at {}",
+            configure_script.display()
+        )));
     }
 
-    let sh_exe = which::which_in("sh", build_env.get_path_string(), Path::new("."))
-        .map_err(|_| SapphireError::BuildEnvError("sh command not found in build environment PATH (needed for Perl Configure).".to_string()))?;
+    let sh_exe =
+        which::which_in("sh", build_env.get_path_string(), Path::new(".")).map_err(|_| {
+            SapphireError::BuildEnvError(
+                "sh command not found in build environment PATH (needed for Perl Configure)."
+                    .to_string(),
+            )
+        })?;
 
     let mut cmd = Command::new(sh_exe);
     cmd.arg(configure_script);
@@ -27,34 +35,62 @@ pub fn perl_build(
 
     build_env.apply_to_command(&mut cmd);
     info!("Running Perl Configure: {:?}", cmd);
-    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute Perl Configure: {}", e)))?;
+    let output = cmd.output().map_err(|e| {
+        SapphireError::CommandExecError(format!("Failed to execute Perl Configure: {}", e))
+    })?;
 
     if !output.status.success() {
         println!("Perl Configure failed with status: {}", output.status);
-        eprintln!("Perl Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("Perl Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "Perl Configure stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        eprintln!(
+            "Perl Configure stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return Err(SapphireError::Generic(format!(
-            "Perl Configure failed with status: {}", output.status
+            "Perl Configure failed with status: {}",
+            output.status
         )));
     } else {
-        debug!("Perl Configure stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        debug!("Perl Configure stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        debug!(
+            "Perl Configure stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        debug!(
+            "Perl Configure stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // Run make
     info!("==> Running make for Perl");
-    let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
-        .map_err(|_| SapphireError::BuildEnvError("make command not found in build environment PATH.".to_string()))?;
+    let make_exe =
+        which::which_in("make", build_env.get_path_string(), Path::new(".")).map_err(|_| {
+            SapphireError::BuildEnvError(
+                "make command not found in build environment PATH.".to_string(),
+            )
+        })?;
     let mut cmd = Command::new(make_exe.clone());
     build_env.apply_to_command(&mut cmd);
-    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make for Perl: {}", e)))?;
+    let output = cmd.output().map_err(|e| {
+        SapphireError::CommandExecError(format!("Failed to execute make for Perl: {}", e))
+    })?;
 
     if !output.status.success() {
         println!("Perl make failed with status: {}", output.status);
-        eprintln!("Perl make stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("Perl make stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "Perl make stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        eprintln!(
+            "Perl make stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return Err(SapphireError::Generic(format!(
-            "Perl make failed with status: {}", output.status
+            "Perl make failed with status: {}",
+            output.status
         )));
     } else {
         info!("Perl make completed successfully.");
@@ -65,14 +101,23 @@ pub fn perl_build(
     let mut cmd = Command::new(make_exe);
     cmd.arg("install");
     build_env.apply_to_command(&mut cmd);
-    let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute make install for Perl: {}", e)))?;
+    let output = cmd.output().map_err(|e| {
+        SapphireError::CommandExecError(format!("Failed to execute make install for Perl: {}", e))
+    })?;
 
     if !output.status.success() {
         println!("Perl make install failed with status: {}", output.status);
-        eprintln!("Perl make install stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("Perl make install stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "Perl make install stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        eprintln!(
+            "Perl make install stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return Err(SapphireError::Generic(format!(
-            "Perl make install failed with status: {}", output.status
+            "Perl make install failed with status: {}",
+            output.status
         )));
     } else {
         info!("Perl make install completed successfully.");

@@ -188,7 +188,10 @@ fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[
     if !formula_matches.is_empty() {
         println!("==> Formulae");
         for formula in formula_matches {
-            let name = formula.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+            let name = formula
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("Unknown");
             let desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
             println!("{}: {}", name, desc);
         }
@@ -203,7 +206,10 @@ fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[
     if !cask_matches.is_empty() {
         println!("==> Casks");
         for cask in cask_matches {
-            let token = cask.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+            let token = cask
+                .get("token")
+                .and_then(|t| t.as_str())
+                .unwrap_or("Unknown");
             let desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
             println!("{}: {}", token, desc);
         }

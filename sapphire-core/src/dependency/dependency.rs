@@ -1,7 +1,7 @@
 // **File:** sapphire-core/src/dependency/dependency.rs (New file)
 use bitflags::bitflags;
-use std::fmt;
-use serde::{Serialize, Deserialize}; // For derive macros and attributes
+use serde::{Deserialize, Serialize};
+use std::fmt; // For derive macros and attributes
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,11 +29,10 @@ impl Default for DependencyTag {
 }
 
 impl fmt::Display for DependencyTag {
-     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-         write!(f, "{:?}", self) // Simple debug format for now
-     }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self) // Simple debug format for now
+    }
 }
-
 
 /// Represents a dependency declared by a Formula.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -57,7 +56,7 @@ impl Dependency {
     }
 
     /// Creates a new dependency with specific tags.
-     pub fn new_with_tags(name: impl Into<String>, tags: DependencyTag) -> Self {
+    pub fn new_with_tags(name: impl Into<String>, tags: DependencyTag) -> Self {
         Self {
             name: name.into(),
             tags,
@@ -86,19 +85,23 @@ impl DependencyExt for Vec<Dependency> {
             .collect()
     }
 
-     fn runtime(&self) -> Vec<&Dependency> {
-         // Runtime deps are those *not* exclusively build or test
-         // (A dep could be both runtime and build, e.g., a compiler needed at runtime too)
-         self.iter()
-             .filter(|dep| !dep.tags.contains(DependencyTag::BUILD | DependencyTag::TEST) || dep.tags.contains(DependencyTag::RUNTIME))
-             // Alternatively, be more explicit: include RUNTIME | RECOMMENDED | OPTIONAL
-             // .filter(|dep| dep.tags.intersects(DependencyTag::RUNTIME | DependencyTag::RECOMMENDED | DependencyTag::OPTIONAL))
+    fn runtime(&self) -> Vec<&Dependency> {
+        // Runtime deps are those *not* exclusively build or test
+        // (A dep could be both runtime and build, e.g., a compiler needed at runtime too)
+        self.iter()
+            .filter(|dep| {
+                !dep.tags
+                    .contains(DependencyTag::BUILD | DependencyTag::TEST)
+                    || dep.tags.contains(DependencyTag::RUNTIME)
+            })
+            // Alternatively, be more explicit: include RUNTIME | RECOMMENDED | OPTIONAL
+            // .filter(|dep| dep.tags.intersects(DependencyTag::RUNTIME | DependencyTag::RECOMMENDED | DependencyTag::OPTIONAL))
             .collect()
-     }
+    }
 
-      fn build_time(&self) -> Vec<&Dependency> {
-          self.filter_by_tags(DependencyTag::BUILD, DependencyTag::empty())
-      }
+    fn build_time(&self) -> Vec<&Dependency> {
+        self.filter_by_tags(DependencyTag::BUILD, DependencyTag::empty())
+    }
 }
 
 // Required for bitflags!

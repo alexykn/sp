@@ -6,16 +6,15 @@ pub mod dmg;
 pub mod pkg;
 pub mod zip;
 
-use std::path::{Path, PathBuf};
-use crate::utils::error::{SapphireError, Result};
 use crate::model::cask::Cask;
 use crate::utils::cache::Cache;
+use crate::utils::error::{Result, SapphireError};
 use reqwest::Url;
+use serde_json::json;
 use std::fs;
 use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH, SystemTimeError};
-use serde_json::json;
-
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 /// Get the Applications directory
 pub fn get_applications_dir() -> PathBuf {
@@ -44,22 +43,26 @@ pub fn get_cask_path(cask: &Cask) -> PathBuf {
 
 /// Download a cask
 pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
-    let urls = cask.url.as_ref().ok_or_else(|| {
-        SapphireError::Generic(format!("Cask {} has no URL", cask.token))
-    })?;
+    let urls = cask
+        .url
+        .as_ref()
+        .ok_or_else(|| SapphireError::Generic(format!("Cask {} has no URL", cask.token)))?;
 
     if urls.is_empty() {
-        return Err(SapphireError::Generic(format!("Cask {} has empty URL list", cask.token)));
+        return Err(SapphireError::Generic(format!(
+            "Cask {} has empty URL list",
+            cask.token
+        )));
     }
 
     let url_str = &urls[0];
     println!("==> Downloading cask from {}", url_str);
 
-    let url = Url::parse(url_str).map_err(|e| {
-        SapphireError::Generic(format!("Invalid URL '{}': {}", url_str, e))
-    })?;
+    let url = Url::parse(url_str)
+        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{}': {}", url_str, e)))?;
 
-    let file_name = url.path_segments()
+    let file_name = url
+        .path_segments()
         .and_then(|segments| segments.last())
         .unwrap_or("download.tmp");
 
@@ -75,22 +78,23 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     }
 
     let client = reqwest::Client::new();
-    let response = client.get(url.clone())
+    let response = client
+        .get(url.clone())
         .send()
         .await
-        .map_err(|e| {
-            SapphireError::Generic(format!("Failed to download cask: {}", e))
-        })?;
+        .map_err(|e| SapphireError::Generic(format!("Failed to download cask: {}", e)))?;
 
     if !response.status().is_success() {
         return Err(SapphireError::Generic(format!(
-            "Failed to download cask: HTTP status {}", response.status()
+            "Failed to download cask: HTTP status {}",
+            response.status()
         )));
     }
 
-    let bytes = response.bytes().await.map_err(|e| {
-        SapphireError::Generic(format!("Failed to read download response: {}", e))
-    })?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| SapphireError::Generic(format!("Failed to read download response: {}", e)))?;
 
     // Ensure cache directory exists before writing
     if let Some(parent) = cache_path.parent() {
@@ -116,7 +120,8 @@ pub fn install_cask(cask: &Cask, download_path: &Path) -> Result<()> {
     }
 
     // Determine the file type based on extension
-    let extension = download_path.extension()
+    let extension = download_path
+        .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_lowercase();
@@ -126,7 +131,8 @@ pub fn install_cask(cask: &Cask, download_path: &Path) -> Result<()> {
         "pkg" | "mpkg" => pkg::install_pkg_from_path(cask, download_path, &caskroom_path),
         "zip" => zip::install_from_zip(cask, download_path, &caskroom_path),
         _ => Err(SapphireError::Generic(format!(
-            "Unsupported file type: {}", extension
+            "Unsupported file type: {}",
+            extension
         ))),
     };
 
@@ -175,7 +181,8 @@ pub fn write_receipt(cask: &Cask, caskroom_path: &Path, artifacts: Vec<String>) 
 
     // Create receipt data
     // Map SystemTimeError explicitly
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {}", e)))?
         .as_secs();
 

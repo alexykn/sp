@@ -12,9 +12,7 @@ use cli::{Cli, Commands}; // Import the structs/enums from the cli module
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logger
-    env_logger::init_from_env(
-        env_logger::Env::default().filter_or("SAPPHIRE_LOG", "info"),
-    );
+    env_logger::init_from_env(env_logger::Env::default().filter_or("SAPPHIRE_LOG", "info"));
 
     // Initialize config
     let config = Config::load().unwrap_or_else(|e| {
@@ -27,16 +25,14 @@ async fn main() -> Result<()> {
 
     // Run the requested command
     let command_result = match cli_args.command {
-        Commands::Install(args) => {
-            cmd::install::execute(&args, &config).await
-        }
-        Commands::Uninstall { name } => {
-            cmd::uninstall::run_uninstall(&name).await
-        }
-        Commands::Update => {
-            cmd::update::run_update().await
-        }
-        Commands::Search { query, formula, cask } => {
+        Commands::Install(args) => cmd::install::execute(&args, &config).await,
+        Commands::Uninstall { name } => cmd::uninstall::run_uninstall(&name).await,
+        Commands::Update => cmd::update::run_update().await,
+        Commands::Search {
+            query,
+            formula,
+            cask,
+        } => {
             // Determine search type based on flags
             let search_type = if formula {
                 cmd::search::SearchType::Formula
@@ -47,12 +43,9 @@ async fn main() -> Result<()> {
             };
             cmd::search::run_search(&query, search_type).await
         }
-        Commands::Info { name, cask } => {
-            cmd::info::run_info(&name, cask).await
-        }
-        //Commands::Upgrade => {
-        //    cmd::upgrade::run_upgrade().await
-        //}
+        Commands::Info { name, cask } => cmd::info::run_info(&name, cask).await, //Commands::Upgrade => {
+                                                                                 //    cmd::upgrade::run_upgrade().await
+                                                                                 //}
     };
 
     // Handle potential errors from command execution

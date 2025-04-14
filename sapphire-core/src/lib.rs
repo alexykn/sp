@@ -5,18 +5,18 @@
 // Declare the top-level modules within the library crate
 // These are directories with their own mod.rs files
 pub mod build;
+pub mod dependency;
 pub mod fetch;
+pub mod formulary;
+pub mod keg;
 pub mod model;
 pub mod tap;
-pub mod keg;
-pub mod formulary;
 pub mod utils;
-pub mod dependency;
 
 // Re-export key types for easier use by the CLI crate
-pub use model::formula::Formula;
 pub use model::cask::Cask;
-pub use utils::error::{SapphireError, Result};
+pub use model::formula::Formula;
 pub use utils::config::Config;
+pub use utils::error::{Result, SapphireError};
 
 // No need to redefine the Error type since we're re-exporting the existing one

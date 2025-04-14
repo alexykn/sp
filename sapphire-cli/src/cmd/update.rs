@@ -23,7 +23,7 @@ pub async fn run_update() -> Result<()> {
         Ok(raw_data) => {
             cache.store_raw("formula.json", &raw_data)?;
             log::info!("✓ Successfully cached formulas data");
-        },
+        }
         Err(e) => {
             log::error!("Failed to fetch formulas from API: {}", e);
             return Err(e);
@@ -35,7 +35,7 @@ pub async fn run_update() -> Result<()> {
         Ok(raw_data) => {
             cache.store_raw("cask.json", &raw_data)?;
             log::info!("✓ Successfully cached casks data");
-        },
+        }
         Err(e) => {
             log::error!("Failed to fetch casks from API: {}", e);
             return Err(e);
