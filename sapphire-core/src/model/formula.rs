@@ -8,9 +8,9 @@ use serde::de;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use semver::Version;
+use semver::Version; // Keep using semver::Version
 
-// --- Bottle Related Structs --- (Keep as is)
+// --- Bottle Related Structs ---
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BottleFileSpec {
     pub url: String,
@@ -29,7 +29,7 @@ pub struct BottleStableSpec {
     pub files: HashMap<String, BottleFileSpec>,
 }
 
-// --- Formula Version Struct --- (Keep as is)
+// --- Formula Version Struct ---
 #[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct FormulaVersions {
     pub stable: Option<String>,
@@ -42,8 +42,11 @@ pub struct FormulaVersions {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Formula {
     pub name: String,
+    /// The raw stable version string from the API (e.g., "1.1", "1.2.3")
+    pub stable_version_str: String,
+    /// Parsed semver version (mainly for comparison, may be padded)
     #[serde(rename = "versions")]
-    pub version: Version, // Still store as semver::Version
+    pub version_semver: Version,
     #[serde(default)]
     pub revision: u32,
     #[serde(default)]
@@ -86,7 +89,7 @@ impl<'de> Deserialize<'de> for Formula {
             revision: u32,
             desc: Option<String>,
             homepage: Option<String>,
-            versions: FormulaVersions,
+            versions: FormulaVersions, // Keep FormulaVersions struct here
             #[serde(default)]
             url: String,
             #[serde(default)]
@@ -116,42 +119,53 @@ impl<'de> Deserialize<'de> for Formula {
 
         let raw: RawFormulaData = RawFormulaData::deserialize(deserializer)?;
 
-        // --- Version Parsing --- (Keep robust logic from previous fix)
-        let version_str_raw = raw.versions.stable.as_deref().ok_or_else(|| de::Error::missing_field("versions.stable"))?;
-        let mut majors = 0u32;
-        let mut minors = 0u32;
-        let mut patches = 0u32;
-        let mut part_count = 0;
-        for (i, part) in version_str_raw.split('.').enumerate() {
-            let numeric_part = part.chars().take_while(|c| c.is_ascii_digit()).collect::<String>();
-            if numeric_part.is_empty() && i > 0 { break; }
-            if numeric_part.len() < part.len() && i > 0 {
-                if let Ok(num) = numeric_part.parse::<u32>() {
-                    match i { 0 => majors = num, 1 => minors = num, 2 => patches = num, _ => {} }
-                    part_count += 1;
-                } break;
-            }
-            if let Ok(num) = numeric_part.parse::<u32>() {
-                match i { 0 => majors = num, 1 => minors = num, 2 => patches = num, _ => {} }
-                part_count += 1;
-            }
-            if i >= 2 { break; }
-        }
-        let version_str_padded = match part_count {
-            1 => format!("{}.0.0", majors), 2 => format!("{}.{}.0", majors, minors), _ => format!("{}.{}.{}", majors, minors, patches),
-        };
-        let version = match Version::parse(&version_str_padded) {
-            Ok(v) => v,
+        // --- Version Parsing ---
+        // Store the original stable version string
+        let stable_version_str = raw.versions.stable.clone().ok_or_else(|| de::Error::missing_field("versions.stable"))?;
+
+        // Parse into semver::Version for comparisons, padding if necessary
+        // (Use the logic from your previous version.rs or similar robust parsing)
+        let version_semver = match crate::model::version::Version::parse(&stable_version_str) {
+            Ok(v) => v.into(), // Convert our Version wrapper back to semver::Version
             Err(_) => {
-                 eprintln!( "Warning: Could not parse version '{}' (sanitized to '{}') for formula '{}'. Using 0.0.0.", version_str_raw, version_str_padded, raw.name );
-                 Version::new(0, 0, 0)
+                 // Fallback parsing/padding logic as before
+                 let mut majors = 0u32;
+                 let mut minors = 0u32;
+                 let mut patches = 0u32;
+                 let mut part_count = 0;
+                 for (i, part) in stable_version_str.split('.').enumerate() {
+                     let numeric_part = part.chars().take_while(|c| c.is_ascii_digit()).collect::<String>();
+                     if numeric_part.is_empty() && i > 0 { break; }
+                     if numeric_part.len() < part.len() && i > 0 {
+                         if let Ok(num) = numeric_part.parse::<u32>() {
+                             match i { 0 => majors = num, 1 => minors = num, 2 => patches = num, _ => {} }
+                             part_count += 1;
+                         } break;
+                     }
+                     if let Ok(num) = numeric_part.parse::<u32>() {
+                         match i { 0 => majors = num, 1 => minors = num, 2 => patches = num, _ => {} }
+                         part_count += 1;
+                     }
+                     if i >= 2 { break; }
+                 }
+                 let version_str_padded = match part_count {
+                     1 => format!("{}.0.0", majors), 2 => format!("{}.{}.0", majors, minors), _ => format!("{}.{}.{}", majors, minors, patches),
+                 };
+                 match Version::parse(&version_str_padded) {
+                     Ok(v) => v,
+                     Err(_) => {
+                          eprintln!( "Warning: Could not parse version '{}' (sanitized to '{}') for formula '{}'. Using 0.0.0.", stable_version_str, version_str_padded, raw.name );
+                          Version::new(0, 0, 0)
+                     }
+                 }
             }
         };
 
-        // --- URL/SHA256 Logic --- (Keep as is)
+
+        // --- URL/SHA256 Logic ---
         let mut final_url = raw.url;
         let mut final_sha256 = raw.sha256;
-        if final_url.is_empty() { /* ... legacy check ... */
+        if final_url.is_empty() {
              if let Some(Value::Object(urls_map)) = raw.urls {
                  if let Some(Value::Object(stable_url_info)) = urls_map.get("stable") {
                      if let Some(Value::String(u)) = stable_url_info.get("url") { final_url = u.clone(); }
@@ -190,7 +204,8 @@ impl<'de> Deserialize<'de> for Formula {
 
         Ok(Formula {
             name: raw.name,
-            version,
+            stable_version_str, // Store the original string
+            version_semver,     // Store the parsed semver
             revision: raw.revision,
             desc: raw.desc,
             homepage: raw.homepage,
@@ -198,7 +213,7 @@ impl<'de> Deserialize<'de> for Formula {
             sha256: final_sha256,
             mirrors: raw.mirrors,
             bottle: raw.bottle,
-            dependencies: combined_dependencies, // Assign the processed list
+            dependencies: combined_dependencies,
             requirements: raw.requirements,
             install_keg_path: None,
         })
@@ -207,8 +222,7 @@ impl<'de> Deserialize<'de> for Formula {
 
 
 impl Formula {
-    // --- Methods new, new_dummy, dependencies, requirements, set_keg_path, version_str_full, accessors ---
-    // Keep these methods as they were. `dependencies()` now returns the combined list.
+    // --- Methods ---
 
     /// Returns a clone of the defined dependencies (now includes all types with tags).
     pub fn dependencies(&self) -> Result<Vec<Dependency>> {
@@ -225,14 +239,20 @@ impl Formula {
         self.install_keg_path = Some(path);
     }
 
-    /// Gets the full version string including revision (e.g., "1.2.3_1").
+    /// Gets the full version string including revision, using the *original* stable version.
+    /// e.g., "1.1_5"
     pub fn version_str_full(&self) -> String {
-        if self.revision > 0 { format!("{}_{}", self.version, self.revision) } else { self.version.to_string() }
+        if self.revision > 0 {
+            format!("{}_{}", self.stable_version_str, self.revision)
+        } else {
+            self.stable_version_str.clone()
+        }
     }
 
     // --- Accessors ---
     pub fn name(&self) -> &str { &self.name }
-    pub fn version(&self) -> &Version { &self.version }
+    // Keep accessor for semver if needed for comparisons
+    pub fn version(&self) -> &Version { &self.version_semver }
     pub fn source_url(&self) -> &str { &self.url }
     pub fn source_sha256(&self) -> &str { &self.sha256 }
     pub fn get_bottle_spec(&self, bottle_tag: &str) -> Option<&BottleFileSpec> {
@@ -241,20 +261,22 @@ impl Formula {
 }
 
 
-// --- BuildEnvironment Dependency Interface --- (Keep as is)
-pub trait FormulaDependencies { /* ... */
+// --- BuildEnvironment Dependency Interface ---
+pub trait FormulaDependencies {
     fn name(&self) -> &str;
     fn install_prefix(&self, cellar_path: &Path) -> Result<PathBuf>;
     fn resolved_runtime_dependency_paths(&self) -> Result<Vec<PathBuf>>;
     fn resolved_build_dependency_paths(&self) -> Result<Vec<PathBuf>>;
     fn all_resolved_dependency_paths(&self) -> Result<Vec<PathBuf>>;
 }
-impl FormulaDependencies for Formula { /* ... */
+impl FormulaDependencies for Formula {
     fn name(&self) -> &str { &self.name }
+    /// Use version_str_full() to get the standard keg name suffix.
     fn install_prefix(&self, cellar_path: &Path) -> Result<PathBuf> {
-        let version_string = self.version_str_full();
+        let version_string = self.version_str_full(); // This now produces "1.1_5"
         Ok(cellar_path.join(self.name()).join(version_string))
     }
+    // Placeholder implementations - These should be filled by the dependency resolver state
     fn resolved_runtime_dependency_paths(&self) -> Result<Vec<PathBuf>> { Ok(Vec::new()) }
     fn resolved_build_dependency_paths(&self) -> Result<Vec<PathBuf>> { Ok(Vec::new()) }
     fn all_resolved_dependency_paths(&self) -> Result<Vec<PathBuf>> { Ok(Vec::new()) }
@@ -262,19 +284,14 @@ impl FormulaDependencies for Formula { /* ... */
 
 
 // --- Deserialization Helpers ---
-
-// Kept: deserialize_requirements
 fn deserialize_requirements<'de, D>(deserializer: D) -> std::result::Result<Vec<Requirement>, D::Error>
 where D: serde::Deserializer<'de>,
 {
      #[derive(Deserialize, Debug)]
-     struct ReqWrapper { /* ... fields ... */
-         #[serde(default)] name: String, #[serde(default)] version: Option<String>,
-         #[serde(default)] cask: Option<String>, #[serde(default)] download: Option<String>,
-     }
+     struct ReqWrapper { #[serde(default)] name: String, #[serde(default)] version: Option<String>, #[serde(default)] cask: Option<String>, #[serde(default)] download: Option<String>, }
      let raw_reqs: Vec<Value> = Deserialize::deserialize(deserializer)?;
      let mut requirements = Vec::new();
-     for req_val in raw_reqs { /* ... parsing logic ... */
+     for req_val in raw_reqs {
          if let Ok(req_obj) = serde_json::from_value::<ReqWrapper>(req_val.clone()) { match req_obj.name.as_str() { "macos" => { requirements.push(Requirement::MacOS(req_obj.version.unwrap_or_else(|| "any".to_string()))); } "xcode" => { requirements.push(Requirement::Xcode(req_obj.version.unwrap_or_else(|| "any".to_string()))); } "cask" => { requirements.push(Requirement::Other(format!("Cask Requirement: {}", req_obj.cask.unwrap_or_else(|| "?".to_string())))); } "download" => { requirements.push(Requirement::Other(format!("Download Requirement: {}", req_obj.download.unwrap_or_else(|| "?".to_string())))); } _ => requirements.push(Requirement::Other(format!("Unknown requirement type: {:?}", req_obj))), } } else if let Value::String(req_str) = req_val { match req_str.as_str() { "macos" => requirements.push(Requirement::MacOS("latest".to_string())), "xcode" => requirements.push(Requirement::Xcode("latest".to_string())), _ => requirements.push(Requirement::Other(format!("Simple requirement: {}", req_str))), } } else { println!("Warning: Could not parse requirement: {:?}", req_val); requirements.push(Requirement::Other(format!("Unparsed requirement: {:?}", req_val))); }
      }
      Ok(requirements)
