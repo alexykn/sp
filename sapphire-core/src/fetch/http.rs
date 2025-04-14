@@ -334,7 +334,7 @@ async fn download_and_verify(
 }
 
 // verify_checksum remains synchronous
-fn verify_checksum(file_path: &Path, expected_sha256: &str) -> Result<()> {
+pub fn verify_checksum(file_path: &Path, expected_sha256: &str) -> Result<()> {
     log::debug!("Verifying checksum for: {}", file_path.display());
     let mut file = match fs::File::open(file_path) {
         Ok(f) => f,
