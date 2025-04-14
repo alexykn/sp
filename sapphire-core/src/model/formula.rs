@@ -210,48 +210,6 @@ impl Formula {
     // --- Methods new, new_dummy, dependencies, requirements, set_keg_path, version_str_full, accessors ---
     // Keep these methods as they were. `dependencies()` now returns the combined list.
 
-    /// Creates a basic Formula instance. Primarily for testing or manual creation.
-    #[allow(dead_code)]
-    pub fn new(name: impl Into<String>, version_str: &str, url: String, sha256: String) -> Result<Self> {
-         let version_str_padded = if version_str.split('.').count() < 3 { /* ... padding ... */
-             let parts: Vec<&str> = version_str.split('.').collect();
-             match parts.len() { 1 => format!("{}.0.0", parts[0]), 2 => format!("{}.{}.0", parts[0], parts[1]), _ => version_str.to_string(), }
-         } else { version_str.to_string() };
-         let version = Version::parse(&version_str_padded)?;
-         Ok(Self {
-             name: name.into(), version, revision: 0, desc: None, homepage: None, url, sha256,
-             mirrors: Vec::new(), bottle: BottleSpec::default(), dependencies: Vec::new(), requirements: Vec::new(), install_keg_path: None,
-         })
-    }
-
-     /// Creates a dummy formula instance for testing purposes.
-     #[allow(dead_code)]
-     pub fn new_dummy(name: &str) -> Self {
-         let (version_str, url, sha) = match name { /* ... cases ... */
-            "curl" => ("8.7.1", "https://curl.se/download/curl-8.7.1.tar.gz", "EXAMPLE_SHA_CURL"),
-            "openssl" => ("3.3.0", "https://www.openssl.org/source/openssl-3.3.0.tar.gz", "EXAMPLE_SHA_OPENSSL"),
-            // Use pkgconf as seen in htop JSON
-            "pkgconf" => ("2.1.1", "https://distfiles.dereferenced.org/pkgconf/pkgconf-2.1.1.tar.xz", "EXAMPLE_SHA_PKGCONF"),
-            "ca-certificates" => ("2024-03-11", "https://curl.se/ca/cacert-2024-03-11.pem", "EXAMPLE_SHA_CACERTS"),
-            "autoconf" => ("2.72", "https://ftp.gnu.org/gnu/autoconf/autoconf-2.72.tar.gz", "EXAMPLE_SHA_AUTOCONF"), // Updated version example
-            "m4" => ("1.4.19", "https://ftp.gnu.org/gnu/m4/m4-1.4.19.tar.gz", "EXAMPLE_SHA_M4"),
-            "automake" => ("1.16.5", "https://ftp.gnu.org/gnu/automake/automake-1.16.5.tar.gz", "EXAMPLE_SHA_AUTOMAKE"),
-            "htop" => ("3.3.0", "https://github.com/htop-dev/htop/releases/download/3.3.0/htop-3.3.0.tar.xz", "EXAMPLE_SHA_HTOP"),
-            "ncurses" => ("6.4", "https://ftp.gnu.org/gnu/ncurses/ncurses-6.4.tar.gz", "EXAMPLE_SHA_NCURSES"),
-            "libtool" => ("2.4.7", "https://ftp.gnu.org/gnu/libtool/libtool-2.4.7.tar.gz", "EXAMPLE_SHA_LIBTOOL"),
-             _ => ("1.0.0", "http://example.com/dummy-1.0.0.tar.gz", "EXAMPLE_SHA_DUMMY")
-         };
-         let mut f = Self::new(name, version_str, url.to_string(), sha.to_string()).expect("Dummy creation failed");
-         // Add dependencies manually based on how they *should* be parsed
-         if name == "curl" { f.dependencies.push(Dependency::new_runtime("openssl")); f.dependencies.push(Dependency::new_with_tags("pkgconf", DependencyTag::BUILD)); } // Use pkgconf
-         else if name == "openssl" { f.dependencies.push(Dependency::new_runtime("ca-certificates")); }
-         else if name == "htop" { f.dependencies.push(Dependency::new_runtime("ncurses")); f.dependencies.push(Dependency::new_with_tags("autoconf", DependencyTag::BUILD)); f.dependencies.push(Dependency::new_with_tags("automake", DependencyTag::BUILD)); f.dependencies.push(Dependency::new_with_tags("libtool", DependencyTag::BUILD)); f.dependencies.push(Dependency::new_with_tags("pkgconf", DependencyTag::BUILD)); } // Use pkgconf
-         else if name == "autoconf" { f.dependencies.push(Dependency::new_runtime("m4")); }
-         else if name == "automake" { f.dependencies.push(Dependency::new_with_tags("autoconf", DependencyTag::BUILD | DependencyTag::RUNTIME)); } // Autoconf needed at runtime too? Check brew formula
-         else if name == "libtool" { f.dependencies.push(Dependency::new_runtime("m4")); } // Check brew formula for libtool deps
-         f
-     }
-
     /// Returns a clone of the defined dependencies (now includes all types with tags).
     pub fn dependencies(&self) -> Result<Vec<Dependency>> {
         Ok(self.dependencies.clone())
@@ -305,12 +263,10 @@ impl FormulaDependencies for Formula { /* ... */
 
 // --- Deserialization Helpers ---
 
-// Removed: deserialize_dependencies
-
 // Kept: deserialize_requirements
 fn deserialize_requirements<'de, D>(deserializer: D) -> std::result::Result<Vec<Requirement>, D::Error>
 where D: serde::Deserializer<'de>,
-{ // ... Logic from previous version ...
+{
      #[derive(Deserialize, Debug)]
      struct ReqWrapper { /* ... fields ... */
          #[serde(default)] name: String, #[serde(default)] version: Option<String>,
