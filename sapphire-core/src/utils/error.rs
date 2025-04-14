@@ -1,5 +1,5 @@
-// brew-rs-client/src/error.rs
-// Defines the custom error types for the brew-rs-client library.
+// sapphire-core/src/utils/error.rs
+// *** Added MachO related error variants *** [cite: 142]
 
 use thiserror::Error;
 
@@ -27,8 +27,9 @@ pub enum SapphireError {
     #[error("Semantic Versioning Error: {0}")]
     SemVer(#[from] semver::Error),
 
-    #[error("DownloadError: {0}")]
-    DownloadError(String, String, String),
+    // Updated DownloadError to match previous structure if needed, or keep simple
+    #[error("DownloadError: Failed to download '{0}' from '{1}': {2}")]
+    DownloadError(String, String, String), // name, url, reason
 
     #[error("Cache Error: {0}")]
     Cache(String),
@@ -42,11 +43,12 @@ pub enum SapphireError {
     #[error("Generic Error: {0}")]
     Generic(String),
 
+    // Keep HttpError if distinct from Http(reqwest::Error) is needed
     #[error("HttpError: {0}")]
     HttpError(String),
 
     #[error("Checksum Mismatch: {0}")]
-    ChecksumMismatch(String),
+    ChecksumMismatch(String), // Keep if used distinctly from ChecksumError
 
     #[error("Checksum Error: {0}")]
     ChecksumError(String),
@@ -63,15 +65,30 @@ pub enum SapphireError {
     #[error("Build environment setup failed: {0}")]
     BuildEnvError(String),
 
+    // Kept IoError if distinct from Io(std::io::Error) is useful
     #[error("IoError: {0}")]
     IoError(String),
 
     #[error("Failed to execute command: {0}")]
     CommandExecError(String),
+
+    // --- Added Mach-O Relocation Errors (Based on Plan) --- [cite: 142]
+    #[error("Mach-O Error: {0}")]
+    MachOError(String), // General Mach-O processing error
+
+    #[error("Mach-O Modification Error: {0}")]
+    MachOModificationError(String), // Specific error during modification step
+
+    #[error("Mach-O Relocation Error: Path too long - {0}")]
+    PathTooLongError(String), // Specifically for path length issues during patching [cite: 115, 142]
+
+    #[error("Codesign Error: {0}")]
+    CodesignError(String), // For errors during re-signing on Apple Silicon [cite: 138, 142]
+
+    // --- Added object crate error integration --- [cite: 142]
+    #[error("Object File Error: {0}")]
+    Object(#[from] object::read::Error), // Error from object crate parsing
 }
 
 // Define a convenience Result type alias using our custom error
 pub type Result<T> = std::result::Result<T, SapphireError>;
-
-// Manual implementations of Error, Display, and From are no longer needed
-// as they are handled by thiserror using the #[derive(Error)] and #[from] attributes.

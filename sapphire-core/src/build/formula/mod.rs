@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command; // Use log crate imports
 
 pub mod bottle;
+pub mod macho;
 pub mod link;
 pub mod source;
 

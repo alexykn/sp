@@ -1,22 +1,25 @@
 // sapphire-core/src/build/formula/bottle.rs
-// *** Corrected function name call and removed unused imports ***
+// *** Uses the new macho module for patching logic ***
 
-use crate::fetch::{http, oci}; // Use http for checksum verification, oci for download
+use super::macho; // Import the new macho module
+use crate::fetch::{http, oci};
 use crate::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
 use log::{debug, error, info, warn};
 use reqwest::Client;
-use std::fs;
-use std::fs::File;
-use std::io::Read;
-use std::path::{Path, PathBuf}; // Keep Read for relocation text check potentially
-                                // Removed unused imports: Write, Sha256, Digest, hex
-use regex::Regex;
 use std::collections::HashMap;
+use std::fs::{self, File}; // Keep File for read check
+use std::io::Read; // Keep Read for text file check
+// Removed std::io::Write as it's handled in macho.rs now
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+// Removed tempfile::NamedTempFile, std::process::Command as StdCommand
+// Removed object crate imports
 use walkdir::WalkDir;
+
+// --- Bottle Functions ---
 
 /// Downloads and verifies a bottle for the given formula asynchronously.
 pub async fn download_bottle(
@@ -26,7 +29,6 @@ pub async fn download_bottle(
 ) -> Result<PathBuf> {
     info!("Attempting to download bottle for {}", formula.name);
 
-    // 1. Determine the correct platform and bottle spec (sync)
     let (platform_tag, bottle_file_spec) = get_bottle_for_platform(formula)?;
     debug!(
         "Selected bottle spec for platform '{}': URL={}, SHA256={}",
@@ -40,7 +42,6 @@ pub async fn download_bottle(
         ));
     }
 
-    // 2. Determine the target cache path (sync)
     let standard_version_str = formula.version_str_full();
     let filename = format!(
         "{}-{}.{}.bottle.tar.gz",
@@ -50,11 +51,9 @@ pub async fn download_bottle(
     fs::create_dir_all(&cache_dir).map_err(SapphireError::Io)?;
     let bottle_cache_path = cache_dir.join(&filename);
 
-    // 3. Check cache first (sync check, sync verify)
     if bottle_cache_path.is_file() {
         debug!("Bottle found in cache: {}", bottle_cache_path.display());
         if !bottle_file_spec.sha256.is_empty() {
-            // *** Corrected function name ***
             match http::verify_checksum(&bottle_cache_path, &bottle_file_spec.sha256) {
                 Ok(_) => {
                     info!("Using valid cached bottle: {}", bottle_cache_path.display());
@@ -86,7 +85,6 @@ pub async fn download_bottle(
         debug!("Bottle not found in cache.");
     }
 
-    // 4. Determine if OCI or Direct URL (sync check)
     let bottle_url_str = &bottle_file_spec.url;
     let registry_domain = config
         .artifact_domain
@@ -100,7 +98,6 @@ pub async fn download_bottle(
         bottle_url_str, is_oci_blob_url
     );
 
-    // 5. Conditional Download Logic (async download)
     if is_oci_blob_url {
         info!(
             "Detected OCI blob URL, initiating direct blob download: {}",
@@ -137,7 +134,19 @@ pub async fn download_bottle(
         )
         .await
         {
-            Ok(_) => {
+            Ok(downloaded_path) => {
+                if downloaded_path != bottle_cache_path {
+                    warn!("Direct download saved to unexpected path: {}. Expected: {}. Attempting move.", downloaded_path.display(), bottle_cache_path.display());
+                    if let Err(move_err) = fs::rename(&downloaded_path, &bottle_cache_path) {
+                        error!(
+                            "Failed to move downloaded file from {} to {}: {}",
+                            downloaded_path.display(),
+                            bottle_cache_path.display(),
+                            move_err
+                        );
+                        return Err(SapphireError::Io(move_err));
+                    }
+                }
                 info!(
                     "Successfully downloaded directly to {}",
                     bottle_cache_path.display()
@@ -155,9 +164,7 @@ pub async fn download_bottle(
         }
     }
 
-    // 6. Verify checksum (sync verify)
     if !bottle_file_spec.sha256.is_empty() {
-        // *** Corrected function name ***
         http::verify_checksum(&bottle_cache_path, &bottle_file_spec.sha256)?;
     } else {
         warn!(
@@ -173,7 +180,6 @@ pub async fn download_bottle(
     Ok(bottle_cache_path)
 }
 
-// get_bottle_for_platform remains unchanged
 fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
     let stable_spec = formula.bottle.stable.as_ref().ok_or_else(|| {
         SapphireError::Generic(format!(
@@ -181,7 +187,7 @@ fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec
             formula.name
         ))
     })?;
-    let current_platform = crate::build::formula::get_current_platform(); // sync call
+    let current_platform = crate::build::formula::get_current_platform();
     if current_platform == "unknown" || current_platform.contains("unknown") {
         warn!("Could not reliably determine macOS platform. Bottle selection might be incorrect.");
     }
@@ -323,7 +329,7 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
         "==> Performing bottle relocation in {}",
         install_dir.display()
     );
-    perform_bottle_relocation(formula, &install_dir, config)?; // sync
+    perform_bottle_relocation(formula, &install_dir, config)?; // sync call
     crate::build::write_receipt(formula, &install_dir)?; // sync
 
     info!(
@@ -334,25 +340,42 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     Ok(install_dir)
 }
 
-// ensure_write_permissions remains synchronous and unchanged
+// --- Permissions and Placeholder Relocation ---
+
 fn ensure_write_permissions(path: &Path) -> Result<()> {
     for entry_result in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         let entry_path = entry_result.path();
         match fs::metadata(entry_path) {
             Ok(metadata) => {
                 let mut perms = metadata.permissions();
-                let current_mode = perms.mode();
-                let new_mode = current_mode | 0o200;
-                if new_mode != current_mode {
-                    perms.set_mode(new_mode);
-                    if let Err(e) = fs::set_permissions(entry_path, perms) {
-                        warn!(
-                            "Failed to set write permission on {}: {}",
-                            entry_path.display(),
-                            e
-                        );
-                    } else {
-                        debug!("Set write permission on: {}", entry_path.display());
+                #[cfg(unix)]
+                {
+                    let current_mode = perms.mode();
+                    let new_mode = current_mode | 0o200;
+                    if new_mode != current_mode {
+                        perms.set_mode(new_mode);
+                        if let Err(e) = fs::set_permissions(entry_path, perms) {
+                            warn!(
+                                "Failed to set write permission on {}: {}",
+                                entry_path.display(),
+                                e
+                            );
+                        } else {
+                            debug!("Set write permission on: {}", entry_path.display());
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    if perms.readonly() {
+                        perms.set_readonly(false);
+                        if let Err(e) = fs::set_permissions(entry_path, perms) {
+                            warn!(
+                                "Failed to unset readonly attribute on {}: {}",
+                                entry_path.display(),
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -364,8 +387,9 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
-// perform_bottle_relocation remains synchronous and unchanged from the previous correction
+/// Performs text replacement for placeholders and Mach-O patching.
 fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Config) -> Result<()> {
+    // --- 1. Define Replacements ---
     let mut replacements = HashMap::new();
     let cellar_path_str = config.cellar.to_string_lossy().to_string();
     let prefix_path_str = config.prefix.to_string_lossy().to_string();
@@ -373,10 +397,12 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     let repo_path_str = repo_path.to_string_lossy().to_string();
     let library_path = config.prefix.join("Library");
     let library_path_str = library_path.to_string_lossy().to_string();
-    replacements.insert("@@HOMEBREW_CELLAR@@".to_string(), cellar_path_str);
-    replacements.insert("@@HOMEBREW_PREFIX@@".to_string(), prefix_path_str);
+
+    replacements.insert("@@HOMEBREW_CELLAR@@".to_string(), cellar_path_str.clone());
+    replacements.insert("@@HOMEBREW_PREFIX@@".to_string(), prefix_path_str.clone());
     replacements.insert("@@HOMEBREW_REPOSITORY@@".to_string(), repo_path_str);
     replacements.insert("@@HOMEBREW_LIBRARY@@".to_string(), library_path_str);
+
     let formula_opt_path = config.prefix.join("opt").join(formula.name());
     let formula_opt_path_str = formula_opt_path.to_string_lossy().to_string();
     let formula_opt_placeholder = format!(
@@ -384,7 +410,24 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         formula.name().to_uppercase().replace('-', "_")
     );
     replacements.insert(formula_opt_placeholder, formula_opt_path_str);
-    let perl_path_opt = formula.dependencies.iter().find(|d| d.name == "perl") .map(|_| config.prefix.join("opt").join("perl").join("bin").join("perl")) .or_else(|| { if cfg!(target_os = "macos") { debug!("Perl not a direct dependency, assuming system perl for @@HOMEBREW_PERL@@"); Some(PathBuf::from("/usr/bin/perl")) } else { debug!("Perl not a direct dependency and not macOS, using brewed path as default for @@HOMEBREW_PERL@@"); Some(config.prefix.join("opt").join("perl").join("bin").join("perl")) } }) .filter(|p| p.exists());
+
+    let perl_path_opt = formula
+        .dependencies()
+        .unwrap_or_default()
+        .iter()
+        .find(|d| d.name == "perl")
+        .map(|_| config.prefix.join("opt").join("perl").join("bin").join("perl"))
+        .or_else(|| {
+            if cfg!(target_os = "macos") {
+                debug!("Perl not a direct dependency, assuming system perl for @@HOMEBREW_PERL@@");
+                Some(PathBuf::from("/usr/bin/perl"))
+            } else {
+                debug!("Perl not a direct dependency and not macOS, using brewed path as default for @@HOMEBREW_PERL@@");
+                Some(config.prefix.join("opt").join("perl").join("bin").join("perl"))
+            }
+        })
+        .filter(|p| p.exists());
+
     let perl_path = match perl_path_opt {
         Some(p) => p.to_string_lossy().to_string(),
         None => {
@@ -395,20 +438,27 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     if perl_path != "@@HOMEBREW_PERL@@" {
         replacements.insert("@@HOMEBREW_PERL@@".to_string(), perl_path.clone());
     }
-    let _shebang_regex = Regex::new(r"^(#!.*?(?:/usr/bin/env\s+)?)((?:/[^/\s]+)*?)(@@HOMEBREW_[A-Z_]+@@)((?:/[^/\s]+)*?.*?)\s*$").ok();
-    debug!("Starting relocation scan in: {}", install_dir.display());
+
+    info!("Starting file scan for text replacement and Mach-O patching in: {}", install_dir.display());
     for (placeholder, replacement) in &replacements {
-        debug!("  Replacing '{}' with '{}'", placeholder, replacement);
+        debug!("  Will replace '{}' with '{}'", placeholder, replacement);
     }
-    let mut replaced_count = 0;
+
+    let mut text_replaced_count = 0;
+    let mut macho_patched_count = 0;
     let mut permission_errors = 0;
+    let mut macho_errors = 0;
+
+    // --- 2. Iterate Through Files ---
     for entry_result in WalkDir::new(install_dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
     {
         let path = entry_result.path();
-        debug!("  Scanning file for relocation: {}", path.display());
+        debug!("  Scanning file: {}", path.display());
+
+        // --- 3. Check Metadata & Permissions ---
         let metadata = match fs::metadata(path) {
             Ok(m) => m,
             Err(e) => {
@@ -427,97 +477,220 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
             );
             continue;
         }
-        let mut is_likely_text = false;
-        match File::open(path) {
-            Ok(mut file) => {
-                let mut buffer = [0; 1024];
-                if let Ok(n) = file.read(&mut buffer) {
-                    if !buffer[..n].contains(&0) {
-                        is_likely_text = true;
+
+        // --- 4. Attempt Mach-O Patching FIRST (macOS only) ---
+        let mut was_macho_patched = false;
+        if cfg!(target_os = "macos") {
+            // *** Use the function from the macho module ***
+            match macho::patch_macho_file(path, &replacements) { // <-- Call macho::patch_macho_file
+                Ok(patched) => {
+                    if patched {
+                        debug!("Successfully patched Mach-O file: {}", path.display());
+                        macho_patched_count += 1;
+                        was_macho_patched = true;
+                    } else {
+                        // File was not Mach-O or did not require patching
+                        // Log handled within patch_macho_file
                     }
-                } else {
-                    warn!(
-                        "  Could not read chunk from {} to check if text, assuming binary.",
-                        path.display()
-                    );
+                }
+                Err(SapphireError::PathTooLongError(e)) => {
+                    error!("Mach-O patching failed for {} (Path Too Long): {}", path.display(), e);
+                    macho_errors += 1;
+                    // Decide whether to halt the entire installation or just skip this file.
+                    // Current plan treats it as fatal for the *file*, so we continue the loop.
+                    continue; // Skip text replacement for this file
+                }
+                Err(SapphireError::CodesignError(e)) => {
+                    error!("Mach-O patching failed for {} (Codesign Failed): {}", path.display(), e);
+                    macho_errors += 1;
+                    continue; // Skip text replacement for this file
+                }
+                // Handle other potential errors from patch_macho_file
+                Err(e) => {
+                    warn!("Mach-O patching check failed for {}: {}. Will attempt text replacement.", path.display(), e);
+                    // Fall through to text replacement attempt
                 }
             }
-            Err(e) => {
-                warn!(
-                    "  Could not open {} to check if text, skipping relocation: {}",
-                    path.display(),
-                    e
-                );
-                continue;
-            }
         }
-        if is_likely_text {
-            match fs::read_to_string(path) {
-                Ok(content) => {
-                    let mut modified_content = content.clone();
-                    let mut modified = false;
-                    for (placeholder, replacement) in &replacements {
-                        if content.contains(placeholder) {
-                            let original_len = modified_content.len();
-                            modified_content = modified_content.replace(placeholder, replacement);
-                            if modified_content.len() != original_len {
+
+        // --- 5. Fallback to Text Replacement (if not Mach-O patched) ---
+        if !was_macho_patched {
+            let mut is_likely_text = false;
+            match File::open(path) {
+                Ok(mut file) => {
+                    let mut buffer = [0; 1024];
+                    match file.read(&mut buffer) {
+                        Ok(n) if n > 0 => {
+                            if !buffer[..n].contains(&0) {
+                                is_likely_text = true;
+                            }
+                        }
+                        Ok(_) => {
+                           is_likely_text = true; // Treat empty as text
+                        }
+                        Err(e) => {
+                             warn!(
+                                "  Could not read chunk from {} to check if text, assuming binary. Error: {}",
+                                path.display(), e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "  Could not open {} to check if text, skipping text relocation: {}",
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            }
+
+            if is_likely_text {
+                match fs::read_to_string(path) {
+                    Ok(content) => {
+                        let mut modified_content = content.clone();
+                        let mut modified = false;
+                        for (placeholder, replacement) in &replacements {
+                            if content.contains(placeholder) {
+                                let original_len = placeholder.len();
+                                let replacement_len = replacement.len();
+                                if replacement_len > original_len {
+                                    warn!(
+                                        "Text replacement '{}' -> '{}' increases length in file {}. Proceeding cautiously.",
+                                        placeholder, replacement, path.display()
+                                    );
+                                }
+                                modified_content = modified_content.replace(placeholder, replacement);
                                 debug!(
-                                    "  Relocated placeholder '{}' in: {}",
+                                    "  Replaced text placeholder '{}' in: {}",
                                     placeholder,
                                     path.display()
                                 );
                                 modified = true;
                             }
                         }
-                    }
-                    if modified {
-                        match fs::write(path, &modified_content) {
-                            Ok(_) => {
-                                replaced_count += 1;
-                            }
-                            Err(e) => {
-                                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                                    error!(
-                                        "  Failed to write relocated file {}: Permission denied",
-                                        path.display()
-                                    );
-                                    permission_errors += 1;
-                                } else {
-                                    warn!(
-                                        "  Failed to write relocated file {}: {}",
-                                        path.display(),
-                                        e
-                                    );
+                        if modified {
+                             // Use the helper from the macho module for atomic writing
+                             // Ensure write_patched_buffer is public or move text writing logic here
+                             // Let's assume write_patched_buffer is suitable, but it's in macho.rs
+                             // Reimplement simple text write here for clarity, or make write_patched_buffer pub
+                            match write_text_file_atomic(path, &modified_content) { // Use a specific text writer helper
+                                Ok(_) => {
+                                    text_replaced_count += 1;
+                                }
+                                Err(e) => {
+                                     if matches!(e, SapphireError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied) {
+                                         error!(
+                                            "  Failed to write relocated text file {}: Permission denied",
+                                            path.display()
+                                        );
+                                        permission_errors += 1;
+                                    } else {
+                                        warn!(
+                                            "  Failed to write relocated text file {}: {}",
+                                            path.display(),
+                                            e
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
+                    Err(e) => {
+                        debug!(
+                            "  Skipping text relocation for {} (read failed - likely not UTF-8 text): {}",
+                            path.display(),
+                            e
+                        );
+                    }
                 }
-                Err(e) => {
-                    debug!(
-                        "  Skipping relocation for {} (read failed - likely not UTF-8 text): {}",
-                        path.display(),
-                        e
-                    );
-                }
+            } else {
+                debug!(
+                    "  Skipping text relocation for {} (likely binary and not Mach-O patched)",
+                    path.display()
+                );
             }
-        } else {
-            debug!(
-                "  Skipping relocation for {} (likely binary)",
-                path.display()
-            );
+        }
+    } // End WalkDir loop
+
+    // --- 6. Final Logging and Error Handling ---
+    info!(
+        "Relocation scan complete. Text files modified: {}, Mach-O files patched: {}",
+        text_replaced_count, macho_patched_count
+    );
+
+    if permission_errors > 0 || macho_errors > 0 {
+        error!(
+            "Relocation encountered errors! Permission errors: {}, Mach-O errors: {}. Installation may be broken.",
+            permission_errors, macho_errors
+        );
+        return Err(SapphireError::InstallError(format!(
+            "Bottle relocation failed for {} files ({} permission, {} Mach-O). Check logs and permissions of {}.",
+            permission_errors + macho_errors,
+            permission_errors,
+            macho_errors,
+            install_dir.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Helper to replace placeholders in a string.
+fn find_and_replace_placeholders(
+    current_path: &str,
+    replacements: &HashMap<String, String>,
+) -> Option<String> {
+    let mut new_path = current_path.to_string();
+    let mut path_modified = false;
+    for (placeholder, replacement) in replacements {
+        if new_path.contains(placeholder) {
+            new_path = new_path.replace(placeholder, replacement);
+            path_modified = true;
+            debug!("   Replaced '{}' with '{}'", placeholder, replacement);
         }
     }
-    if permission_errors > 0 {
-        error!("Relocation failed for {} files due to permission errors. The installation might be broken.", permission_errors);
-        return Err(SapphireError::InstallError(format!( "Bottle relocation failed for {} files due to permissions. Check ownership/permissions of {}", permission_errors, install_dir.display() )));
-    } else if replaced_count > 0 {
-        info!(
-            "Relocation complete. {} text files modified.",
-            replaced_count
-        );
+    if path_modified {
+        Some(new_path)
     } else {
-        info!("Relocation complete. No text file modifications needed.");
+        None
     }
-    Ok(())
+}
+
+// Helper for writing text files atomically (similar to write_patched_buffer but for strings)
+fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
+     use std::io::Write; // Need Write trait for this function
+     use tempfile::NamedTempFile; // Need tempfile
+
+     let dir = original_path.parent().ok_or_else(|| {
+         SapphireError::Generic(format!(
+             "Cannot get parent directory for {}",
+             original_path.display()
+         ))
+     })?;
+     fs::create_dir_all(dir)?; // Ensure dir exists
+
+     let mut temp_file = NamedTempFile::new_in(dir)?;
+     debug!(
+         "    Writing relocated text to temporary file: {:?}",
+         temp_file.path()
+     );
+     temp_file.write_all(content.as_bytes())?;
+     temp_file.flush()?;
+     temp_file.as_file().sync_all()?; // Ensure written to disk
+
+     temp_file.persist(original_path).map_err(|e| {
+         error!(
+             "    Failed to persist/rename temporary text file over {}: {}",
+             original_path.display(),
+             e.error
+         );
+         SapphireError::Io(e.error)
+     })?;
+     debug!(
+         "    Atomically replaced {} with relocated text version",
+         original_path.display()
+     );
+     Ok(())
 }
