@@ -20,7 +20,7 @@ The project is split into:
 * `sapphire-core`: The underlying library handling fetching, dependency resolution, building, installation, etc.
 * `sapphire-cli`: The command-line interface tool that users interact with.
 
-## Current Status (Alpha)
+## Current State
 
 * **Formulae Installation:** Many formulae (bottles & source builds) can be installed successfully. Issues are more likely with complex dependencies or foundational packages (e.g., LLVM, Rust). Simpler tools and libraries (e.g., ncurses) are generally more stable.
 * **Cask Functionality:** Cask `search` and `info` work. Cask `install` and `uninstall` are **not implemented**.
