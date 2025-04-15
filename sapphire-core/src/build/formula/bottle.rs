@@ -1,5 +1,5 @@
 // sapphire-core/src/build/formula/bottle.rs
-// *** Uses the new macho module for patching logic ***
+// *** Added explicit chmod +x for executable files after relocation ***
 
 use super::macho; // Import the new macho module
 use crate::fetch::{http, oci};
@@ -14,7 +14,7 @@ use std::io::Read; // Keep Read for text file check
 // Removed std::io::Write as it's handled in macho.rs now
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::PermissionsExt; // Needed for setting execute bit
 // Removed tempfile::NamedTempFile, std::process::Command as StdCommand
 // Removed object crate imports
 use walkdir::WalkDir;
@@ -351,7 +351,8 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 #[cfg(unix)]
                 {
                     let current_mode = perms.mode();
-                    let new_mode = current_mode | 0o200;
+                    // Ensure owner write bit is set
+                    let new_mode = current_mode | 0o200; // Add owner write permission
                     if new_mode != current_mode {
                         perms.set_mode(new_mode);
                         if let Err(e) = fs::set_permissions(entry_path, perms) {
@@ -367,6 +368,7 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 }
                 #[cfg(not(unix))]
                 {
+                    // On non-unix, simply ensure readonly is false
                     if perms.readonly() {
                         perms.set_readonly(false);
                         if let Err(e) = fs::set_permissions(entry_path, perms) {
@@ -387,7 +389,9 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+
 /// Performs text replacement for placeholders and Mach-O patching.
+/// *** Ensures executable permissions after modification. ***
 fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Config) -> Result<()> {
     // --- 1. Define Replacements ---
     let mut replacements = HashMap::new();
@@ -448,6 +452,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     let mut macho_patched_count = 0;
     let mut permission_errors = 0;
     let mut macho_errors = 0;
+    let mut files_to_chmod: Vec<PathBuf> = Vec::new(); // Collect files needing chmod
 
     // --- 2. Iterate Through Files ---
     for entry_result in WalkDir::new(install_dir)
@@ -457,6 +462,12 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     {
         let path = entry_result.path();
         debug!("  Scanning file: {}", path.display());
+
+        // Check if the file is in a 'bin' directory (simple check)
+        let is_potential_executable = path
+            .components()
+            .any(|comp| comp.as_os_str() == "bin" || comp.as_os_str() == "sbin");
+
 
         // --- 3. Check Metadata & Permissions ---
         let metadata = match fs::metadata(path) {
@@ -479,78 +490,60 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         }
 
         // --- 4. Attempt Mach-O Patching FIRST (macOS only) ---
-        let mut was_macho_patched = false;
+        let mut was_modified = false; // Track if patching OR text replacement happened
         if cfg!(target_os = "macos") {
-            // *** Use the function from the macho module ***
-            match macho::patch_macho_file(path, &replacements) { // <-- Call macho::patch_macho_file
+            match macho::patch_macho_file(path, &replacements) {
                 Ok(patched) => {
                     if patched {
                         debug!("Successfully patched Mach-O file: {}", path.display());
                         macho_patched_count += 1;
-                        was_macho_patched = true;
-                    } else {
-                        // File was not Mach-O or did not require patching
-                        // Log handled within patch_macho_file
+                        was_modified = true;
+                        if is_potential_executable { // If it was patched AND in bin/, mark for chmod
+                            files_to_chmod.push(path.to_path_buf());
+                        }
                     }
                 }
                 Err(SapphireError::PathTooLongError(e)) => {
                     error!("Mach-O patching failed for {} (Path Too Long): {}", path.display(), e);
                     macho_errors += 1;
-                    // Decide whether to halt the entire installation or just skip this file.
-                    // Current plan treats it as fatal for the *file*, so we continue the loop.
-                    continue; // Skip text replacement for this file
+                    continue; // Skip text replacement
                 }
                 Err(SapphireError::CodesignError(e)) => {
                     error!("Mach-O patching failed for {} (Codesign Failed): {}", path.display(), e);
                     macho_errors += 1;
-                    continue; // Skip text replacement for this file
+                    continue; // Skip text replacement
                 }
-                // Handle other potential errors from patch_macho_file
                 Err(e) => {
                     warn!("Mach-O patching check failed for {}: {}. Will attempt text replacement.", path.display(), e);
-                    // Fall through to text replacement attempt
+                    // Fall through
                 }
             }
         }
 
         // --- 5. Fallback to Text Replacement (if not Mach-O patched) ---
-        if !was_macho_patched {
+        if !was_modified { // Only try text replacement if not already modified by macho patching
             let mut is_likely_text = false;
             match File::open(path) {
                 Ok(mut file) => {
                     let mut buffer = [0; 1024];
                     match file.read(&mut buffer) {
                         Ok(n) if n > 0 => {
-                            if !buffer[..n].contains(&0) {
+                            if !buffer[..n].contains(&0) { // Simple check for null bytes
                                 is_likely_text = true;
                             }
                         }
-                        Ok(_) => {
-                           is_likely_text = true; // Treat empty as text
-                        }
-                        Err(e) => {
-                             warn!(
-                                "  Could not read chunk from {} to check if text, assuming binary. Error: {}",
-                                path.display(), e
-                            );
-                        }
+                        Ok(_) => { is_likely_text = true; /* Treat empty as text */ }
+                        Err(e) => { warn!("Could not read chunk from {}: {}", path.display(), e); }
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        "  Could not open {} to check if text, skipping text relocation: {}",
-                        path.display(),
-                        e
-                    );
-                    continue;
-                }
+                Err(e) => { warn!("Could not open {} to check if text: {}", path.display(), e); continue; }
             }
 
             if is_likely_text {
                 match fs::read_to_string(path) {
                     Ok(content) => {
                         let mut modified_content = content.clone();
-                        let mut modified = false;
+                        let mut text_was_modified_this_file = false;
                         for (placeholder, replacement) in &replacements {
                             if content.contains(placeholder) {
                                 let original_len = placeholder.len();
@@ -562,59 +555,78 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                                     );
                                 }
                                 modified_content = modified_content.replace(placeholder, replacement);
-                                debug!(
-                                    "  Replaced text placeholder '{}' in: {}",
-                                    placeholder,
-                                    path.display()
-                                );
-                                modified = true;
+                                debug!("  Replaced text placeholder '{}' in: {}", placeholder, path.display());
+                                text_was_modified_this_file = true;
                             }
                         }
-                        if modified {
-                             // Use the helper from the macho module for atomic writing
-                             // Ensure write_patched_buffer is public or move text writing logic here
-                             // Let's assume write_patched_buffer is suitable, but it's in macho.rs
-                             // Reimplement simple text write here for clarity, or make write_patched_buffer pub
-                            match write_text_file_atomic(path, &modified_content) { // Use a specific text writer helper
+                        if text_was_modified_this_file {
+                            match write_text_file_atomic(path, &modified_content) {
                                 Ok(_) => {
                                     text_replaced_count += 1;
+                                    was_modified = true; // Mark as modified
+                                    if is_potential_executable { // If text was replaced AND in bin/, mark for chmod
+                                        files_to_chmod.push(path.to_path_buf());
+                                    }
                                 }
                                 Err(e) => {
                                      if matches!(e, SapphireError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied) {
-                                         error!(
-                                            "  Failed to write relocated text file {}: Permission denied",
-                                            path.display()
-                                        );
+                                         error!("Failed to write relocated text file {}: Permission denied", path.display());
                                         permission_errors += 1;
                                     } else {
-                                        warn!(
-                                            "  Failed to write relocated text file {}: {}",
-                                            path.display(),
-                                            e
-                                        );
+                                        warn!("Failed to write relocated text file {}: {}", path.display(), e);
                                     }
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        debug!(
-                            "  Skipping text relocation for {} (read failed - likely not UTF-8 text): {}",
-                            path.display(),
-                            e
-                        );
+                        debug!("Skipping text relocation for {} (read failed - likely not UTF-8 text): {}", path.display(), e);
                     }
                 }
             } else {
-                debug!(
-                    "  Skipping text relocation for {} (likely binary and not Mach-O patched)",
-                    path.display()
-                );
+                // If it's not text and wasn't Mach-O patched, but IS in bin/, it might still need execute permissions
+                // (e.g., a pre-compiled binary in the bottle not needing patching)
+                if is_potential_executable {
+                     files_to_chmod.push(path.to_path_buf());
+                } else {
+                     debug!("Skipping text relocation for {} (likely binary and not Mach-O patched)", path.display());
+                }
             }
         }
     } // End WalkDir loop
 
-    // --- 6. Final Logging and Error Handling ---
+
+    // --- *** 6. Ensure Executable Permissions *** ---
+    if cfg!(unix) { // PermissionsExt is unix-only
+        info!("Ensuring execute permissions for {} identified files...", files_to_chmod.len());
+        for path in &files_to_chmod {
+            match fs::metadata(path) {
+                Ok(metadata) => {
+                    let mut perms = metadata.permissions();
+                    let current_mode = perms.mode();
+                    // Add owner, group, and other execute bits (0o111)
+                    let new_mode = current_mode | 0o111;
+                    if new_mode != current_mode {
+                         debug!("Setting execute permission (+x) for: {}", path.display());
+                         perms.set_mode(new_mode); // Set the new mode
+                        if let Err(e) = fs::set_permissions(path, perms) {
+                            warn!("Failed to set execute permission on {}: {}", path.display(), e);
+                            permission_errors += 1; // Count this as a permission error
+                        }
+                    } else {
+                         debug!("Execute permission already set for: {}", path.display());
+                    }
+                }
+                 Err(e) => {
+                     warn!("Could not get metadata for {}: {}", path.display(), e);
+                    permission_errors += 1;
+                 }
+            }
+        }
+    }
+
+
+    // --- 7. Final Logging and Error Handling ---
     info!(
         "Relocation scan complete. Text files modified: {}, Mach-O files patched: {}",
         text_replaced_count, macho_patched_count
@@ -625,6 +637,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
             "Relocation encountered errors! Permission errors: {}, Mach-O errors: {}. Installation may be broken.",
             permission_errors, macho_errors
         );
+        // Still return Err, but the message reflects the count
         return Err(SapphireError::InstallError(format!(
             "Bottle relocation failed for {} files ({} permission, {} Mach-O). Check logs and permissions of {}.",
             permission_errors + macho_errors,

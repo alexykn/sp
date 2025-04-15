@@ -28,6 +28,18 @@ use object::{
     FileKind,                           // For checking FAT/single arch
 };
 
+// Constants for Mach-O header sizes
+#[cfg(target_os = "macos")]
+const MACHO_HEADER32_SIZE: usize = 28;
+#[cfg(target_os = "macos")]
+const MACHO_HEADER64_SIZE: usize = 32;
+
+// Magic numbers for Mach-O files (little-endian)
+#[cfg(target_os = "macos")]
+const MH_MAGIC: u32 = 0xfeedface; // 32-bit
+#[cfg(target_os = "macos")]
+const MH_MAGIC_64: u32 = 0xfeedfacf; // 64-bit
+
 /// Represents a patch to be applied to the buffer.
 #[cfg(target_os = "macos")]
 struct PatchInfo {
@@ -122,7 +134,6 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
         }
     };
 
-
     // --- Phase 3: Apply patches (mutable modification) ---
     let modified = !patches.is_empty();
     if modified {
@@ -157,7 +168,6 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     Ok(modified)
 }
 
-
 /// Phase 1 & 2: Parses the buffer (immutably) and collects necessary patches.
 #[cfg(target_os = "macos")]
 fn collect_macho_patches<'data>(
@@ -180,6 +190,7 @@ fn collect_macho_patches<'data>(
             patches_to_apply.extend(find_patches_in_commands(
                 &macho_file,
                 0, // Base offset for this "slice" is 0
+                MACHO_HEADER32_SIZE,
                 replacements,
                 file_path_for_log,
             )?);
@@ -191,10 +202,11 @@ fn collect_macho_patches<'data>(
             );
             // Parse the entire buffer as a single 64-bit Mach-O file
             let macho_file = MachOFile::<MachHeader64<Endianness>, _>::parse(buffer)?;
-             // Find patches within this file, base offset is 0
+            // Find patches within this file, base offset is 0
             patches_to_apply.extend(find_patches_in_commands(
                 &macho_file,
                 0, // Base offset for this "slice" is 0
+                MACHO_HEADER64_SIZE,
                 replacements,
                 file_path_for_log,
             )?);
@@ -209,11 +221,11 @@ fn collect_macho_patches<'data>(
             // Iterate through architecture slices defined in the FAT header
             for (index, arch) in fat_file.arches().iter().enumerate() {
                 let cpu_type = arch.cputype();
-                 // Filter for architectures we might need to patch (adjust as needed)
-                 if cpu_type != object::macho::CPU_TYPE_X86_64
+                // Filter for architectures we might need to patch (adjust as needed)
+                if cpu_type != object::macho::CPU_TYPE_X86_64
                     && cpu_type != object::macho::CPU_TYPE_ARM64 // Even in FAT32, slices can be 64-bit (though unusual)
                     && cpu_type != object::macho::CPU_TYPE_X86    // Add 32-bit x86 if needed
-                 {
+                {
                     debug!("    Skipping unsupported architecture slice {} (type 0x{:x}) in {}", index, cpu_type, file_path_for_log.display());
                     continue;
                 }
@@ -224,76 +236,176 @@ fn collect_macho_patches<'data>(
 
                 // Validate slice bounds against the main buffer length
                 if offset.checked_add(size).map_or(true, |end| end > buffer.len()) {
-                     warn!( "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}", offset, size, index, file_path_for_log.display());
+                    warn!( "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}", offset, size, index, file_path_for_log.display());
                     continue; // Skip invalid slice
                 }
 
                 // Get an immutable slice of the buffer corresponding to this architecture
                 let slice_data = &buffer[offset..offset + size];
-                // Try parsing this slice as a 32-bit Mach-O file (as implied by FileKind::MachOFat32)
-                match MachOFile::<MachHeader32<Endianness>, _>::parse(slice_data) {
-                     Ok(macho_file_slice) => {
-                        debug!("      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 32-bit.", index, arch.architecture(), cpu_type, arch.cpusubtype());
-                        // Find patches within this slice, providing its base offset
-                        patches_to_apply.extend(find_patches_in_commands(
-                            &macho_file_slice,
-                            offset, // Pass the base offset of this slice
-                            replacements,
-                            file_path_for_log,
-                        )?);
+                // Check the magic number to determine bitness
+                if slice_data.len() < 4 {
+                    warn!(
+                        "    FAT arch slice {} too small to read magic number in {}",
+                        index, file_path_for_log.display()
+                    );
+                    continue;
+                }
+                let magic = u32::from_le_bytes([slice_data[0], slice_data[1], slice_data[2], slice_data[3]]);
+                let (header_size, is_64bit) = match magic {
+                    MH_MAGIC => (MACHO_HEADER32_SIZE, false),
+                    MH_MAGIC_64 => (MACHO_HEADER64_SIZE, true),
+                    _ => {
+                        warn!(
+                            "    Unknown magic number 0x{:x} for FAT arch slice {} in {}",
+                            magic, index, file_path_for_log.display()
+                        );
+                        continue;
                     }
-                    Err(e) => {
-                        // Log if a slice within the FAT file fails to parse
-                        warn!("    Failed to parse Mach-O 32-bit slice {} in {}: {}", index, file_path_for_log.display(), e);
+                };
+
+                // Parse the slice based on bitness
+                if is_64bit {
+                    match MachOFile::<MachHeader64<Endianness>, _>::parse(slice_data) {
+                        Ok(macho_file_slice) => {
+                            debug!(
+                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 64-bit.",
+                                index, arch.architecture(), cpu_type, arch.cpusubtype()
+                            );
+                            patches_to_apply.extend(find_patches_in_commands(
+                                &macho_file_slice,
+                                offset,
+                                header_size,
+                                replacements,
+                                file_path_for_log,
+                            )?);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "    Failed to parse Mach-O 64-bit slice {} in {}: {}",
+                                index, file_path_for_log.display(), e
+                            );
+                        }
+                    }
+                } else {
+                    match MachOFile::<MachHeader32<Endianness>, _>::parse(slice_data) {
+                        Ok(macho_file_slice) => {
+                            debug!(
+                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 32-bit.",
+                                index, arch.architecture(), cpu_type, arch.cpusubtype()
+                            );
+                            patches_to_apply.extend(find_patches_in_commands(
+                                &macho_file_slice,
+                                offset,
+                                header_size,
+                                replacements,
+                                file_path_for_log,
+                            )?);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "    Failed to parse Mach-O 32-bit slice {} in {}: {}",
+                                index, file_path_for_log.display(), e
+                            );
+                        }
                     }
                 }
             }
         }
         FileKind::MachOFat64 => {
-             debug!(
+            debug!(
                 "  Collecting patches for FAT Mach-O 64-bit: {}",
                 file_path_for_log.display()
             );
-             // Parse the FAT header
+            // Parse the FAT header
             let fat_file = MachOFatFile64::parse(buffer)?;
             // Iterate through architecture slices
             for (index, arch) in fat_file.arches().iter().enumerate() {
-                 let cpu_type = arch.cputype();
-                 // Filter for relevant architectures
-                 if cpu_type != object::macho::CPU_TYPE_X86_64
+                let cpu_type = arch.cputype();
+                // Filter for relevant architectures
+                if cpu_type != object::macho::CPU_TYPE_X86_64
                     && cpu_type != object::macho::CPU_TYPE_ARM64
-                 {
-                     debug!("    Skipping unsupported architecture slice {} (type 0x{:x}) in {}", index, cpu_type, file_path_for_log.display());
+                {
+                    debug!("    Skipping unsupported architecture slice {} (type 0x{:x}) in {}", index, cpu_type, file_path_for_log.display());
                     continue;
-                 }
+                }
 
                 let (offset, size) = arch.file_range();
                 let offset = offset as usize;
                 let size = size as usize;
 
                 // Validate slice bounds
-                 if offset.checked_add(size).map_or(true, |end| end > buffer.len()) {
-                     warn!( "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}", offset, size, index, file_path_for_log.display());
+                if offset.checked_add(size).map_or(true, |end| end > buffer.len()) {
+                    warn!( "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}", offset, size, index, file_path_for_log.display());
                     continue;
                 }
 
                 // Get immutable slice data
                 let slice_data = &buffer[offset..offset + size];
-                // Try parsing as a 64-bit Mach-O file (implied by FileKind::MachOFat64)
-                 match MachOFile::<MachHeader64<Endianness>, _>::parse(slice_data) {
-                     Ok(macho_file_slice) => {
-                        debug!("      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 64-bit.", index, arch.architecture(), cpu_type, arch.cpusubtype());
-                        // Find patches, providing the slice's base offset
-                        patches_to_apply.extend(find_patches_in_commands(
-                            &macho_file_slice,
-                            offset, // Pass the base offset of this slice
-                            replacements,
-                            file_path_for_log,
-                        )?);
+                // Check the magic number to determine bitness
+                if slice_data.len() < 4 {
+                    warn!(
+                        "    FAT arch slice {} too small to read magic number in {}",
+                        index, file_path_for_log.display()
+                    );
+                    continue;
+                }
+                let magic = u32::from_le_bytes([slice_data[0], slice_data[1], slice_data[2], slice_data[3]]);
+                let (header_size, is_64bit) = match magic {
+                    MH_MAGIC => (MACHO_HEADER32_SIZE, false),
+                    MH_MAGIC_64 => (MACHO_HEADER64_SIZE, true),
+                    _ => {
+                        warn!(
+                            "    Unknown magic number 0x{:x} for FAT arch slice {} in {}",
+                            magic, index, file_path_for_log.display()
+                        );
+                        continue;
                     }
-                     Err(e) => {
-                         // Log parse failures for individual slices
-                         warn!("    Failed to parse Mach-O 64-bit slice {} in {}: {}", index, file_path_for_log.display(), e);
+                };
+
+                // Parse the slice based on bitness
+                if is_64bit {
+                    match MachOFile::<MachHeader64<Endianness>, _>::parse(slice_data) {
+                        Ok(macho_file_slice) => {
+                            debug!(
+                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 64-bit.",
+                                index, arch.architecture(), cpu_type, arch.cpusubtype()
+                            );
+                            patches_to_apply.extend(find_patches_in_commands(
+                                &macho_file_slice,
+                                offset,
+                                header_size,
+                                replacements,
+                                file_path_for_log,
+                            )?);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "    Failed to parse Mach-O 64-bit slice {} in {}: {}",
+                                index, file_path_for_log.display(), e
+                            );
+                        }
+                    }
+                } else {
+                    match MachOFile::<MachHeader32<Endianness>, _>::parse(slice_data) {
+                        Ok(macho_file_slice) => {
+                            debug!(
+                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 32-bit.",
+                                index, arch.architecture(), cpu_type, arch.cpusubtype()
+                            );
+                            patches_to_apply.extend(find_patches_in_commands(
+                                &macho_file_slice,
+                                offset,
+                                header_size,
+                                replacements,
+                                file_path_for_log,
+                            )?);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "    Failed to parse Mach-O 32-bit slice {} in {}: {}",
+                                index, file_path_for_log.display(), e
+                            );
+                        }
                     }
                 }
             }
@@ -314,6 +426,7 @@ fn collect_macho_patches<'data>(
 fn find_patches_in_commands<'data, Mach, R>(
     macho_file: &MachOFile<'data, Mach, R>,
     slice_base_offset: usize, // Offset of this slice/file within the original buffer
+    header_size: usize,       // Size of the Mach-O header
     replacements: &HashMap<String, String>,
     file_path_for_log: &Path, // For logging context
 ) -> Result<Vec<PatchInfo>>
@@ -323,6 +436,7 @@ where
 {
     let endian = macho_file.endian();
     let mut patches = Vec::new();
+    let mut current_offset = header_size; // Start after the header
 
     // Get an iterator over the load commands in the Mach-O file/slice
     let mut command_iter = match macho_file.macho_load_commands() {
@@ -340,108 +454,89 @@ where
 
     // Iterate through each load command
     while let Some(cmd) = command_iter.next()? {
+        let command_offset = current_offset; // Offset of this command within the slice
+        let cmd_size = cmd.cmdsize() as usize; // Total size of the command structure in bytes
+
         // Try to interpret the command variant (e.g., LC_LOAD_DYLIB, LC_RPATH)
         let cmd_variant = match cmd.variant() {
             Ok(v) => v,
             Err(e) => {
-                 // Log if a specific command is malformed
-                 warn!( "    Error getting command variant in {}: {}", file_path_for_log.display(), e);
-                 continue; // Skip this command and proceed to the next
+                // Log if a specific command is malformed
+                warn!("    Error getting command variant in {}: {}", file_path_for_log.display(), e);
+                current_offset += cmd_size; // Skip to next command
+                continue;
             }
         };
 
-        // Get metadata about the command itself
-        // let cmd_offset_relative_to_slice = cmd.offset(); // ERROR E0599: 'offset' method not found. Remove this line.
-        let cmd_size = cmd.cmdsize() as usize; // Total size of the command structure in bytes
-
         // Check if the command variant contains a path we might need to patch
         let path_info_opt: Option<(u32, &[u8])> = match cmd_variant {
-             // LC_ID_DYLIB, LC_LOAD_DYLIB
-             // REMOVED LoadWeakDylib and ReexportDylib based on E0599 errors
-             LoadCommandVariant::Dylib(dylib_command) | LoadCommandVariant::IdDylib(dylib_command) => {
-                 // Get the offset of the path string relative *to the start of the command struct*
-                 let path_offset_in_cmd_struct = dylib_command.dylib.name.offset.get(endian);
-                 // Try to read the null-terminated string at that offset
-                 cmd.string(endian, dylib_command.dylib.name)
+            // LC_ID_DYLIB, LC_LOAD_DYLIB
+            LoadCommandVariant::Dylib(dylib_command) | LoadCommandVariant::IdDylib(dylib_command) => {
+                // Get the offset of the path string relative *to the start of the command struct*
+                let path_offset_in_cmd_struct = dylib_command.dylib.name.offset.get(endian);
+                // Try to read the null-terminated string at that offset
+                cmd.string(endian, dylib_command.dylib.name)
                     .ok() // Convert Result<&[u8]> to Option<&[u8]>
                     .map(|bytes| (path_offset_in_cmd_struct, bytes)) // Pair offset with bytes if successful
-             }
-             // LC_RPATH
-             LoadCommandVariant::Rpath(rpath_command) => {
-                 // Get the offset of the path string relative *to the start of the command struct*
-                 let path_offset_in_cmd_struct = rpath_command.path.offset.get(endian);
-                 // Try to read the null-terminated string
-                  cmd.string(endian, rpath_command.path)
+            }
+            // LC_RPATH
+            LoadCommandVariant::Rpath(rpath_command) => {
+                // Get the offset of the path string relative *to the start of the command struct*
+                let path_offset_in_cmd_struct = rpath_command.path.offset.get(endian);
+                // Try to read the null-terminated string
+                cmd.string(endian, rpath_command.path)
                     .ok()
                     .map(|bytes| (path_offset_in_cmd_struct, bytes))
-             }
-             // Other command types are ignored for path patching
+            }
+            // Other command types are ignored for path patching
             _ => None,
         };
 
-        // If we found a path string in the command...
         if let Some((path_offset_in_cmd_struct, path_bytes)) = path_info_opt {
-            // Attempt to decode the path as UTF-8
             match std::str::from_utf8(path_bytes) {
                 Ok(current_path_str) => {
-                    // Check if any placeholders need replacement in this path
                     if let Some(new_path_str) = find_and_replace_placeholders(current_path_str, replacements) {
                         // Calculate the total space allocated for the path string within the command structure
-                        // This is the command size minus the offset where the path starts.
                         let allocated_len = cmd_size.saturating_sub(path_offset_in_cmd_struct as usize);
 
                         if allocated_len == 0 {
-                            // This shouldn't happen for valid commands but check defensively
                             warn!(
                                 "  Calculated zero allocated length for path in command {:?} for {}",
                                 cmd.cmd(), file_path_for_log.display()
                             );
-                            continue; // Skip this potential patch
+                            current_offset += cmd_size;
+                            continue;
                         }
 
-                         // Check if the new path (plus null terminator) fits in the allocated space *before* collecting the patch
+                        // Check if the new path (plus null terminator) fits
                         if new_path_str.as_bytes().len() >= allocated_len {
                             error!(
                                 "New path '{}' ({} bytes + null) is too long for allocated space ({} bytes) in command {:?} in {}",
                                 new_path_str, new_path_str.as_bytes().len(), allocated_len, cmd.cmd(), file_path_for_log.display()
                             );
-                             // This is a fatal error for this file's patching process
                             return Err(SapphireError::PathTooLongError(format!(
                                 "Relocation failed for {}: new path '{}' too long for binary structure (max {} bytes)",
                                 file_path_for_log.display(),
                                 new_path_str,
-                                allocated_len.saturating_sub(1) // Max length is allocated - 1 for null
+                                allocated_len.saturating_sub(1)
                             )));
                         }
 
-                        // Calculate the absolute offset in the *original* file buffer where the patch should occur.
-                        // FIX: Removed cmd_offset_relative_to_slice. The path starts path_offset_in_cmd_struct bytes *into* the command structure.
-                        // We need the offset of the command itself relative to the slice start.
-                        // The original code patched relative to the slice start using path_offset_in_cmd_struct.
-                        // While possibly incorrect if path_offset_in_cmd_struct doesn't account for the command header fields *before* the path offset field,
-                        // we replicate that original effective behavior for now to fix E0599 without changing logic.
-                        // absolute_offset = slice_start + offset_of_path_within_command_struct
-                        let absolute_patch_offset = slice_base_offset + path_offset_in_cmd_struct as usize;
-                        // NOTE: If patching occurs at the wrong location, this calculation (matching the original code's effective offset) might be the reason.
-                        // A more correct calculation might involve finding the command's actual start offset within the slice if possible,
-                        // then adding path_offset_in_cmd_struct. But `cmd.offset()` wasn't available.
-
-                         debug!(
+                        // Calculate the absolute offset in the original buffer
+                        let absolute_patch_offset = slice_base_offset + command_offset + path_offset_in_cmd_struct as usize;
+                        debug!(
                             "  Planning patch: Replace '{}' with '{}' at absolute offset {} (allocated len {})",
                             current_path_str, new_path_str, absolute_patch_offset, allocated_len
                         );
 
-                        // Store the details needed to perform this patch later
                         patches.push(PatchInfo {
                             absolute_offset: absolute_patch_offset,
                             allocated_len,
-                            new_path: new_path_str, // Store the calculated new path string
+                            new_path: new_path_str,
                         });
                     }
-                    // else: path found, but no replacements needed for it
                 }
                 Err(_) => {
-                    // Log if path bytes are not valid UTF-8
                     warn!(
                         "  Path bytes are not valid UTF-8 for command {:?} in {}. Skipping patch.",
                         cmd.cmd(), file_path_for_log.display()
@@ -449,13 +544,11 @@ where
                 }
             }
         }
-        // else: command did not contain a path or path couldn't be read
-    } // End of command loop
+        current_offset += cmd_size; // Move to the next command
+    }
 
-    // Return the collected list of patches needed for this slice/file
     Ok(patches)
 }
-
 
 /// Helper to replace placeholders in a string based on the replacements map.
 /// Returns `Some(String)` with replacements if any were made, `None` otherwise.
@@ -499,7 +592,7 @@ fn patch_path_in_buffer(
     // but it serves as a final safeguard here. The length must be strictly less
     // than allocated_len to allow space for the null terminator.
     if new_path_bytes.len() >= allocated_len {
-         error!(
+        error!(
             "Internal Error: New path '{}' ({} bytes) is too long for allocated space ({} bytes) at absolute offset {} in {}",
             new_path_str, new_path_bytes.len(), allocated_len, absolute_offset, file_path_for_log.display()
         );
@@ -642,7 +735,7 @@ fn resign_binary(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-// No-op stub for resigning on non-macOS platforms
+// No-op stub for resigning Innovations on non-macOS platforms
 #[cfg(not(target_os = "macos"))]
 fn resign_binary(_path: &Path) -> Result<()> {
     // Resigning is a macOS concept
