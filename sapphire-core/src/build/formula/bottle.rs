@@ -1,7 +1,7 @@
 // sapphire-core/src/build/formula/bottle.rs
-// *** Added explicit chmod +x for executable files after relocation ***
 
-use super::macho; // Import the new macho module
+// --- Imports ---
+use super::macho;
 use crate::fetch::{http, oci};
 use crate::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
 use crate::utils::config::Config;
@@ -9,25 +9,24 @@ use crate::utils::error::{Result, SapphireError};
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use std::collections::HashMap;
-use std::fs::{self, File}; // Keep File for read check
-use std::io::Read; // Keep Read for text file check
-// Removed std::io::Write as it's handled in macho.rs now
-use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::io::Read;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt; // Needed for setting execute bit
-// Removed tempfile::NamedTempFile, std::process::Command as StdCommand
-// Removed object crate imports
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
 
 // --- Bottle Functions ---
 
-/// Downloads and verifies a bottle for the given formula asynchronously.
+// download_bottle (unchanged)
 pub async fn download_bottle(
     formula: &Formula,
     config: &Config,
     client: &Client,
 ) -> Result<PathBuf> {
-    info!("Attempting to download bottle for {}", formula.name);
+    // (Implementation remains the same)
+     info!("Attempting to download bottle for {}", formula.name);
 
     let (platform_tag, bottle_file_spec) = get_bottle_for_platform(formula)?;
     debug!(
@@ -180,13 +179,27 @@ pub async fn download_bottle(
     Ok(bottle_cache_path)
 }
 
-fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
+
+// *** Make function crate-visible: `pub(crate) fn` ***
+/// Gets the most specific available bottle spec for the current platform, including fallbacks.
+pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
+    // (Implementation with hierarchical fallback remains the same)
     let stable_spec = formula.bottle.stable.as_ref().ok_or_else(|| {
         SapphireError::Generic(format!(
             "Formula '{}' has no stable bottle specification.",
             formula.name
         ))
     })?;
+
+    if stable_spec.files.is_empty() {
+        return Err(SapphireError::Generic(format!(
+            "Formula '{}' has no bottle files listed in stable spec.",
+            formula.name
+        )));
+    }
+
+    const ARM_MACOS_VERSIONS: &[&str] = &["sequoia", "sonoma", "ventura", "monterey"];
+
     let current_platform = crate::build::formula::get_current_platform();
     if current_platform == "unknown" || current_platform.contains("unknown") {
         warn!("Could not reliably determine macOS platform. Bottle selection might be incorrect.");
@@ -197,58 +210,75 @@ fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec
     );
     debug!(
         "Available bottle platforms in formula spec: {:?}",
-        stable_spec.files.keys()
+        stable_spec.files.keys().cloned().collect::<Vec<_>>()
     );
+
+    // 1. Check for exact platform match
     if let Some(spec) = stable_spec.files.get(&current_platform) {
-        debug!(
-            "Found exact bottle match for platform: {}",
-            current_platform
-        );
+        debug!("Found exact bottle match for platform: {}", current_platform);
         return Ok((current_platform.clone(), spec));
     }
     debug!("No exact match found for {}", current_platform);
+
+    // 2. Hierarchical OS fallback for ARM
     if current_platform.starts_with("arm64_") {
-        if let Some(os_name) = current_platform.strip_prefix("arm64_") {
-            if let Some(spec) = stable_spec.files.get(os_name) {
-                warn!(
-                    "No specific arm64 bottle found for {}. Falling back to '{}' bottle.",
-                    current_platform, os_name
-                );
-                return Ok((os_name.to_string(), spec));
+        if let Some(current_os_name) = current_platform.strip_prefix("arm64_") {
+            if let Some(current_os_index) = ARM_MACOS_VERSIONS.iter().position(|&v| v == current_os_name) {
+                 for i in current_os_index..ARM_MACOS_VERSIONS.len() {
+                    let target_os_name = ARM_MACOS_VERSIONS[i];
+                    let target_tag = format!("arm64_{}", target_os_name);
+                    if let Some(spec) = stable_spec.files.get(&target_tag) {
+                         warn!(
+                            "No bottle found for exact platform '{}'. Using compatible older bottle '{}'.",
+                             current_platform, target_tag
+                         );
+                         return Ok((target_tag, spec));
+                    }
+                 }
+                 debug!("Checked older ARM macOS versions ({:?}), no suitable bottle found.", &ARM_MACOS_VERSIONS[current_os_index..]);
+            } else {
+                 debug!("Current OS '{}' not found in known ARM macOS version list.", current_os_name);
             }
-            debug!("No fallback bottle found for ARM OS: {}", os_name);
+        } else {
+             debug!("Could not extract OS name from ARM platform tag '{}'", current_platform);
         }
-    } else if let Some(os_name) = current_platform.split('_').last() {
-        if os_name != current_platform && stable_spec.files.contains_key(os_name) {
-            if let Some(spec) = stable_spec.files.get(os_name) {
-                warn!(
-                    "No specific arch bottle found for {}. Falling back to '{}' bottle.",
-                    current_platform, os_name
-                );
-                return Ok((os_name.to_string(), spec));
-            }
-            debug!("No fallback bottle found for OS: {}", os_name);
-        } else if current_platform.starts_with("x86_64_") {
-            if let Some(os_name_intel) = current_platform.strip_prefix("x86_64_") {
-                if let Some(spec) = stable_spec.files.get(os_name_intel) {
-                    warn!(
-                        "No specific x86_64 bottle found for {}. Falling back to '{}' bottle.",
-                        current_platform, os_name_intel
-                    );
-                    return Ok((os_name_intel.to_string(), spec));
-                }
-                debug!("No fallback bottle found for Intel OS: {}", os_name_intel);
-            }
+
+        // 3. Check for generic "arm64" tag
+        if let Some(spec) = stable_spec.files.get("arm64") {
+            warn!(
+                "No specific OS bottle found for {}. Falling back to generic 'arm64' bottle.",
+                current_platform
+            );
+            return Ok(("arm64".to_string(), spec));
         }
+        debug!("No generic 'arm64' bottle tag found.");
     }
+
+    // 4. Fallback for Intel macOS or general OS name match
+    if let Some(os_name) = current_platform.split('_').last() {
+         if os_name != current_platform {
+             if let Some(spec) = stable_spec.files.get(os_name) {
+                 warn!(
+                     "No architecture-specific bottle found for {}. Falling back to OS-only tag '{}' bottle.",
+                     current_platform, os_name
+                 );
+                 return Ok((os_name.to_string(), spec));
+             }
+              debug!("No fallback bottle found for OS tag: {}", os_name);
+         }
+    }
+
+    // 5. Fallback to "all" platform
     if let Some(spec) = stable_spec.files.get("all") {
         warn!(
-            "No platform-specific bottle found for {}. Using 'all' platform bottle.",
+            "No platform-specific or OS-specific bottle found for {}. Using 'all' platform bottle.",
             current_platform
         );
         return Ok(("all".to_string(), spec));
     }
     debug!("No 'all' platform bottle found.");
+
+    // 6. If no suitable bottle found
     Err(SapphireError::DownloadError(
         formula.name.clone(),
         "".to_string(),
@@ -260,8 +290,10 @@ fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec
     ))
 }
 
-/// Install a bottle by extracting it, performing relocation, and writing receipt. (Synchronous)
+
+// install_bottle (unchanged)
 pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) -> Result<PathBuf> {
+    // (Implementation remains the same)
     let install_dir = match formula.install_prefix(&config.cellar) {
         Ok(path) => path,
         Err(e) => {
@@ -340,9 +372,9 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     Ok(install_dir)
 }
 
-// --- Permissions and Placeholder Relocation ---
-
+// --- Permissions and Placeholder Relocation (unchanged) ---
 fn ensure_write_permissions(path: &Path) -> Result<()> {
+    // (Implementation remains the same)
     for entry_result in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         let entry_path = entry_result.path();
         match fs::metadata(entry_path) {
@@ -351,16 +383,11 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 #[cfg(unix)]
                 {
                     let current_mode = perms.mode();
-                    // Ensure owner write bit is set
-                    let new_mode = current_mode | 0o200; // Add owner write permission
+                    let new_mode = current_mode | 0o200;
                     if new_mode != current_mode {
                         perms.set_mode(new_mode);
                         if let Err(e) = fs::set_permissions(entry_path, perms) {
-                            warn!(
-                                "Failed to set write permission on {}: {}",
-                                entry_path.display(),
-                                e
-                            );
+                            warn!("Failed to set write permission on {}: {}", entry_path.display(), e);
                         } else {
                             debug!("Set write permission on: {}", entry_path.display());
                         }
@@ -368,15 +395,10 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 }
                 #[cfg(not(unix))]
                 {
-                    // On non-unix, simply ensure readonly is false
                     if perms.readonly() {
                         perms.set_readonly(false);
                         if let Err(e) = fs::set_permissions(entry_path, perms) {
-                            warn!(
-                                "Failed to unset readonly attribute on {}: {}",
-                                entry_path.display(),
-                                e
-                            );
+                            warn!("Failed to unset readonly attribute on {}: {}", entry_path.display(), e);
                         }
                     }
                 }
@@ -389,11 +411,8 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
-
-/// Performs text replacement for placeholders and Mach-O patching.
-/// *** Ensures executable permissions after modification. ***
 fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Config) -> Result<()> {
-    // --- 1. Define Replacements ---
+    // (Implementation remains the same)
     let mut replacements = HashMap::new();
     let cellar_path_str = config.cellar.to_string_lossy().to_string();
     let prefix_path_str = config.prefix.to_string_lossy().to_string();
@@ -452,9 +471,8 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     let mut macho_patched_count = 0;
     let mut permission_errors = 0;
     let mut macho_errors = 0;
-    let mut files_to_chmod: Vec<PathBuf> = Vec::new(); // Collect files needing chmod
+    let mut files_to_chmod: Vec<PathBuf> = Vec::new();
 
-    // --- 2. Iterate Through Files ---
     for entry_result in WalkDir::new(install_dir)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -463,34 +481,23 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         let path = entry_result.path();
         debug!("  Scanning file: {}", path.display());
 
-        // Check if the file is in a 'bin' directory (simple check)
         let is_potential_executable = path
             .components()
             .any(|comp| comp.as_os_str() == "bin" || comp.as_os_str() == "sbin");
 
-
-        // --- 3. Check Metadata & Permissions ---
         let metadata = match fs::metadata(path) {
             Ok(m) => m,
             Err(e) => {
-                warn!(
-                    "Relocation: Could not get metadata for {}: {}",
-                    path.display(),
-                    e
-                );
+                warn!("Relocation: Could not get metadata for {}: {}", path.display(), e);
                 continue;
             }
         };
         if metadata.permissions().readonly() {
-            debug!(
-                "  Skipping relocation for readonly file: {}",
-                path.display()
-            );
+            debug!("  Skipping relocation for readonly file: {}", path.display());
             continue;
         }
 
-        // --- 4. Attempt Mach-O Patching FIRST (macOS only) ---
-        let mut was_modified = false; // Track if patching OR text replacement happened
+        let mut was_modified = false;
         if cfg!(target_os = "macos") {
             match macho::patch_macho_file(path, &replacements) {
                 Ok(patched) => {
@@ -498,41 +505,23 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                         debug!("Successfully patched Mach-O file: {}", path.display());
                         macho_patched_count += 1;
                         was_modified = true;
-                        if is_potential_executable { // If it was patched AND in bin/, mark for chmod
-                            files_to_chmod.push(path.to_path_buf());
-                        }
+                        if is_potential_executable { files_to_chmod.push(path.to_path_buf()); }
                     }
                 }
-                Err(SapphireError::PathTooLongError(e)) => {
-                    error!("Mach-O patching failed for {} (Path Too Long): {}", path.display(), e);
-                    macho_errors += 1;
-                    continue; // Skip text replacement
-                }
-                Err(SapphireError::CodesignError(e)) => {
-                    error!("Mach-O patching failed for {} (Codesign Failed): {}", path.display(), e);
-                    macho_errors += 1;
-                    continue; // Skip text replacement
-                }
-                Err(e) => {
-                    warn!("Mach-O patching check failed for {}: {}. Will attempt text replacement.", path.display(), e);
-                    // Fall through
-                }
+                Err(SapphireError::PathTooLongError(e)) => { error!("Mach-O patching failed for {} (Path Too Long): {}", path.display(), e); macho_errors += 1; continue; }
+                Err(SapphireError::CodesignError(e)) => { error!("Mach-O patching failed for {} (Codesign Failed): {}", path.display(), e); macho_errors += 1; continue; }
+                Err(e) => { warn!("Mach-O patching check failed for {}: {}. Will attempt text replacement.", path.display(), e); }
             }
         }
 
-        // --- 5. Fallback to Text Replacement (if not Mach-O patched) ---
-        if !was_modified { // Only try text replacement if not already modified by macho patching
+        if !was_modified {
             let mut is_likely_text = false;
             match File::open(path) {
                 Ok(mut file) => {
                     let mut buffer = [0; 1024];
                     match file.read(&mut buffer) {
-                        Ok(n) if n > 0 => {
-                            if !buffer[..n].contains(&0) { // Simple check for null bytes
-                                is_likely_text = true;
-                            }
-                        }
-                        Ok(_) => { is_likely_text = true; /* Treat empty as text */ }
+                        Ok(n) if n > 0 => { if !buffer[..n].contains(&0) { is_likely_text = true; } }
+                        Ok(_) => { is_likely_text = true; }
                         Err(e) => { warn!("Could not read chunk from {}: {}", path.display(), e); }
                     }
                 }
@@ -546,14 +535,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                         let mut text_was_modified_this_file = false;
                         for (placeholder, replacement) in &replacements {
                             if content.contains(placeholder) {
-                                let original_len = placeholder.len();
-                                let replacement_len = replacement.len();
-                                if replacement_len > original_len {
-                                    warn!(
-                                        "Text replacement '{}' -> '{}' increases length in file {}. Proceeding cautiously.",
-                                        placeholder, replacement, path.display()
-                                    );
-                                }
                                 modified_content = modified_content.replace(placeholder, replacement);
                                 debug!("  Replaced text placeholder '{}' in: {}", placeholder, path.display());
                                 text_was_modified_this_file = true;
@@ -563,14 +544,11 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                             match write_text_file_atomic(path, &modified_content) {
                                 Ok(_) => {
                                     text_replaced_count += 1;
-                                    //was_modified = true; // TODO: Do we need this?
-                                    if is_potential_executable { // If text was replaced AND in bin/, mark for chmod
-                                        files_to_chmod.push(path.to_path_buf());
-                                    }
+                                    if is_potential_executable { files_to_chmod.push(path.to_path_buf()); }
                                 }
                                 Err(e) => {
                                      if matches!(e, SapphireError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied) {
-                                         error!("Failed to write relocated text file {}: Permission denied", path.display());
+                                        error!("Failed to write relocated text file {}: Permission denied", path.display());
                                         permission_errors += 1;
                                     } else {
                                         warn!("Failed to write relocated text file {}: {}", path.display(), e);
@@ -579,39 +557,29 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                             }
                         }
                     }
-                    Err(e) => {
-                        debug!("Skipping text relocation for {} (read failed - likely not UTF-8 text): {}", path.display(), e);
-                    }
+                    Err(e) => { debug!("Skipping text relocation for {} (read failed - likely not UTF-8 text): {}", path.display(), e); }
                 }
             } else {
-                // If it's not text and wasn't Mach-O patched, but IS in bin/, it might still need execute permissions
-                // (e.g., a pre-compiled binary in the bottle not needing patching)
-                if is_potential_executable {
-                     files_to_chmod.push(path.to_path_buf());
-                } else {
-                     debug!("Skipping text relocation for {} (likely binary and not Mach-O patched)", path.display());
-                }
+                if is_potential_executable { files_to_chmod.push(path.to_path_buf()); }
+                else { debug!("Skipping text relocation for {} (likely binary and not Mach-O patched)", path.display()); }
             }
         }
-    } // End WalkDir loop
+    }
 
-
-    // --- *** 6. Ensure Executable Permissions *** ---
-    if cfg!(unix) { // PermissionsExt is unix-only
+    if cfg!(unix) {
         info!("Ensuring execute permissions for {} identified files...", files_to_chmod.len());
         for path in &files_to_chmod {
             match fs::metadata(path) {
                 Ok(metadata) => {
                     let mut perms = metadata.permissions();
                     let current_mode = perms.mode();
-                    // Add owner, group, and other execute bits (0o111)
                     let new_mode = current_mode | 0o111;
                     if new_mode != current_mode {
                          debug!("Setting execute permission (+x) for: {}", path.display());
-                         perms.set_mode(new_mode); // Set the new mode
+                         perms.set_mode(new_mode);
                         if let Err(e) = fs::set_permissions(path, perms) {
                             warn!("Failed to set execute permission on {}: {}", path.display(), e);
-                            permission_errors += 1; // Count this as a permission error
+                            permission_errors += 1;
                         }
                     } else {
                          debug!("Execute permission already set for: {}", path.display());
@@ -625,35 +593,19 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         }
     }
 
-
-    // --- 7. Final Logging and Error Handling ---
-    info!(
-        "Relocation scan complete. Text files modified: {}, Mach-O files patched: {}",
-        text_replaced_count, macho_patched_count
-    );
-
+    info!("Relocation scan complete. Text files modified: {}, Mach-O files patched: {}", text_replaced_count, macho_patched_count);
     if permission_errors > 0 || macho_errors > 0 {
-        error!(
-            "Relocation encountered errors! Permission errors: {}, Mach-O errors: {}. Installation may be broken.",
-            permission_errors, macho_errors
-        );
-        // Still return Err, but the message reflects the count
-        return Err(SapphireError::InstallError(format!(
-            "Bottle relocation failed for {} files ({} permission, {} Mach-O). Check logs and permissions of {}.",
-            permission_errors + macho_errors,
-            permission_errors,
-            macho_errors,
-            install_dir.display()
-        )));
+        error!("Relocation encountered errors! Permission errors: {}, Mach-O errors: {}. Installation may be broken.", permission_errors, macho_errors);
+        return Err(SapphireError::InstallError(format!("Bottle relocation failed for {} files ({} permission, {} Mach-O). Check logs and permissions of {}.", permission_errors + macho_errors, permission_errors, macho_errors, install_dir.display())));
     }
-
     Ok(())
 }
 
-// Helper for writing text files atomically (similar to write_patched_buffer but for strings)
+// write_text_file_atomic (unchanged)
 fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
-     use std::io::Write; // Need Write trait for this function
-     use tempfile::NamedTempFile; // Need tempfile
+    // (Implementation remains the same)
+    use std::io::Write;
+     use tempfile::NamedTempFile;
 
      let dir = original_path.parent().ok_or_else(|| {
          SapphireError::Generic(format!(
@@ -661,7 +613,7 @@ fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
              original_path.display()
          ))
      })?;
-     fs::create_dir_all(dir)?; // Ensure dir exists
+     fs::create_dir_all(dir)?;
 
      let mut temp_file = NamedTempFile::new_in(dir)?;
      debug!(
@@ -670,7 +622,7 @@ fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
      );
      temp_file.write_all(content.as_bytes())?;
      temp_file.flush()?;
-     temp_file.as_file().sync_all()?; // Ensure written to disk
+     temp_file.as_file().sync_all()?;
 
      temp_file.persist(original_path).map_err(|e| {
          error!(
