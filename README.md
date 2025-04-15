@@ -37,7 +37,7 @@ The project is split into:
 * Provides build environment sanitization.
 * Handles Mach-O binary patching on macOS for correct linking.
 
-## Basic Usage (Experimental - Use Cautiously!)
+## Usage
 
 ```bash
 # Update local cache of package lists (Required before searching/installing)
@@ -62,8 +62,9 @@ sapphire install --build-from-source <formula_name>
 sapphire uninstall <formula_name>
 ```
 
-# --- Cask install/uninstall commands are NOT implemented ---
-Building Sapphire (For Developers/Testers Only)
+--- Cask install/uninstall commands are NOT implemented ---
+
+## Building Sapphire
 
 Prerequisites:
 
