@@ -81,7 +81,7 @@ Clone the repository:
 ```bash
 git clone <repository_url>
 cd sapphire
-cargo build --release --package sapphire-cli
+cargo build --release
 ```
 
 Find the executable: The binary will be located at target/release/sapphire. You might want to add this location to your PATH for testing, but do not replace your existing package manager (like Homebrew).
