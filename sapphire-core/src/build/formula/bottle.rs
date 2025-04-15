@@ -563,7 +563,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                             match write_text_file_atomic(path, &modified_content) {
                                 Ok(_) => {
                                     text_replaced_count += 1;
-                                    was_modified = true; // Mark as modified
+                                    //was_modified = true; // TODO: Do we need this?
                                     if is_potential_executable { // If text was replaced AND in bin/, mark for chmod
                                         files_to_chmod.push(path.to_path_buf());
                                     }
