@@ -13,7 +13,7 @@
 
 Sapphire is an experimental package manager written in Rust, inspired by Homebrew. It aims to provide a way to install and manage command-line software (formulae) and eventually applications (casks) on macOS and potentially, eventually, maybe Linux, leveraging modern tools and technologies.
 
-It directly interacts with the official homebrew repositories for formulae, bottles and casks. Adding custom taps might be added once it is more reliable
+It directly interacts with the official homebrew repositories for formulae, bottles and casks. Adding custom taps is not yet supported.
 
 The project is split into:
 
