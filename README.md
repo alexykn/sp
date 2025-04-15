@@ -2,6 +2,8 @@
 
 **Sapphire is currently in an ALPHA stage of development. It is experimental and potentially unstable. While many features are functional, exercise caution, especially when installing complex or foundational packages. Use at your own discretion and risk!**
 
+*I do not know if I will ever manage to finish or maintain this, it is a bit much for one person as a side project.*
+
 * **Potential for Installation Issues:** While many formulae (both from bottles and source) may install correctly, installations involving complex dependencies or foundational tools (like compilers, e.g., LLVM, rustc) have a higher chance of failure or causing conflicts. These failures could potentially leave packages in a broken state or interfere with other system components.
 * **Cask Support Limited:** Cask `search` and `info` commands are functional. However, **cask `install` and `uninstall` are NOT implemented or supported.**
 * **Experimental Features:** Some core package management functionalities might still contain bugs.
