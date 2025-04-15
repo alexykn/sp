@@ -3,7 +3,7 @@
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::{warn, error, debug, info};
+use log::{debug, error, info, warn};
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -25,7 +25,10 @@ pub async fn download_formula(
     if has_bottle_for_current_platform(formula) {
         bottle::download_bottle(formula, config, client).await
     } else {
-         info!("No suitable bottle found for {} on this platform, downloading source.", formula.name());
+        info!(
+            "No suitable bottle found for {} on this platform, downloading source.",
+            formula.name()
+        );
         source::download_source(formula, config).await
     }
 }
@@ -33,31 +36,44 @@ pub async fn download_formula(
 /// Checks if a suitable bottle exists for the current platform, considering fallbacks.
 pub fn has_bottle_for_current_platform(formula: &Formula) -> bool {
     let result = crate::build::formula::bottle::get_bottle_for_platform(formula);
-     debug!("has_bottle_for_current_platform check for '{}': {:?}", formula.name(), result.is_ok());
-     if let Err(e) = &result {
-         debug!("Reason for no bottle: {}", e);
-     }
+    debug!(
+        "has_bottle_for_current_platform check for '{}': {:?}",
+        formula.name(),
+        result.is_ok()
+    );
+    if let Err(e) = &result {
+        debug!("Reason for no bottle: {}", e);
+    }
     result.is_ok()
 }
 
 // *** Updated get_current_platform function ***
 fn get_current_platform() -> String {
     if cfg!(target_os = "macos") {
-        let arch = if std::env::consts::ARCH == "aarch64" { "arm64" }
-                   else if std::env::consts::ARCH == "x86_64" { "x86_64" }
-                   else { std::env::consts::ARCH };
+        let arch = if std::env::consts::ARCH == "aarch64" {
+            "arm64"
+        } else if std::env::consts::ARCH == "x86_64" {
+            "x86_64"
+        } else {
+            std::env::consts::ARCH
+        };
 
         debug!("Attempting to determine macOS version using /usr/bin/sw_vers -productVersion...");
         // *** Use only -productVersion argument ***
-        match Command::new("/usr/bin/sw_vers").arg("-productVersion").output() {
+        match Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output()
+        {
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 debug!("sw_vers status: {}", output.status);
                 // Log stdout/stderr if exit wasn't clean or stderr has content
-                 if !output.status.success() || !stderr.trim().is_empty() {
+                if !output.status.success() || !stderr.trim().is_empty() {
                     debug!("sw_vers stdout:\n{}", stdout);
-                    if !stderr.trim().is_empty() { warn!("sw_vers stderr:\n{}", stderr); }
+                    if !stderr.trim().is_empty() {
+                        warn!("sw_vers stderr:\n{}", stderr);
+                    }
                 }
 
                 if output.status.success() {
@@ -74,9 +90,18 @@ fn get_current_platform() -> String {
                             Some("10") => match version_str.split('.').nth(1) {
                                 Some("15") => "catalina",
                                 Some("14") => "mojave",
-                                _ => { warn!("Unrecognized legacy macOS 10.x version: {}", version_str); "unknown_macos" }
+                                _ => {
+                                    warn!(
+                                        "Unrecognized legacy macOS 10.x version: {}",
+                                        version_str
+                                    );
+                                    "unknown_macos"
+                                }
                             },
-                            _ => { warn!("Unrecognized macOS major version: {}", version_str); "unknown_macos" }
+                            _ => {
+                                warn!("Unrecognized macOS major version: {}", version_str);
+                                "unknown_macos"
+                            }
                         };
 
                         if os_name != "unknown_macos" {
@@ -90,10 +115,14 @@ fn get_current_platform() -> String {
                             return platform_tag;
                         }
                     } else {
-                         error!("sw_vers -productVersion output was empty.");
+                        error!("sw_vers -productVersion output was empty.");
                     }
                 } else {
-                    error!("sw_vers -productVersion command failed with status: {}. Stderr: {}", output.status, stderr.trim());
+                    error!(
+                        "sw_vers -productVersion command failed with status: {}. Stderr: {}",
+                        output.status,
+                        stderr.trim()
+                    );
                 }
             }
             Err(e) => {
@@ -108,72 +137,124 @@ fn get_current_platform() -> String {
             warn!("Falling back to platform tag: arm64_monterey");
             return "arm64_monterey".to_string();
         } else {
-             warn!("Falling back to platform tag: monterey");
+            warn!("Falling back to platform tag: monterey");
             return "monterey".to_string();
         }
-
     } else if cfg!(target_os = "linux") {
-        if std::env::consts::ARCH == "aarch64" { "arm64_linux".to_string() }
-        else if std::env::consts::ARCH == "x86_64" { "x86_64_linux".to_string() }
-        else { "unknown".to_string() } // Handle other linux arches if needed
+        if std::env::consts::ARCH == "aarch64" {
+            "arm64_linux".to_string()
+        } else if std::env::consts::ARCH == "x86_64" {
+            "x86_64_linux".to_string()
+        } else {
+            "unknown".to_string()
+        } // Handle other linux arches if needed
     } else {
-         warn!("Could not determine platform tag for OS: {}", std::env::consts::OS);
+        warn!(
+            "Could not determine platform tag for OS: {}",
+            std::env::consts::OS
+        );
         "unknown".to_string()
     }
 }
-
 
 // --- extract_archive and helpers (unchanged) ---
 pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
     fs::create_dir_all(target_dir)?;
-    let extension = archive_path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+    let extension = archive_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
     match extension {
         "tar" => extract_tar(archive_path, target_dir),
         "gz" | "tgz" => extract_tar_gz(archive_path, target_dir),
         "bz2" | "tbz" | "tbz2" => extract_tar_bz2(archive_path, target_dir),
         "xz" | "txz" => extract_tar_xz(archive_path, target_dir),
         "zip" => extract_zip(archive_path, target_dir),
-        _ => Err(SapphireError::Generic(format!("Unsupported archive format: {}", extension))),
+        _ => Err(SapphireError::Generic(format!(
+            "Unsupported archive format: {}",
+            extension
+        ))),
     }
 }
 fn extract_tar(archive_path: &Path, target_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-    let output = Command::new("tar").arg("-xf").arg(archive_path).arg("-C").arg(target_dir).output()?;
+    let output = Command::new("tar")
+        .arg("-xf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(target_dir)
+        .output()?;
     if !output.status.success() {
-        return Err(SapphireError::Generic(format!("Failed to extract tar archive: {}", String::from_utf8_lossy(&output.stderr))));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(())
 }
 fn extract_tar_gz(archive_path: &Path, target_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-     let output = Command::new("tar").arg("-xzf").arg(archive_path).arg("-C").arg(target_dir).output()?;
+    let output = Command::new("tar")
+        .arg("-xzf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(target_dir)
+        .output()?;
     if !output.status.success() {
-        return Err(SapphireError::Generic(format!("Failed to extract tar.gz archive: {}", String::from_utf8_lossy(&output.stderr))));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar.gz archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(())
 }
 fn extract_tar_bz2(archive_path: &Path, target_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-      let output = Command::new("tar").arg("-xjf").arg(archive_path).arg("-C").arg(target_dir).output()?;
+    let output = Command::new("tar")
+        .arg("-xjf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(target_dir)
+        .output()?;
     if !output.status.success() {
-        return Err(SapphireError::Generic(format!("Failed to extract tar.bz2 archive: {}", String::from_utf8_lossy(&output.stderr))));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar.bz2 archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(())
 }
 fn extract_tar_xz(archive_path: &Path, target_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-      let output = Command::new("tar").arg("-xJf").arg(archive_path).arg("-C").arg(target_dir).output()?;
+    let output = Command::new("tar")
+        .arg("-xJf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(target_dir)
+        .output()?;
     if !output.status.success() {
-        return Err(SapphireError::Generic(format!("Failed to extract tar.xz archive: {}", String::from_utf8_lossy(&output.stderr))));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract tar.xz archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(())
 }
 fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-     let output = Command::new("unzip").arg("-qq").arg("-o").arg(archive_path).arg("-d").arg(target_dir).output()?;
+    let output = Command::new("unzip")
+        .arg("-qq")
+        .arg("-o")
+        .arg(archive_path)
+        .arg("-d")
+        .arg(target_dir)
+        .output()?;
     if !output.status.success() {
-        return Err(SapphireError::Generic(format!("Failed to extract zip archive: {}", String::from_utf8_lossy(&output.stderr))));
+        return Err(SapphireError::Generic(format!(
+            "Failed to extract zip archive: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(())
 }
@@ -181,8 +262,11 @@ fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
 // --- get_cellar_path (unchanged) ---
 pub fn get_cellar_path() -> PathBuf {
     // (Implementation remains the same)
-    if std::env::consts::ARCH == "aarch64" { PathBuf::from("/opt/homebrew/Cellar") }
-    else { PathBuf::from("/usr/local/Cellar") }
+    if std::env::consts::ARCH == "aarch64" {
+        PathBuf::from("/opt/homebrew/Cellar")
+    } else {
+        PathBuf::from("/usr/local/Cellar")
+    }
 }
 
 // --- get_formula_cellar_path (unchanged) ---
@@ -196,21 +280,28 @@ pub fn get_formula_cellar_path(formula: &Formula) -> PathBuf {
 // --- write_receipt (unchanged) ---
 pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-     let receipt_dir = install_dir.join("INSTALL_RECEIPT.json");
+    let receipt_dir = install_dir.join("INSTALL_RECEIPT.json");
     let receipt_file = File::create(&receipt_dir);
-     let mut receipt_file = match receipt_file {
-         Ok(file) => file,
-         Err(e) => {
-             error!("Failed to create receipt file at {}: {}", receipt_dir.display(), e);
-             return Err(SapphireError::Io(e));
-         }
-     };
+    let mut receipt_file = match receipt_file {
+        Ok(file) => file,
+        Err(e) => {
+            error!(
+                "Failed to create receipt file at {}: {}",
+                receipt_dir.display(),
+                e
+            );
+            return Err(SapphireError::Io(e));
+        }
+    };
 
     let resources_result = formula.resources();
     let resources_installed = match resources_result {
         Ok(res) => res.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
         Err(_) => {
-            warn!("Could not retrieve resources for formula {} when writing receipt.", formula.name);
+            warn!(
+                "Could not retrieve resources for formula {} when writing receipt.",
+                formula.name
+            );
             vec![]
         }
     };
@@ -228,18 +319,21 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
         "resources_installed": resources_installed,
     });
 
-     let receipt_json = match serde_json::to_string_pretty(&receipt) {
-         Ok(json) => json,
-         Err(e) => {
-             error!("Failed to serialize receipt JSON for {}: {}", formula.name, e);
-             return Err(SapphireError::Json(e));
-         }
-     };
+    let receipt_json = match serde_json::to_string_pretty(&receipt) {
+        Ok(json) => json,
+        Err(e) => {
+            error!(
+                "Failed to serialize receipt JSON for {}: {}",
+                formula.name, e
+            );
+            return Err(SapphireError::Json(e));
+        }
+    };
 
-     if let Err(e) = receipt_file.write_all(receipt_json.as_bytes()) {
-         error!("Failed to write receipt file for {}: {}", formula.name, e);
-         return Err(SapphireError::Io(e));
-     }
+    if let Err(e) = receipt_file.write_all(receipt_json.as_bytes()) {
+        error!("Failed to write receipt file for {}: {}", formula.name, e);
+        return Err(SapphireError::Io(e));
+    }
 
     Ok(())
 }

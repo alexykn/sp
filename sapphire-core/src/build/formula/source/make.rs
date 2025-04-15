@@ -55,13 +55,13 @@ pub fn configure_and_make(install_dir: &Path, build_env: &BuildEnvironment) -> R
     let configure_script_path = Path::new("./configure"); // Assuming CWD is build_dir
 
     // Check if configure script exists before trying to detect/run
-     if !configure_script_path.exists() {
-         log::error!("./configure script not found in current directory.");
-         // This case should ideally be caught by detect_and_build, but check defensively.
-         return Err(SapphireError::BuildEnvError(
-             "configure script not found, cannot run Autotools build.".to_string()
-         ));
-     }
+    if !configure_script_path.exists() {
+        log::error!("./configure script not found in current directory.");
+        // This case should ideally be caught by detect_and_build, but check defensively.
+        return Err(SapphireError::BuildEnvError(
+            "configure script not found, cannot run Autotools build.".to_string(),
+        ));
+    }
 
     // *** Detect if it's likely an Autotools script ***
     let is_autotools = is_gnu_autotools_configure(configure_script_path);
@@ -124,14 +124,13 @@ pub fn configure_and_make(install_dir: &Path, build_env: &BuildEnvironment) -> R
 
     // --- make && make install steps remain the same ---
     info!("==> Running make");
-    let make_exe =
-        which::which_in("make", build_env.get_path_string(), Path::new("."))
-            .or_else(|_| which::which("make"))
-            .map_err(|_| {
-                SapphireError::BuildEnvError(
-                    "make command not found in build environment PATH or system PATH.".to_string(),
-                )
-            })?;
+    let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
+        .or_else(|_| which::which("make"))
+        .map_err(|_| {
+            SapphireError::BuildEnvError(
+                "make command not found in build environment PATH or system PATH.".to_string(),
+            )
+        })?;
     let mut cmd_make = Command::new(make_exe.clone());
     build_env.apply_to_command(&mut cmd_make);
     let output_make = cmd_make
@@ -140,8 +139,14 @@ pub fn configure_and_make(install_dir: &Path, build_env: &BuildEnvironment) -> R
 
     if !output_make.status.success() {
         println!("Make failed with status: {}", output_make.status);
-        eprintln!("Make stdout:\n{}", String::from_utf8_lossy(&output_make.stdout));
-        eprintln!("Make stderr:\n{}", String::from_utf8_lossy(&output_make.stderr));
+        eprintln!(
+            "Make stdout:\n{}",
+            String::from_utf8_lossy(&output_make.stdout)
+        );
+        eprintln!(
+            "Make stderr:\n{}",
+            String::from_utf8_lossy(&output_make.stderr)
+        );
         return Err(SapphireError::Generic(format!(
             "Make failed with status: {}",
             output_make.status
@@ -183,14 +188,13 @@ pub fn configure_and_make(install_dir: &Path, build_env: &BuildEnvironment) -> R
 pub fn simple_make(install_dir: &Path, build_env: &BuildEnvironment) -> Result<()> {
     // (Implementation remains the same)
     info!("==> Building with simple Makefile");
-    let make_exe =
-        which::which_in("make", build_env.get_path_string(), Path::new("."))
-            .or_else(|_| which::which("make")) // Fallback
-            .map_err(|_| {
-                SapphireError::BuildEnvError(
-                    "make command not found in build environment PATH or system PATH.".to_string(),
-                )
-            })?;
+    let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
+        .or_else(|_| which::which("make")) // Fallback
+        .map_err(|_| {
+            SapphireError::BuildEnvError(
+                "make command not found in build environment PATH or system PATH.".to_string(),
+            )
+        })?;
 
     info!("==> Running make");
     let mut cmd_make = Command::new(make_exe.clone());
@@ -227,12 +231,21 @@ pub fn simple_make(install_dir: &Path, build_env: &BuildEnvironment) -> Result<(
     })?;
 
     if !output_install.status.success() {
-        warn!("'make install' failed with status {}. Checking install directory...", output_install.status);
+        warn!(
+            "'make install' failed with status {}. Checking install directory...",
+            output_install.status
+        );
 
         let bin_dir = install_dir.join("bin");
         let lib_dir = install_dir.join("lib");
-        let bin_exists = bin_dir.exists() && fs::read_dir(&bin_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
-        let lib_exists = lib_dir.exists() && fs::read_dir(&lib_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
+        let bin_exists = bin_dir.exists()
+            && fs::read_dir(&bin_dir)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+        let lib_exists = lib_dir.exists()
+            && fs::read_dir(&lib_dir)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
 
         if !bin_exists && !lib_exists {
             println!(
@@ -245,7 +258,7 @@ pub fn simple_make(install_dir: &Path, build_env: &BuildEnvironment) -> Result<(
                 "Make install stdout:\n{}",
                 String::from_utf8_lossy(&output_install.stdout)
             );
-             eprintln!(
+            eprintln!(
                 "Make install stderr:\n{}",
                 String::from_utf8_lossy(&output_install.stderr)
             );

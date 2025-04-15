@@ -270,33 +270,45 @@ fn detect_and_build(
 
     // --- Special case checks first ---
     // Handle autoreconf possibility
-     if build_dir.join("configure.ac").exists() || build_dir.join("configure.in").exists() {
-         if !build_dir.join("configure").exists() {
-             match which::which_in("autoreconf", build_env.get_path_string(), build_dir) {
-                 Ok(autoreconf_path) => {
-                     info!("==> Running autoreconf -fvi (as configure script is missing)");
-                     let mut cmd = Command::new(autoreconf_path);
-                     cmd.args(["-fvi"]);
-                     build_env.apply_to_command(&mut cmd);
-                     let output = cmd.output().map_err(|e| SapphireError::CommandExecError(format!("Failed to execute autoreconf: {}", e)))?;
-                     if !output.status.success() {
-                         error!("autoreconf failed with status: {}", output.status);
-                         eprintln!("autoreconf stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-                         eprintln!("autoreconf stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-                         warn!("Autoreconf failed, continuing detection...");
-                     }
-                 }
-                 Err(_) => {
-                     warn!("configure.ac found but autoreconf not found in PATH.");
-                 }
-             }
-         }
-     }
-
+    if build_dir.join("configure.ac").exists() || build_dir.join("configure.in").exists() {
+        if !build_dir.join("configure").exists() {
+            match which::which_in("autoreconf", build_env.get_path_string(), build_dir) {
+                Ok(autoreconf_path) => {
+                    info!("==> Running autoreconf -fvi (as configure script is missing)");
+                    let mut cmd = Command::new(autoreconf_path);
+                    cmd.args(["-fvi"]);
+                    build_env.apply_to_command(&mut cmd);
+                    let output = cmd.output().map_err(|e| {
+                        SapphireError::CommandExecError(format!(
+                            "Failed to execute autoreconf: {}",
+                            e
+                        ))
+                    })?;
+                    if !output.status.success() {
+                        error!("autoreconf failed with status: {}", output.status);
+                        eprintln!(
+                            "autoreconf stdout:\n{}",
+                            String::from_utf8_lossy(&output.stdout)
+                        );
+                        eprintln!(
+                            "autoreconf stderr:\n{}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        warn!("Autoreconf failed, continuing detection...");
+                    }
+                }
+                Err(_) => {
+                    warn!("configure.ac found but autoreconf not found in PATH.");
+                }
+            }
+        }
+    }
 
     // Handle Go structure
     let go_src_dir = build_dir.join("src");
-    if go_src_dir.is_dir() && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists()) {
+    if go_src_dir.is_dir()
+        && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists())
+    {
         info!("Detected Go build system (make.bash or all.bash)");
         return go::go_build(build_dir, install_dir, build_env, all_installed_paths);
     }
@@ -310,32 +322,57 @@ fn detect_and_build(
         if build_dir.join(marker).exists() {
             let score = 3;
             debug!("Found root marker '{}', score {}", marker, score);
-            let current_priority = markers.iter().position(|(m,_,_)| m == marker).unwrap_or(usize::MAX);
+            let current_priority = markers
+                .iter()
+                .position(|(m, _, _)| m == marker)
+                .unwrap_or(usize::MAX);
             let existing_priority = match &best_match {
-                 Some((em, _, _, s)) if *s == score => markers.iter().position(|(m,_,_)| m == em).unwrap_or(usize::MAX),
-                 _ => usize::MAX,
+                Some((em, _, _, s)) if *s == score => markers
+                    .iter()
+                    .position(|(m, _, _)| m == em)
+                    .unwrap_or(usize::MAX),
+                _ => usize::MAX,
             };
 
-            if score >= best_match.as_ref().map_or(0, |(_,_,_,s)| *s) && current_priority < existing_priority {
-                 debug!("Updating best match (root): '{}' in {} (depth 0, score {})", marker, build_dir.display(), score);
+            if score >= best_match.as_ref().map_or(0, |(_, _, _, s)| *s)
+                && current_priority < existing_priority
+            {
+                debug!(
+                    "Updating best match (root): '{}' in {} (depth 0, score {})",
+                    marker,
+                    build_dir.display(),
+                    score
+                );
                 best_match = Some((marker.to_string(), build_dir.to_path_buf(), 0, score));
             } else if best_match.is_none() {
-                 debug!("Setting initial best match (root): '{}' in {} (depth 0, score {})", marker, build_dir.display(), score);
-                 best_match = Some((marker.to_string(), build_dir.to_path_buf(), 0, score));
+                debug!(
+                    "Setting initial best match (root): '{}' in {} (depth 0, score {})",
+                    marker,
+                    build_dir.display(),
+                    score
+                );
+                best_match = Some((marker.to_string(), build_dir.to_path_buf(), 0, score));
             }
         }
     }
 
     // Check depth 1 and 2 if no root match found or only low-preference root found
-    if best_match.is_none() || best_match.as_ref().map_or(0, |(_,_,_,s)| *s) < 2 {
+    if best_match.is_none() || best_match.as_ref().map_or(0, |(_, _, _, s)| *s) < 2 {
         info!("Checking subdirectories (depth 1 & 2) for preferred build system markers (CMake/Meson)...");
-        let base_formula_name = formula.name().split('@').next().unwrap_or_else(|| formula.name());
+        let base_formula_name = formula
+            .name()
+            .split('@')
+            .next()
+            .unwrap_or_else(|| formula.name());
         let preferred_subdirs: Vec<OsString> = vec![
             OsString::from("src"),
             OsString::from("source"),
             OsString::from(base_formula_name),
         ];
-        debug!("Preferred subdirectories for nested check: {:?}", preferred_subdirs);
+        debug!(
+            "Preferred subdirectories for nested check: {:?}",
+            preferred_subdirs
+        );
 
         for entry_result in WalkDir::new(build_dir)
             .min_depth(1)
@@ -357,14 +394,29 @@ fn detect_and_build(
                 if let Some(p_name) = parent_dir_name {
                     if preferred_subdirs.contains(&p_name) {
                         score = 2; // Preferred subdirectory
-                        debug!("Found preferred nested marker '{}' in {} (depth {}, score {})", marker, parent_dir.display(), current_depth, score);
+                        debug!(
+                            "Found preferred nested marker '{}' in {} (depth {}, score {})",
+                            marker,
+                            parent_dir.display(),
+                            current_depth,
+                            score
+                        );
                     } else {
                         score = 1; // Other subdirectory
-                        debug!("Found other nested marker '{}' in {} (depth {}, score {})", marker, parent_dir.display(), current_depth, score);
+                        debug!(
+                            "Found other nested marker '{}' in {} (depth {}, score {})",
+                            marker,
+                            parent_dir.display(),
+                            current_depth,
+                            score
+                        );
                     }
                 } else {
                     score = 1; // Fallback score if parent name unavailable
-                     debug!("Found other nested marker '{}' at depth {} (no parent name?), score {}", marker, current_depth, score);
+                    debug!(
+                        "Found other nested marker '{}' at depth {} (no parent name?), score {}",
+                        marker, current_depth, score
+                    );
                 }
 
                 // Adjust score based on depth (prefer shallower)
@@ -376,9 +428,20 @@ fn detect_and_build(
                 };
 
                 if is_better {
-                     debug!("Updating best match: '{}' in {} (depth {}, score {})", marker, parent_dir.display(), current_depth, score);
-                     // *** Store the directory containing the marker ***
-                     best_match = Some((marker.to_string(), parent_dir.to_path_buf(), current_depth, score));
+                    debug!(
+                        "Updating best match: '{}' in {} (depth {}, score {})",
+                        marker,
+                        parent_dir.display(),
+                        current_depth,
+                        score
+                    );
+                    // *** Store the directory containing the marker ***
+                    best_match = Some((
+                        marker.to_string(),
+                        parent_dir.to_path_buf(),
+                        current_depth,
+                        score,
+                    ));
                 }
             }
         }
@@ -412,11 +475,17 @@ fn detect_and_build(
         } else {
             // For other nested markers (currently shouldn't happen with root_required),
             // default to build_dir, but this might need refinement.
-            warn!("Unexpected nested marker '{}' found, using root build directory.", marker_name);
+            warn!(
+                "Unexpected nested marker '{}' found, using root build directory.",
+                marker_name
+            );
             build_dir
         };
 
-        info!("Using source path for build dispatch: {}", source_path_for_build.display());
+        info!(
+            "Using source path for build dispatch: {}",
+            source_path_for_build.display()
+        );
 
         return dispatch_build(
             &marker_name,
@@ -428,13 +497,15 @@ fn detect_and_build(
     }
 
     // --- If no build system detected ---
-    error!("Could not determine build system for {}", build_dir.display());
+    error!(
+        "Could not determine build system for {}",
+        build_dir.display()
+    );
     Err(SapphireError::Generic(format!(
         "Could not determine build system for {}",
         build_dir.display()
     )))
 }
-
 
 // --- Updated dispatch_build function ---
 fn dispatch_build(
@@ -444,50 +515,57 @@ fn dispatch_build(
     build_env: &BuildEnvironment,
     _all_installed_paths: &[PathBuf],
 ) -> Result<()> {
-     // Note: The current working directory for all these calls is still the root `build_dir`
-     // from where `detect_and_build` was called. The build functions need to handle
-     // the `source_dir_for_build` argument correctly relative to their execution context.
-     match marker_filename {
-         "configure" => { // Assumes configure was found at root
-             info!("Dispatching to Autotools (configure script at root)");
-             make::configure_and_make(install_dir, build_env) // Runs ./configure in current CWD
-         }
-         "CMakeLists.txt" => {
-             info!("Dispatching to CMake");
-             // Pass the potentially nested source dir containing CMakeLists.txt
-             cmake::cmake_build(source_dir_for_build, install_dir, build_env)
-         }
-         "meson.build" => {
-             info!("Dispatching to Meson");
-             // Pass the potentially nested source dir containing meson.build
-             meson::meson_build(source_dir_for_build, install_dir, build_env)
-         }
-         "Makefile.PL" | "Configure" => { // Assumes found at root
-             info!("Dispatching to Perl build (at root)");
-             perl::perl_build(source_dir_for_build, install_dir, build_env) // Pass root source dir
-         }
-         "Cargo.toml" => { // Assumes found at root
-             info!("Dispatching to Rust/Cargo (at root)");
-             cargo::cargo_build(install_dir, build_env) // Runs from CWD
-         }
-         "setup.py" => { // Assumes found at root
-             info!("Dispatching to Python setup.py (at root)");
-             python::python_build(install_dir, build_env) // Runs from CWD
-         }
-         "Makefile" | "makefile" => { // Assumes found at root
-             info!("Dispatching to simple Makefile (at root)");
-             make::simple_make(install_dir, build_env) // Runs from CWD
-         }
-         _ => {
-             error!("Internal error: Unknown marker file dispatched: {}", marker_filename);
-             Err(SapphireError::Generic(format!(
-                 "Internal error: Unknown build system marker '{}'",
-                 marker_filename
-             )))
-         }
-     }
+    // Note: The current working directory for all these calls is still the root `build_dir`
+    // from where `detect_and_build` was called. The build functions need to handle
+    // the `source_dir_for_build` argument correctly relative to their execution context.
+    match marker_filename {
+        "configure" => {
+            // Assumes configure was found at root
+            info!("Dispatching to Autotools (configure script at root)");
+            make::configure_and_make(install_dir, build_env) // Runs ./configure in current CWD
+        }
+        "CMakeLists.txt" => {
+            info!("Dispatching to CMake");
+            // Pass the potentially nested source dir containing CMakeLists.txt
+            cmake::cmake_build(source_dir_for_build, install_dir, build_env)
+        }
+        "meson.build" => {
+            info!("Dispatching to Meson");
+            // Pass the potentially nested source dir containing meson.build
+            meson::meson_build(source_dir_for_build, install_dir, build_env)
+        }
+        "Makefile.PL" | "Configure" => {
+            // Assumes found at root
+            info!("Dispatching to Perl build (at root)");
+            perl::perl_build(source_dir_for_build, install_dir, build_env) // Pass root source dir
+        }
+        "Cargo.toml" => {
+            // Assumes found at root
+            info!("Dispatching to Rust/Cargo (at root)");
+            cargo::cargo_build(install_dir, build_env) // Runs from CWD
+        }
+        "setup.py" => {
+            // Assumes found at root
+            info!("Dispatching to Python setup.py (at root)");
+            python::python_build(install_dir, build_env) // Runs from CWD
+        }
+        "Makefile" | "makefile" => {
+            // Assumes found at root
+            info!("Dispatching to simple Makefile (at root)");
+            make::simple_make(install_dir, build_env) // Runs from CWD
+        }
+        _ => {
+            error!(
+                "Internal error: Unknown marker file dispatched: {}",
+                marker_filename
+            );
+            Err(SapphireError::Generic(format!(
+                "Internal error: Unknown build system marker '{}'",
+                marker_filename
+            )))
+        }
+    }
 }
-
 
 // --- Resource installation helpers (unchanged) ---
 fn install_resource(
@@ -509,12 +587,10 @@ fn install_resource(
     if stage_path.join("Makefile.PL").exists() {
         info!("   -> Detected Perl resource '{}'", resource.name);
         install_perl_resource(resource, libexec_path, build_env)?;
-    }
-    else if stage_path.join("setup.py").exists() {
+    } else if stage_path.join("setup.py").exists() {
         info!("   -> Detected Python resource '{}'", resource.name);
         install_python_resource(resource, libexec_path, build_env)?;
-    }
-    else {
+    } else {
         warn!(
             "   -> Could not detect build system for resource '{}' in {}. Skipping install.",
             resource.name,
@@ -529,7 +605,7 @@ fn install_perl_resource(
     build_env: &BuildEnvironment,
 ) -> Result<()> {
     // (Implementation remains the same)
-     let perl_exe =
+    let perl_exe =
         which::which_in("perl", build_env.get_path_string(), Path::new(".")).map_err(|_| {
             SapphireError::BuildEnvError(
                 "perl not found in build env PATH for resource install".to_string(),
@@ -672,7 +748,7 @@ fn install_python_resource(
     build_env: &BuildEnvironment,
 ) -> Result<()> {
     // (Implementation remains the same)
-      let python_exe = which::which_in("python3", build_env.get_path_string(), Path::new("."))
+    let python_exe = which::which_in("python3", build_env.get_path_string(), Path::new("."))
         .or_else(|_| which::which_in("python", build_env.get_path_string(), Path::new(".")))
         .map_err(|_| {
             SapphireError::BuildEnvError(
@@ -680,22 +756,32 @@ fn install_python_resource(
             )
         })?;
     let python_version_output = Command::new(&python_exe)
-                                        .arg("-c")
-                                        .arg("import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-                                        .output()
-                                        .map_err(|e| SapphireError::BuildEnvError(format!("Failed to get python version: {}", e)))?;
-    let python_version_str = String::from_utf8_lossy(&python_version_output.stdout).trim().to_string();
+        .arg("-c")
+        .arg("import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        .output()
+        .map_err(|e| {
+            SapphireError::BuildEnvError(format!("Failed to get python version: {}", e))
+        })?;
+    let python_version_str = String::from_utf8_lossy(&python_version_output.stdout)
+        .trim()
+        .to_string();
     if python_version_str.is_empty() {
-         return Err(SapphireError::BuildEnvError("Could not determine python minor version for resource installation path.".to_string()));
+        return Err(SapphireError::BuildEnvError(
+            "Could not determine python minor version for resource installation path.".to_string(),
+        ));
     }
-    let python_site_packages = libexec_path.join("vendor").join("lib").join(format!("python{}", python_version_str)).join("site-packages");
+    let python_site_packages = libexec_path
+        .join("vendor")
+        .join("lib")
+        .join(format!("python{}", python_version_str))
+        .join("site-packages");
 
     fs::create_dir_all(&python_site_packages)?;
     let mut install_cmd = Command::new(python_exe);
-    install_cmd
-        .arg("setup.py")
-        .arg("install")
-        .arg(format!("--prefix={}", libexec_path.join("vendor").display()));
+    install_cmd.arg("setup.py").arg("install").arg(format!(
+        "--prefix={}",
+        libexec_path.join("vendor").display()
+    ));
     let mut cmd_env = build_env.get_vars().clone();
     let pythonpath_entry = python_site_packages.to_string_lossy().to_string();
     let current_pythonpath = std::env::var("PYTHONPATH").unwrap_or_default();
@@ -738,7 +824,8 @@ fn install_python_resource(
     }
     info!(
         "   -> Successfully installed Python resource '{}' to {}",
-        resource.name, python_site_packages.display()
+        resource.name,
+        python_site_packages.display()
     );
     Ok(())
 }
@@ -746,7 +833,7 @@ fn install_python_resource(
 // --- Single file install (unchanged) ---
 fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path) -> Result<()> {
     // (Implementation remains the same)
-       let target_path = if formula.name == "ca-certificates" {
+    let target_path = if formula.name == "ca-certificates" {
         let share_dir = install_dir.join("share").join(formula.name());
         fs::create_dir_all(&share_dir).map_err(|e| {
             SapphireError::Io(std::io::Error::new(
@@ -794,7 +881,6 @@ fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path
     })?;
     Ok(())
 }
-
 
 // --- CurrentWorkingDirectoryGuard (unchanged) ---
 struct CurrentWorkingDirectoryGuard {

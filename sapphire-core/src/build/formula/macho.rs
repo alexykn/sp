@@ -3,9 +3,9 @@
 // Updated to use MachOFatFile32 and MachOFatFile64 for FAT binary parsing.
 // Refactored to separate immutable analysis from mutable patching to fix borrow checker errors.
 
+use crate::utils::error::Result; // Keep top-level Result
 #[cfg(target_os = "macos")]
 use crate::utils::error::SapphireError;
-use crate::utils::error::Result; // Keep top-level Result
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::fs;
@@ -18,14 +18,18 @@ use tempfile::NamedTempFile; // Keep for write_patched_buffer
 #[cfg(target_os = "macos")]
 use object::{
     self,
-    read::macho::{
-        FatArch, MachHeader, MachOFile, MachOFatFile32, MachOFatFile64, // Core Mach-O types + FAT types
-        LoadCommandVariant, // Correct import path
-    },
     macho::{MachHeader32, MachHeader64}, // Keep for Mach-O parsing
-    read::ReadRef,                      // Import ReadRef trait
-    Endianness,                         // Import the Endianness enum
-    FileKind,                           // For checking FAT/single arch
+    read::macho::{
+        FatArch,
+        LoadCommandVariant, // Correct import path
+        MachHeader,
+        MachOFatFile32,
+        MachOFatFile64, // Core Mach-O types + FAT types
+        MachOFile,
+    },
+    read::ReadRef, // Import ReadRef trait
+    Endianness,    // Import the Endianness enum
+    FileKind,      // For checking FAT/single arch
 };
 
 // Constants for Mach-O header sizes
@@ -83,10 +87,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
 
     if buffer.len() < 32 {
         // Basic sanity check for minimum Mach-O header size
-        debug!(
-            "  Skipping file too small to be Mach-O: {}",
-            path.display()
-        );
+        debug!("  Skipping file too small to be Mach-O: {}", path.display());
         return Ok(false);
     }
 
@@ -123,11 +124,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
         Ok(p) => p,
         Err(e) => {
             // Log error during patch collection (e.g., parse error, path too long)
-            error!(
-                "Failed to collect patches for {}: {}",
-                path.display(),
-                e
-            );
+            error!("Failed to collect patches for {}: {}", path.display(), e);
             // Decide if this should be a hard error or just prevent patching this file
             // Returning the error seems appropriate as patching failed.
             return Err(e);
@@ -137,11 +134,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     // --- Phase 3: Apply patches (mutable modification) ---
     let modified = !patches.is_empty();
     if modified {
-        info!(
-            "  Applying {} patches to {}",
-            patches.len(),
-            path.display()
-        );
+        info!("  Applying {} patches to {}", patches.len(), path.display());
         for patch in patches {
             // Apply each collected patch to the mutable buffer
             // Error handling for path length is done during collection, but patch_path_in_buffer has safeguards.
@@ -224,9 +217,15 @@ fn collect_macho_patches<'data>(
                 // Filter for architectures we might need to patch (adjust as needed)
                 if cpu_type != object::macho::CPU_TYPE_X86_64
                     && cpu_type != object::macho::CPU_TYPE_ARM64 // Even in FAT32, slices can be 64-bit (though unusual)
-                    && cpu_type != object::macho::CPU_TYPE_X86    // Add 32-bit x86 if needed
+                    && cpu_type != object::macho::CPU_TYPE_X86
+                // Add 32-bit x86 if needed
                 {
-                    debug!("    Skipping unsupported architecture slice {} (type 0x{:x}) in {}", index, cpu_type, file_path_for_log.display());
+                    debug!(
+                        "    Skipping unsupported architecture slice {} (type 0x{:x}) in {}",
+                        index,
+                        cpu_type,
+                        file_path_for_log.display()
+                    );
                     continue;
                 }
 
@@ -235,8 +234,17 @@ fn collect_macho_patches<'data>(
                 let size = size as usize;
 
                 // Validate slice bounds against the main buffer length
-                if offset.checked_add(size).map_or(true, |end| end > buffer.len()) {
-                    warn!( "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}", offset, size, index, file_path_for_log.display());
+                if offset
+                    .checked_add(size)
+                    .map_or(true, |end| end > buffer.len())
+                {
+                    warn!(
+                        "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}",
+                        offset,
+                        size,
+                        index,
+                        file_path_for_log.display()
+                    );
                     continue; // Skip invalid slice
                 }
 
@@ -246,18 +254,26 @@ fn collect_macho_patches<'data>(
                 if slice_data.len() < 4 {
                     warn!(
                         "    FAT arch slice {} too small to read magic number in {}",
-                        index, file_path_for_log.display()
+                        index,
+                        file_path_for_log.display()
                     );
                     continue;
                 }
-                let magic = u32::from_le_bytes([slice_data[0], slice_data[1], slice_data[2], slice_data[3]]);
+                let magic = u32::from_le_bytes([
+                    slice_data[0],
+                    slice_data[1],
+                    slice_data[2],
+                    slice_data[3],
+                ]);
                 let (header_size, is_64bit) = match magic {
                     MH_MAGIC => (MACHO_HEADER32_SIZE, false),
                     MH_MAGIC_64 => (MACHO_HEADER64_SIZE, true),
                     _ => {
                         warn!(
                             "    Unknown magic number 0x{:x} for FAT arch slice {} in {}",
-                            magic, index, file_path_for_log.display()
+                            magic,
+                            index,
+                            file_path_for_log.display()
                         );
                         continue;
                     }
@@ -282,7 +298,9 @@ fn collect_macho_patches<'data>(
                         Err(e) => {
                             warn!(
                                 "    Failed to parse Mach-O 64-bit slice {} in {}: {}",
-                                index, file_path_for_log.display(), e
+                                index,
+                                file_path_for_log.display(),
+                                e
                             );
                         }
                     }
@@ -304,7 +322,9 @@ fn collect_macho_patches<'data>(
                         Err(e) => {
                             warn!(
                                 "    Failed to parse Mach-O 32-bit slice {} in {}: {}",
-                                index, file_path_for_log.display(), e
+                                index,
+                                file_path_for_log.display(),
+                                e
                             );
                         }
                     }
@@ -325,7 +345,12 @@ fn collect_macho_patches<'data>(
                 if cpu_type != object::macho::CPU_TYPE_X86_64
                     && cpu_type != object::macho::CPU_TYPE_ARM64
                 {
-                    debug!("    Skipping unsupported architecture slice {} (type 0x{:x}) in {}", index, cpu_type, file_path_for_log.display());
+                    debug!(
+                        "    Skipping unsupported architecture slice {} (type 0x{:x}) in {}",
+                        index,
+                        cpu_type,
+                        file_path_for_log.display()
+                    );
                     continue;
                 }
 
@@ -334,8 +359,17 @@ fn collect_macho_patches<'data>(
                 let size = size as usize;
 
                 // Validate slice bounds
-                if offset.checked_add(size).map_or(true, |end| end > buffer.len()) {
-                    warn!( "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}", offset, size, index, file_path_for_log.display());
+                if offset
+                    .checked_add(size)
+                    .map_or(true, |end| end > buffer.len())
+                {
+                    warn!(
+                        "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}",
+                        offset,
+                        size,
+                        index,
+                        file_path_for_log.display()
+                    );
                     continue;
                 }
 
@@ -345,18 +379,26 @@ fn collect_macho_patches<'data>(
                 if slice_data.len() < 4 {
                     warn!(
                         "    FAT arch slice {} too small to read magic number in {}",
-                        index, file_path_for_log.display()
+                        index,
+                        file_path_for_log.display()
                     );
                     continue;
                 }
-                let magic = u32::from_le_bytes([slice_data[0], slice_data[1], slice_data[2], slice_data[3]]);
+                let magic = u32::from_le_bytes([
+                    slice_data[0],
+                    slice_data[1],
+                    slice_data[2],
+                    slice_data[3],
+                ]);
                 let (header_size, is_64bit) = match magic {
                     MH_MAGIC => (MACHO_HEADER32_SIZE, false),
                     MH_MAGIC_64 => (MACHO_HEADER64_SIZE, true),
                     _ => {
                         warn!(
                             "    Unknown magic number 0x{:x} for FAT arch slice {} in {}",
-                            magic, index, file_path_for_log.display()
+                            magic,
+                            index,
+                            file_path_for_log.display()
                         );
                         continue;
                     }
@@ -381,7 +423,9 @@ fn collect_macho_patches<'data>(
                         Err(e) => {
                             warn!(
                                 "    Failed to parse Mach-O 64-bit slice {} in {}: {}",
-                                index, file_path_for_log.display(), e
+                                index,
+                                file_path_for_log.display(),
+                                e
                             );
                         }
                     }
@@ -403,7 +447,9 @@ fn collect_macho_patches<'data>(
                         Err(e) => {
                             warn!(
                                 "    Failed to parse Mach-O 32-bit slice {} in {}: {}",
-                                index, file_path_for_log.display(), e
+                                index,
+                                file_path_for_log.display(),
+                                e
                             );
                         }
                     }
@@ -413,7 +459,10 @@ fn collect_macho_patches<'data>(
         // This case should not be reached due to the check in patch_macho_file_macos,
         // but handle defensively.
         _ => {
-            warn!("Unexpected file kind encountered in collect_macho_patches: {:?}", file_kind);
+            warn!(
+                "Unexpected file kind encountered in collect_macho_patches: {:?}",
+                file_kind
+            );
         }
     }
 
@@ -431,7 +480,7 @@ fn find_patches_in_commands<'data, Mach, R>(
     file_path_for_log: &Path, // For logging context
 ) -> Result<Vec<PatchInfo>>
 where
-    Mach: MachHeader, // Generic over 32/64-bit Mach headers
+    Mach: MachHeader,  // Generic over 32/64-bit Mach headers
     R: ReadRef<'data>, // Generic over the reference type used by 'object'
 {
     let endian = macho_file.endian();
@@ -445,7 +494,8 @@ where
             // If we can't even get the iterator, something is wrong with the file structure
             warn!(
                 "  Failed to get load command iterator for a slice/file in {}: {}",
-                file_path_for_log.display(), e
+                file_path_for_log.display(),
+                e
             );
             // Return Ok with empty vec, as no patches can be found.
             return Ok(Vec::new());
@@ -462,7 +512,11 @@ where
             Ok(v) => v,
             Err(e) => {
                 // Log if a specific command is malformed
-                warn!("    Error getting command variant in {}: {}", file_path_for_log.display(), e);
+                warn!(
+                    "    Error getting command variant in {}: {}",
+                    file_path_for_log.display(),
+                    e
+                );
                 current_offset += cmd_size; // Skip to next command
                 continue;
             }
@@ -471,7 +525,8 @@ where
         // Check if the command variant contains a path we might need to patch
         let path_info_opt: Option<(u32, &[u8])> = match cmd_variant {
             // LC_ID_DYLIB, LC_LOAD_DYLIB
-            LoadCommandVariant::Dylib(dylib_command) | LoadCommandVariant::IdDylib(dylib_command) => {
+            LoadCommandVariant::Dylib(dylib_command)
+            | LoadCommandVariant::IdDylib(dylib_command) => {
                 // Get the offset of the path string relative *to the start of the command struct*
                 let path_offset_in_cmd_struct = dylib_command.dylib.name.offset.get(endian);
                 // Try to read the null-terminated string at that offset
@@ -495,9 +550,12 @@ where
         if let Some((path_offset_in_cmd_struct, path_bytes)) = path_info_opt {
             match std::str::from_utf8(path_bytes) {
                 Ok(current_path_str) => {
-                    if let Some(new_path_str) = find_and_replace_placeholders(current_path_str, replacements) {
+                    if let Some(new_path_str) =
+                        find_and_replace_placeholders(current_path_str, replacements)
+                    {
                         // Calculate the total space allocated for the path string within the command structure
-                        let allocated_len = cmd_size.saturating_sub(path_offset_in_cmd_struct as usize);
+                        let allocated_len =
+                            cmd_size.saturating_sub(path_offset_in_cmd_struct as usize);
 
                         if allocated_len == 0 {
                             warn!(
@@ -523,7 +581,8 @@ where
                         }
 
                         // Calculate the absolute offset in the original buffer
-                        let absolute_patch_offset = slice_base_offset + command_offset + path_offset_in_cmd_struct as usize;
+                        let absolute_patch_offset =
+                            slice_base_offset + command_offset + path_offset_in_cmd_struct as usize;
                         debug!(
                             "  Planning patch: Replace '{}' with '{}' at absolute offset {} (allocated len {})",
                             current_path_str, new_path_str, absolute_patch_offset, allocated_len
@@ -539,7 +598,8 @@ where
                 Err(_) => {
                     warn!(
                         "  Path bytes are not valid UTF-8 for command {:?} in {}. Skipping patch.",
-                        cmd.cmd(), file_path_for_log.display()
+                        cmd.cmd(),
+                        file_path_for_log.display()
                     );
                 }
             }
@@ -565,7 +625,10 @@ fn find_and_replace_placeholders(
             // Replace all occurrences of the placeholder
             new_path = new_path.replace(placeholder, replacement);
             path_modified = true; // Mark that a change was made
-            debug!("   Replaced '{}' with '{}' -> '{}'", placeholder, replacement, new_path);
+            debug!(
+                "   Replaced '{}' with '{}' -> '{}'",
+                placeholder, replacement, new_path
+            );
         }
     }
     // Return the modified string only if changes occurred
@@ -580,7 +643,7 @@ fn find_and_replace_placeholders(
 /// This function performs the mutation.
 #[cfg(target_os = "macos")]
 fn patch_path_in_buffer(
-    buffer: &mut [u8],         // The full mutable buffer of the file
+    buffer: &mut [u8],        // The full mutable buffer of the file
     absolute_offset: usize,   // Absolute offset within the buffer where the path string starts
     allocated_len: usize,     // The total space reserved for the path string (including null)
     new_path_str: &str,       // The new path string (without null terminator)
@@ -695,7 +758,12 @@ fn resign_binary(path: &Path) -> Result<()> {
     // --force : Overwrite existing signature
     // --preserve-metadata=... : Keep existing identifier and entitlements if possible
     let status = StdCommand::new("codesign")
-        .args(["-s", "-", "--force", "--preserve-metadata=identifier,entitlements"])
+        .args([
+            "-s",
+            "-",
+            "--force",
+            "--preserve-metadata=identifier,entitlements",
+        ])
         .arg(path)
         .status() // Execute the command and get its exit status
         .map_err(|e| {
