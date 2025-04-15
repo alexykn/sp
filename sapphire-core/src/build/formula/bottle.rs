@@ -637,27 +637,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     Ok(())
 }
 
-/// Helper to replace placeholders in a string.
-fn find_and_replace_placeholders(
-    current_path: &str,
-    replacements: &HashMap<String, String>,
-) -> Option<String> {
-    let mut new_path = current_path.to_string();
-    let mut path_modified = false;
-    for (placeholder, replacement) in replacements {
-        if new_path.contains(placeholder) {
-            new_path = new_path.replace(placeholder, replacement);
-            path_modified = true;
-            debug!("   Replaced '{}' with '{}'", placeholder, replacement);
-        }
-    }
-    if path_modified {
-        Some(new_path)
-    } else {
-        None
-    }
-}
-
 // Helper for writing text files atomically (similar to write_patched_buffer but for strings)
 fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
      use std::io::Write; // Need Write trait for this function
