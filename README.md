@@ -2,23 +2,28 @@
 
 **Sapphire is currently in an ALPHA stage of development. It is experimental and potentially unstable. While many features are functional, exercise caution, especially when installing complex or foundational packages. Use at your own discretion and risk!**
 
+
 * **Potential for Installation Issues:** While many formulae (both from bottles and source) may install correctly, installations involving complex dependencies or foundational tools (like compilers, e.g., LLVM, rustc) have a higher chance of failure or causing conflicts. These failures could potentially leave packages in a broken state or interfere with other system components.
 * **Cask Support Limited:** Cask `search` and `info` commands are functional. However, **cask `install` and `uninstall` are NOT implemented or supported.**
 * **Experimental Features:** Some core package management functionalities might still contain bugs.
 * **Use At Your Own Risk:** It's recommended to test Sapphire on non-critical systems or virtual machines first. Do not rely on it yet for managing essential software. **The developers take NO RESPONSIBILITY for any damage caused by using this software.**
 
+*I do not know if I will ever manage to finish or maintain this, it is a bit much for one person as a side project.*
+
 ---
 
 ## Introduction
 
-Sapphire is an experimental package manager written in Rust, inspired by Homebrew. It aims to provide a way to install and manage command-line software (formulae) and eventually applications (casks) on macOS and potentially Linux, leveraging modern tools and technologies.
+Sapphire is an experimental package manager written in Rust, inspired by Homebrew. It aims to provide a way to install and manage command-line software (formulae) and eventually applications (casks) on macOS and potentially, eventually, maybe Linux, leveraging modern tools and technologies.
+
+It directly interacts with the official homebrew repositories for formulae, bottles and casks. Adding custom taps is not yet supported.
 
 The project is split into:
 
 * `sapphire-core`: The underlying library handling fetching, dependency resolution, building, installation, etc.
 * `sapphire-cli`: The command-line interface tool that users interact with.
 
-## Current Status (Alpha)
+## Current State
 
 * **Formulae Installation:** Many formulae (bottles & source builds) can be installed successfully. Issues are more likely with complex dependencies or foundational packages (e.g., LLVM, Rust). Simpler tools and libraries (e.g., ncurses) are generally more stable.
 * **Cask Functionality:** Cask `search` and `info` work. Cask `install` and `uninstall` are **not implemented**.
@@ -37,7 +42,7 @@ The project is split into:
 * Provides build environment sanitization.
 * Handles Mach-O binary patching on macOS for correct linking.
 
-## Basic Usage (Experimental - Use Cautiously!)
+## Usage
 
 ```bash
 # Update local cache of package lists (Required before searching/installing)
@@ -62,8 +67,7 @@ sapphire install --build-from-source <formula_name>
 sapphire uninstall <formula_name>
 ```
 
-# --- Cask install/uninstall commands are NOT implemented ---
-Building Sapphire (For Developers/Testers Only)
+## Building Sapphire
 
 Prerequisites:
 
@@ -80,10 +84,10 @@ Clone the repository:
 ```bash
 git clone <repository_url>
 cd sapphire
-cargo build --release --package sapphire-cli
+cargo build --release
 ```
 
-Find the executable: The binary will be located at target/release/sapphire. You might want to add this location to your PATH for testing, but do not replace your existing package manager (like Homebrew).
+**Find the executable:** The binary will be located at target/release/sapphire. You might want to add this location to your PATH for testing.
 
 Contributing
 Given the early and unstable nature of the project, contributions are welcome but should focus on stabilizing core features, improving error handling, and adding comprehensive tests. Please be aware that major refactoring might occur at any time.
