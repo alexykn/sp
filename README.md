@@ -87,7 +87,7 @@ cd sapphire
 cargo build --release
 ```
 
-**Find the executable:** The binary will be located at target/release/sapphire. You might want to add this location to your PATH for testing, but do not replace your existing package manager (like Homebrew).
+**Find the executable:** The binary will be located at target/release/sapphire. You might want to add this location to your PATH for testing.
 
 Contributing
 Given the early and unstable nature of the project, contributions are welcome but should focus on stabilizing core features, improving error handling, and adding comprehensive tests. Please be aware that major refactoring might occur at any time.
