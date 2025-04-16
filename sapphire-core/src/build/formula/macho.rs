@@ -6,7 +6,7 @@
 use crate::utils::error::Result; // Keep top-level Result
 #[cfg(target_os = "macos")]
 use crate::utils::error::SapphireError;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write; // Keep for write_patched_buffer
@@ -134,7 +134,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     // --- Phase 3: Apply patches (mutable modification) ---
     let modified = !patches.is_empty();
     if modified {
-        info!("  Applying {} patches to {}", patches.len(), path.display());
+        debug!("  Applying {} patches to {}", patches.len(), path.display());
         for patch in patches {
             // Apply each collected patch to the mutable buffer
             // Error handling for path length is done during collection, but patch_path_in_buffer has safeguards.
@@ -149,7 +149,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
 
         // Write the modified buffer back to the file
         write_patched_buffer(path, &buffer)?;
-        info!("  Successfully patched and wrote: {}", path.display());
+        debug!("  Successfully patched and wrote: {}", path.display());
 
         // Re-sign the binary if on Apple Silicon
         #[cfg(target_arch = "aarch64")]
@@ -693,7 +693,7 @@ fn patch_path_in_buffer(
 
     // Log the successful patch operation
     // Log statement adjusted slightly for clarity in previous refactoring, keeping it:
-    info!(
+    debug!(
         "    Patched Mach-O path at absolute offset {} in {}",
         absolute_offset,
         file_path_for_log.display()
@@ -752,7 +752,7 @@ fn write_patched_buffer(original_path: &Path, buffer: &[u8]) -> Result<()> {
 /// This is typically necessary on Apple Silicon (aarch64) after modifying executables.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn resign_binary(path: &Path) -> Result<()> {
-    info!("    Re-signing patched binary: {}", path.display());
+    debug!("    Re-signing patched binary: {}", path.display());
     // Execute `codesign -s - --force --preserve-metadata=identifier,entitlements <path>`
     // -s - : Use ad-hoc signing (no specific identity needed)
     // --force : Overwrite existing signature

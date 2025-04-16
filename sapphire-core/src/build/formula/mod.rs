@@ -3,7 +3,7 @@
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -14,7 +14,6 @@ use std::process::Command;
 pub mod bottle;
 pub mod link;
 pub mod macho;
-pub mod source;
 
 /// Download formula resources from the internet asynchronously.
 pub async fn download_formula(
@@ -25,11 +24,11 @@ pub async fn download_formula(
     if has_bottle_for_current_platform(formula) {
         bottle::download_bottle(formula, config, client).await
     } else {
-        info!(
-            "No suitable bottle found for {} on this platform, downloading source.",
+        // No bottle available; building from source is not supported
+        Err(SapphireError::Generic(format!(
+            "No bottle available for {} on this platform",
             formula.name()
-        );
-        source::download_source(formula, config).await
+        )))
     }
 }
 
@@ -111,7 +110,7 @@ fn get_current_platform() -> String {
                                 // Use OS name only for Intel tags by convention
                                 os_name.to_string()
                             };
-                            info!("Determined platform tag: {}", platform_tag);
+                            debug!("Determined platform tag: {}", platform_tag);
                             return platform_tag;
                         }
                     } else {
@@ -341,4 +340,3 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
 // --- Re-exports (unchanged) ---
 pub use bottle::install_bottle;
 pub use link::link_formula_artifacts;
-pub use source::{build_from_source, download_source};

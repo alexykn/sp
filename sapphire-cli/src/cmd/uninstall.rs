@@ -2,6 +2,9 @@
 // Contains the logic for the `uninstall` command.
 
 use crate::cmd::info; // Use crate::cmd path
+// Removed unused colored import
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
 use sapphire_core::build;
 use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json;
@@ -14,6 +17,11 @@ use sapphire_core::model::cask::Cask; // Add Cask import
 use sapphire_core::utils::cache::Cache; // Add Cache import // Use log crate
 
 pub async fn run_uninstall(name: &str) -> Result<()> {
+    // Spinner for uninstall
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::with_template("{spinner:.red} {msg}").unwrap());
+    pb.set_message(format!("Uninstalling {}", name));
+    pb.enable_steady_tick(Duration::from_millis(100));
     let cache_dir = match sapphire_core::utils::cache::get_cache_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -31,7 +39,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
     // Try to get info as a formula first
     match info::get_formula_info(name).await {
         Ok(formula) => {
-            log::info!("Attempting to uninstall formula: {}", name);
+            log::debug!("Attempting to uninstall formula: {}", name);
             let cellar_path = build::formula::get_formula_cellar_path(&formula); // Assuming this returns Result
 
             if !cellar_path.exists() {
@@ -62,7 +70,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
 
             // *** FIX: Call the correct public unlink function ***
             match build::formula::link::unlink_formula_artifacts(&formula) {
-                Ok(_) => log::info!("Successfully unlinked artifacts for {}", formula.name()),
+                Ok(_) => log::debug!("Successfully unlinked artifacts for {}", formula.name()),
                 Err(e) => {
                     // Log the error but proceed with cellar removal attempt
                     log::error!(
@@ -74,7 +82,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
             }
 
             // Remove the formula's directory from the Cellar
-            log::info!("Removing keg directory: {}", cellar_path.display());
+            log::debug!("Removing keg directory: {}", cellar_path.display());
             fs::remove_dir_all(&cellar_path).map_err(|e| {
                 SapphireError::Io(std::io::Error::new(
                     e.kind(),
@@ -82,12 +90,13 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                 ))
             })?;
 
-            println!(
-                "Uninstalling {}... ({} files, {})",
+            // Finish spinner with summary
+            pb.finish_with_message(format!(
+                "Uninstalled {} ({} files, {})",
                 cellar_path.display(),
                 file_count,
                 format_size(size_bytes)
-            );
+            ));
 
             return Ok(());
         }
@@ -112,7 +121,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                     return Err(SapphireError::Json(e));
                 }
             };
-            log::info!("Attempting to uninstall cask: {}", name);
+            log::debug!("Attempting to uninstall cask: {}", name);
             let caskroom_path = build::cask::get_cask_path(&cask);
 
             if !caskroom_path.exists() {
@@ -151,7 +160,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                                 for file_path_str in files_to_remove {
                                     // Check for pkgutil directive
                                     if let Some(pkg_id) = file_path_str.strip_prefix("pkgutil:") {
-                                        log::info!("==> Forgetting package receipt: {}", pkg_id);
+                                        log::debug!("==> Forgetting package receipt: {}", pkg_id);
                                         let output = std::process::Command::new("sudo")
                                             .arg("pkgutil")
                                             .arg("--forget")
@@ -189,13 +198,13 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                                     match file_path.symlink_metadata() {
                                         Ok(metadata) => {
                                             let remove_result = if metadata.file_type().is_dir() {
-                                                log::info!(
+                                                log::debug!(
                                                     "Removing directory: {}",
                                                     file_path.display()
                                                 );
                                                 std::fs::remove_dir_all(file_path)
                                             } else {
-                                                log::info!(
+                                                log::debug!(
                                                     "Removing file/symlink: {}",
                                                     file_path.display()
                                                 );
@@ -216,7 +225,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                                                         if !out.status.success() {
                                                             log::error!("Failed to remove artifact {} with sudo: {}", file_path.display(), String::from_utf8_lossy(&out.stderr));
                                                         } else {
-                                                            log::info!("Successfully removed artifact {} with sudo.", file_path.display());
+                                                            log::debug!("Successfully removed artifact {} with sudo.", file_path.display());
                                                         }
                                                     }
                                                     Err(sudo_err) => {
@@ -264,7 +273,7 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
             }
 
             // Remove the cask's version directory from the Caskroom
-            log::info!("Removing caskroom directory: {}", caskroom_path.display());
+            log::debug!("Removing caskroom directory: {}", caskroom_path.display());
             if let Err(e) = fs::remove_dir_all(&caskroom_path) {
                 log::warn!(
                     "Failed to remove caskroom directory {}: {}",
@@ -273,12 +282,13 @@ pub async fn run_uninstall(name: &str) -> Result<()> {
                 );
             }
 
-            println!(
-                "Uninstalling {}... (~{} files, ~{})",
+            // Finish spinner with summary
+            pb.finish_with_message(format!(
+                "Uninstalled {} (~{} files, ~{})",
                 caskroom_path.display(),
                 file_count,
                 format_size(size_bytes)
-            );
+            ));
 
             return Ok(());
         }

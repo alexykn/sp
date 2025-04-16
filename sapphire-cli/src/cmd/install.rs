@@ -3,7 +3,7 @@
 
 use clap::Args;
 use futures::future::BoxFuture;
-use log;
+use log::debug;
 use reqwest::Client;
 use sapphire_core::build;
 use sapphire_core::dependency::{
@@ -18,6 +18,9 @@ use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use indicatif::ProgressBar;
+use colored::Colorize;
+use std::time::Duration;
 use std::sync::Arc;
 
 #[derive(Debug, Args)]
@@ -28,8 +31,6 @@ pub struct InstallArgs {
     skip_deps: bool,
     #[arg(long)]
     cask: bool,
-    #[arg(long)]
-    build_from_source: bool,
     #[arg(long)]
     include_optional: bool,
     #[arg(long)]
@@ -50,20 +51,30 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
         include_optional: args.include_optional,
         include_test: false,
         skip_recommended: args.skip_recommended,
-        force_build: args.build_from_source,
+        force_build: false,
     };
 
     let mut resolver = DependencyResolver::new(context);
 
     if args.cask {
         for name in &args.names {
-            install_cask(name, &cache, args.build_from_source).await?;
+            // Cask (app) installation with dnf5-inspired design
+            println!(
+                "{}",
+                format!("\nInstalling cask: {}", name).blue().bold()
+            );
+            debug!("Installing cask: {}", name);
+            install_cask(name, &cache, false).await?;
+            println!(
+                "{}",
+                format!("✔ Installed cask: {}", name).green().bold()
+            );
         }
     } else {
         let resolved_graph = resolver.resolve_targets(&args.names)?;
 
         if args.skip_deps {
-            println!("Skipping dependency installation due to --skip-deps flag.");
+            debug!("Skipping dependency installation due to --skip-deps flag.");
             for target_name in &args.names {
                 let resolved_dep = match resolved_graph
                     .install_plan
@@ -72,7 +83,7 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                 {
                     Some(dep) => dep,
                     None => {
-                        log::warn!(
+                    log::debug!(
                             "Target '{}' not found in final install plan despite resolution.",
                             target_name
                         );
@@ -80,7 +91,9 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                     }
                 };
                 if resolved_dep.status != ResolutionStatus::Installed {
-                    println!("==> Installing target (deps skipped): {}", target_name);
+                    let pb = ProgressBar::new_spinner();
+                    pb.set_message(format!("Installing {} (deps skipped)", target_name));
+                    pb.enable_steady_tick(Duration::from_millis(100));
                     let installed_paths_for_env =
                         get_all_currently_installed_opt_paths(&resolver, &keg_registry)?;
                     install_formula_internal(
@@ -88,16 +101,18 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                         resolved_dep,
                         config,
                         &installed_paths_for_env,
-                        args.build_from_source,
+                        /* build_from_source disabled */ false,
                     )
-                    .await?; // Await here
+                    .await?;
+                    pb.finish_with_message(format!("Installed {}", target_name));
                 } else {
-                    println!("Target {} already installed.", target_name);
+                    debug!("Target {} already installed.", target_name);
                 }
             }
         } else {
             // Multi-pass Installation Logic
-            println!("==> Processing installation plan...");
+            // Spinner for processing installation plan
+
             let mut install_status: HashMap<String, ResolutionStatus> = resolved_graph
                 .install_plan
                 .iter()
@@ -112,7 +127,7 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                             if p.exists() {
                                 Some((dep.formula.name().to_string(), p.clone()))
                             } else {
-                                log::warn!(
+                                log::debug!(
                                     "Opt path {} for installed dependency {} does not exist.",
                                     p.display(),
                                     dep.formula.name()
@@ -159,8 +174,8 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                         }
                     })
                     .collect();
-                println!(
-                    "--- Installation Pass {} ({} remaining) ---",
+                debug!(
+                    "Installation pass {} ({} remaining)",
                     pass_count,
                     keys_to_process.len()
                 );
@@ -219,7 +234,7 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                                     .get(&dep.name)
                                     .map_or(false, |s| *s == ResolutionStatus::Installed)
                             {
-                                log::warn!("Keg found for {} but opt path does not exist (needs linking). Considering dependency met for install check.", dep.name);
+                            log::debug!("Keg found for {} but opt path does not exist (needs linking). Considering dependency met for install check.", dep.name);
                             } else {
                                 log::debug!("Dependency '{}' for '{}' not met (status: {:?}, opt_path_exists: {}).", dep.name, name, dep_status, installed_opt_paths.contains_key(&dep.name));
                                 all_deps_met = false;
@@ -229,7 +244,7 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                     }
 
                     if all_deps_met {
-                        log::info!("All dependencies met for: {}", name);
+                        log::debug!("All dependencies met for: {}", name);
                         let all_current_installed_paths: Vec<PathBuf> =
                             installed_opt_paths.values().cloned().collect();
                         match install_formula_internal(
@@ -237,13 +252,13 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                             resolved_dep,
                             config,
                             &all_current_installed_paths,
-                            args.build_from_source,
+                            /* build_from_source disabled */ false,
                         )
                         .await
                         {
                             // Await here
                             Ok(installed_opt_path) => {
-                                log::info!("Successfully installed {} internally.", name);
+                                log::debug!("Successfully installed {} internally.", name);
                                 install_status.insert(name.clone(), ResolutionStatus::Installed);
                                 if installed_opt_path.exists() {
                                     installed_opt_paths.insert(name.clone(), installed_opt_path);
@@ -316,7 +331,6 @@ pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
                     remaining_names
                 )));
             }
-            println!("==> Installation plan processed successfully.");
         }
     }
     Ok(())
@@ -420,11 +434,14 @@ async fn install_formula_internal(
     formula: Arc<Formula>,
     resolved_info: &ResolvedDependency,
     config: &Config,
-    all_installed_paths: &[PathBuf],
-    force_build: bool,
+    _all_installed_paths: &[PathBuf],
+    _force_build: bool,
 ) -> Result<PathBuf> {
     let name = formula.name();
-    println!("==> Starting installation process for: {}", name);
+    println!(
+        "{}",
+        format!("\nStarting installation process for: {}", name).blue().bold()
+    );
 
     let client = Client::new(); // Create client for potential bottle download
 
@@ -457,7 +474,10 @@ async fn install_formula_internal(
                 keg_path_actual.display()
             );
             if !opt_path_expected.exists() {
-                println!("==> Opt link missing, linking installed formula: {}", name);
+                println!(
+                    "{}",
+                    format!("Opt link missing, linking installed formula: {}", name).blue().bold()
+                );
                 build::formula::link::link_formula_artifacts(&formula, keg_path_actual)?;
                 if !opt_path_expected.exists() {
                     return Err(SapphireError::InstallError(format!(
@@ -469,28 +489,31 @@ async fn install_formula_internal(
             return Ok(opt_path_expected.to_path_buf());
         }
     } else if *status == ResolutionStatus::SkippedOptional {
-        log::warn!("Attempted to internally install skipped formula {}", name);
+        log::debug!("Attempted to internally install skipped formula {}", name);
         return Err(SapphireError::Generic(format!(
             "Attempted to install skipped formula {}",
             name
         )));
     }
 
-    println!("==> Installing formula: {}", name);
+    println!(
+        "{}",
+        format!("Installing formula: {}", name).blue().bold()
+    );
 
     let install_dir = build::formula::get_formula_cellar_path(&formula);
     let opt_path = build::get_formula_opt_path(&formula);
-    let use_bottle = build::formula::has_bottle_for_current_platform(&formula) && !force_build;
+    // Only bottle installation is supported; ensure a bottle is available
+    let use_bottle = build::formula::has_bottle_for_current_platform(&formula);
+    if !use_bottle {
+        return Err(SapphireError::InstallError(format!(
+            "No bottle available for {} on this platform",
+            name
+        )));
+    }
 
-    // *** Corrected: Await both branches of the if/else expression ***
-    let download_path_result = if use_bottle {
-        build::formula::bottle::download_bottle(&formula, config, &client).await
-    // Await here
-    } else {
-        build::formula::source::download_source(&formula, config).await // Await here too
-    };
-
-    let source_or_bottle_path = match download_path_result {
+    // Download the bottle
+    let bottle_path = match build::formula::bottle::download_bottle(&formula, config, &client).await {
         Ok(path) => path,
         Err(e) => {
             log::error!("Download failed for {}: {}", name, e);
@@ -501,31 +524,22 @@ async fn install_formula_internal(
         }
     };
 
+    // Prepare installation directory
     if let Some(parent) = install_dir.parent() {
         std::fs::create_dir_all(parent).map_err(|e| SapphireError::Io(e))?;
     }
 
-    if use_bottle {
-        println!("==> Pouring bottle: {}", source_or_bottle_path.display());
-        build::formula::bottle::install_bottle(&source_or_bottle_path, &formula, config)?;
-    // Synchronous install
-    } else {
-        if force_build {
-            println!("==> Building from source (forced): {}", name);
-        } else {
-            println!("==> Building from source (no bottle available): {}", name);
-        }
-        // *** Corrected: Await the async build_from_source and use ? ***
-        build::formula::source::build_from_source(
-            &source_or_bottle_path,
-            &formula,
-            config,
-            all_installed_paths,
-        )
-        .await?; // Await here
-    }
+    // Pour the bottle
+    println!(
+        "{}",
+        format!("Pouring bottle: {}", bottle_path.display()).blue().bold()
+    );
+    build::formula::bottle::install_bottle(&bottle_path, &formula, config)?;
 
-    println!("==> Linking formula: {}", name);
+    println!(
+        "{}",
+        format!("Linking formula: {}", name).blue().bold()
+    );
     if install_dir.exists() {
         build::formula::link::link_formula_artifacts(&formula, &install_dir)?; // Synchronous link
     } else {
@@ -551,14 +565,14 @@ async fn install_formula_internal(
             name,
             opt_path.display()
         )));
+    } else {
+        println!(
+            "{}",
+            format!("Successfully installed {}", name).blue().bold()
+        );
+        return Ok(opt_path);
     }
 
-    println!(
-        "🍺 Successfully installed {} ({})",
-        formula.name(),
-        install_dir.display()
-    );
-    Ok(opt_path)
 }
 
 // Cask Installation (Remains the same)
@@ -568,7 +582,10 @@ fn install_cask<'a>(
     force_build: bool,
 ) -> BoxFuture<'a, Result<()>> {
     Box::pin(async move {
-        println!("==> Installing cask: {}", name);
+        println!(
+            "{}",
+            format!("Installing cask: {}", name).blue().bold()
+        );
         let cask: Cask = match api::get_cask(name).await {
             Ok(c) => c,
             Err(e) => {
@@ -584,23 +601,34 @@ fn install_cask<'a>(
                 let current_version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
                 if installed_version == current_version && !force_build {
                     println!(
-                        "==> Cask '{}' version {} is already installed.",
-                        name, installed_version
+                        "{}",
+                        format!("Cask '{}' version {} is already installed.", name, installed_version)
+                            .yellow()
+                            .bold()
                     );
                     return Ok(());
                 } else if installed_version != current_version {
                     println!(
-                        "==> Upgrading cask '{}' from {} to {}",
-                        name, installed_version, current_version
+                        "{}",
+                        format!("Upgrading cask '{}' from {} to {}", name, installed_version, current_version)
+                            .blue()
+                            .bold()
                     );
                 } else {
                     println!(
-                        "==> Reinstalling cask '{}' (version {}) due to force flag",
-                        name, installed_version
+                        "{}",
+                        format!("Reinstalling cask '{}' (version {}) due to force flag", name, installed_version)
+                            .blue()
+                            .bold()
                     );
                 }
             } else {
-                println!("==> Cask '{}' is installed, but version unknown. Proceeding with installation.", name);
+                println!(
+                    "{}",
+                    format!("Cask '{}' is installed, but version unknown. Proceeding with installation.", name)
+                        .blue()
+                        .bold()
+                );
             }
         }
         install_cask_dependencies(&cask, cache, force_build).await?;
@@ -628,7 +656,7 @@ fn install_cask<'a>(
 fn install_cask_dependencies<'a>(
     cask: &'a Cask,
     cache: &'a Cache,
-    force_build: bool,
+    _force_build: bool,
 ) -> BoxFuture<'a, Result<()>> {
     Box::pin(async move {
         if let Some(deps) = &cask.depends_on {
@@ -636,8 +664,10 @@ fn install_cask_dependencies<'a>(
             if let Some(formula_deps) = &deps.formula {
                 if !formula_deps.is_empty() {
                     println!(
-                        "==> Installing formula dependencies for cask {}: {:?}",
-                        cask.token, formula_deps
+                        "{}",
+                        format!("Installing formula dependencies for cask {}: {:?}", cask.token, formula_deps)
+                            .blue()
+                            .bold()
                     );
                     let config = match config_result.as_ref() {
                         Ok(c) => c,
@@ -652,7 +682,6 @@ fn install_cask_dependencies<'a>(
                         names: formula_deps.clone(),
                         skip_deps: false,
                         cask: false,
-                        build_from_source: force_build,
                         include_optional: false,
                         skip_recommended: false,
                     };
@@ -669,11 +698,13 @@ fn install_cask_dependencies<'a>(
             if let Some(cask_deps) = &deps.cask {
                 if !cask_deps.is_empty() {
                     println!(
-                        "==> Installing cask dependencies for cask {}: {:?}",
-                        cask.token, cask_deps
+                        "{}",
+                        format!("Installing cask dependencies for cask {}: {:?}", cask.token, cask_deps)
+                            .blue()
+                            .bold()
                     );
                     for dep_name in cask_deps {
-                        if let Err(e) = install_cask(dep_name, cache, force_build).await {
+                        if let Err(e) = install_cask(dep_name, cache, false).await {
                             log::error!(
                                 "Failed to install cask dependency '{}' for cask {}: {}",
                                 dep_name,

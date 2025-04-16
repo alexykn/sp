@@ -7,6 +7,7 @@ use crate::utils::error::{Result, SapphireError}; // Import the Cache struct
                                                   // Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
 use std::collections::HashMap; // For caching parsed formulas
 use std::sync::Arc; // Import Arc for thread-safe shared ownership
+use log::{debug, error};
 
 /// Responsible for finding and loading Formula definitions from the API cache.
 #[derive()]
@@ -40,23 +41,23 @@ impl Formulary {
         // 1. Check parsed cache first
         let mut parsed_cache_guard = self.parsed_cache.lock().unwrap();
         if let Some(formula_arc) = parsed_cache_guard.get(name) {
-            println!("Loaded formula '{}' from parsed cache.", name);
-            return Ok(Arc::clone(formula_arc).as_ref().clone()); // Clone the Formula from Arc
+            debug!("Loaded formula '{}' from parsed cache.", name);
+            return Ok(Arc::clone(formula_arc).as_ref().clone());
         }
         // Release lock early if not found
         drop(parsed_cache_guard);
 
         // 2. Load the raw formula list from the main cache file
-        println!("Loading raw formula data from cache file 'formula.json'...");
+        debug!("Loading raw formula data from cache file 'formula.json'...");
         let raw_data = self.cache.load_raw("formula.json")?; // Assumes update stored it here
 
         // 3. Parse the entire JSON array
         // This could be expensive, hence the parsed_cache above.
-        println!("Parsing full formula list...");
+        debug!("Parsing full formula list...");
         let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data).map_err(|e| {
             SapphireError::Cache(format!("Failed to parse cached formula data: {}", e))
         })?;
-        println!("Parsed {} formulas.", all_formulas.len());
+        debug!("Parsed {} formulas.", all_formulas.len());
 
         // 4. Find the requested formula and populate the parsed cache
         let mut found_formula: Option<Formula> = None;
@@ -82,7 +83,7 @@ impl Formulary {
         // 5. Return the found formula or an error
         match found_formula {
             Some(f) => {
-                println!(
+                debug!(
                     "Successfully loaded formula '{}' version {}",
                     f.name,
                     f.version_str_full()
@@ -90,7 +91,7 @@ impl Formulary {
                 Ok(f)
             }
             None => {
-                println!(
+                error!(
                     "Formula '{}' not found within the cached formula data.",
                     name
                 );
@@ -103,12 +104,3 @@ impl Formulary {
     }
 }
 
-// --- Logging Macros (Keep as is) ---
-#[allow(unused_macros)]
-macro_rules! debug {
-    ($($arg:tt)*) => { eprintln!("DEBUG [formulary]: {}", format!($($arg)*)); };
-}
-#[allow(unused_macros)]
-macro_rules! error {
-    ($($arg:tt)*) => { eprintln!("ERROR [formulary]: {}", format!($($arg)*)); };
-}

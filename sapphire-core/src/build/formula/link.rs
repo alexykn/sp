@@ -4,7 +4,7 @@
 use crate::build::get_homebrew_prefix; // Unchanged
 use crate::model::formula::{Formula, FormulaDependencies}; // Unchanged
 use crate::utils::error::{Result, SapphireError};
-use log::{debug, error, info, warn}; // Use log crate
+use log::{debug, error, warn}; // Use log crate
 use serde_json;
 use std::fs;
 use std::io::Write; // <-- Added Write trait
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf}; // <-- For setting executable bit
 /// * `formula` - The formula metadata.
 /// * `installed_keg_path` - The actual path where the keg was installed (e.g., /opt/homebrew/Cellar/foo/1.2_1).
 pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> Result<()> {
-    info!(
+    debug!(
         "==> Linking artifacts for {} from {}",
         formula.name(),
         installed_keg_path.display()
@@ -30,7 +30,7 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
     let mut symlinks_created: Vec<String> = Vec::new(); // Tracks links/wrappers created
     let prefix_dir = get_homebrew_prefix();
     let formula_content_root = determine_content_root(installed_keg_path)?;
-    info!(
+    debug!(
         "Using content root for linking: {}",
         formula_content_root.display()
     );
@@ -46,7 +46,7 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
     remove_existing_link_target(&opt_link_path)?;
     match unix_fs::symlink(target_keg_dir, &opt_link_path) {
         Ok(_) => {
-            info!(
+            debug!(
                 "  Linked opt path: {} -> {}",
                 opt_link_path.display(),
                 target_keg_dir.display()
@@ -121,7 +121,7 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
                                     );
                                     match unix_fs::symlink(&source_item_path, &target_link) {
                                         Ok(_) => {
-                                            info!(
+                                            debug!(
                                                 "  Linked {} -> {}",
                                                 target_link.display(),
                                                 source_item_path.display()
@@ -208,7 +208,7 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
     // --- 4. Write install manifest (Unchanged) ---
     write_install_manifest(installed_keg_path, &symlinks_created)?;
 
-    info!(
+    debug!(
         "Successfully completed linking artifacts for {}",
         formula.name()
     );
@@ -267,7 +267,7 @@ fn create_wrappers_in_dir(
                                             formula_content_root,
                                         ) {
                                             Ok(_) => {
-                                                info!(
+                                                debug!(
                                                     "  Created wrapper {} -> {}",
                                                     wrapper_path.display(),
                                                     source_item_path.display()
@@ -515,7 +515,7 @@ fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]
     match serde_json::to_string_pretty(&symlinks_created) {
         Ok(manifest_json) => match fs::write(&manifest_path, manifest_json) {
             Ok(_) => {
-                info!(
+                debug!(
                     "Wrote install manifest with {} links: {}",
                     symlinks_created.len(),
                     manifest_path.display()
@@ -540,7 +540,7 @@ fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]
 
 // Unlink logic needs to handle removing wrappers from bin based on manifest
 pub fn unlink_formula_artifacts(formula: &Formula) -> Result<()> {
-    info!("==> Unlinking artifacts for {}", formula.name());
+    debug!("==> Unlinking artifacts for {}", formula.name());
     let expected_keg_path = match formula.install_prefix(&crate::build::get_cellar_path()) {
         Ok(path) => path,
         Err(e) => {
@@ -564,7 +564,7 @@ pub fn unlink_formula_artifacts(formula: &Formula) -> Result<()> {
                         let mut removal_errors = 0;
                         if links_to_remove.is_empty() {
                             warn!("Install manifest {} is empty. Cannot perform manifest-based unlink.", manifest_path.display());
-                            info!("No links recorded in manifest, unlink complete.");
+                            debug!("No links recorded in manifest, unlink complete.");
                             return Ok(());
                         } else {
                             for link_str in links_to_remove {
@@ -588,7 +588,7 @@ pub fn unlink_formula_artifacts(formula: &Formula) -> Result<()> {
                                             match fs::remove_file(&link_path) {
                                                 // Use remove_file for wrappers/symlinks
                                                 Ok(_) => {
-                                                    info!(
+                                                    debug!(
                                                         "Removed link/wrapper: {}",
                                                         link_path.display()
                                                     );
@@ -627,7 +627,7 @@ pub fn unlink_formula_artifacts(formula: &Formula) -> Result<()> {
                                     }
                                 }
                             }
-                            info!(
+                            debug!(
                                 "Successfully unlinked {} artifacts based on manifest.",
                                 unlinked_count
                             );
@@ -662,7 +662,7 @@ fn unlink_formula_binaries_legacy(formula: &Formula, expected_keg_path: &Path) -
     warn!("==> Using legacy unlink for {}", formula.name());
     let bin_dir = get_bin_directory();
     if !bin_dir.exists() {
-        info!(
+        debug!(
             "Target bin directory {} does not exist, nothing to do for legacy unlink.",
             bin_dir.display()
         );
@@ -686,7 +686,7 @@ fn unlink_formula_binaries_legacy(formula: &Formula, expected_keg_path: &Path) -
                     e
                 );
             } else {
-                info!("Removed legacy opt symlink: {}", opt_link_path.display());
+                debug!("Removed legacy opt symlink: {}", opt_link_path.display());
             }
         }
         return Ok(());
@@ -759,7 +759,7 @@ fn unlink_formula_binaries_legacy(formula: &Formula, expected_keg_path: &Path) -
             formula_content_root.display()
         );
     } else if unlinked_count > 0 || unlink_errors == 0 {
-        info!(
+        debug!(
             "Successfully unlinked {} binaries for {} (legacy method).",
             unlinked_count,
             formula.name()

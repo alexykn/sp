@@ -3,7 +3,7 @@ use crate::formulary::Formulary;
 use crate::keg::KegRegistry;
 use crate::model::formula::Formula;
 use crate::utils::error::{Result, SapphireError};
-use log::{debug, error, info, warn};
+use log::{error, debug};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc; // Use log crate
@@ -72,7 +72,7 @@ impl<'a> DependencyResolver<'a> {
 
     /// Resolves dependencies for the targets and returns the installation plan and build dependency paths.
     pub fn resolve_targets(&mut self, targets: &[String]) -> Result<ResolvedGraph> {
-        info!("Starting dependency resolution for targets: {:?}", targets);
+        debug!("Starting dependency resolution for targets: {:?}", targets);
         self.visiting.clear();
         self.resolved.clear();
         let mut initial_deps = Vec::new();
@@ -129,11 +129,11 @@ impl<'a> DependencyResolver<'a> {
                             runtime_paths.push(opt_path.clone());
                         }
                     } else {
-                        warn!("Opt path {} for dependency {} does not exist, skipping for path collection.", opt_path.display(), dep.formula.name());
+                        debug!("Opt path {} for dependency {} does not exist, skipping for path collection.", opt_path.display(), dep.formula.name());
                     }
                 } else if dep.status != ResolutionStatus::Missing {
                     // Don't warn for missing deps
-                    warn!(
+                    debug!(
                         "Warning: No opt_path found for resolved dependency {} ({:?})",
                         dep.formula.name(),
                         dep.status
@@ -142,18 +142,18 @@ impl<'a> DependencyResolver<'a> {
             }
         }
 
-        info!(
+        debug!(
             "Final installation plan (sorted): {:?}",
             install_plan
                 .iter()
                 .map(|d| (d.formula.name(), d.status.clone()))
                 .collect::<Vec<_>>()
         );
-        info!(
+        debug!(
             "Collected build dependency paths: {:?}",
             build_paths.iter().map(|p| p.display()).collect::<Vec<_>>()
         );
-        info!(
+        debug!(
             "Collected runtime dependency paths: {:?}",
             runtime_paths
                 .iter()
@@ -270,7 +270,7 @@ impl<'a> DependencyResolver<'a> {
                 ),
             };
 
-            info!(
+            debug!(
                 "Initial status for '{}': {:?}, Keg Path: {:?}, Opt Path: {}",
                 name,
                 status,
@@ -329,7 +329,7 @@ impl<'a> DependencyResolver<'a> {
                                 },
                             );
                         }
-                        Err(e) => warn!(
+                        Err(e) => debug!(
                             "Could not load skipped dependency '{}' to mark it: {}",
                             dep_name, e
                         ),
@@ -353,7 +353,7 @@ impl<'a> DependencyResolver<'a> {
 
     /// Performs topological sort on the resolved dependencies.
     fn topological_sort(&self) -> Result<Vec<ResolvedDependency>> {
-        info!("Starting topological sort...");
+        debug!("Starting topological sort...");
         let mut in_degree: HashMap<String, usize> = HashMap::new();
         let mut adj: HashMap<String, HashSet<String>> = HashMap::new(); // Use HashSet for neighbors
         let mut sorted_list = Vec::new();
@@ -445,7 +445,7 @@ impl<'a> DependencyResolver<'a> {
                             queue.push_back(v_name.clone());
                         }
                     } else {
-                        warn!(
+                        debug!(
                             "Warning: Neighbor '{}' of '{}' not found in in_degree map.",
                             v_name, u_name
                         );
@@ -482,7 +482,7 @@ impl<'a> DependencyResolver<'a> {
             ));
         }
 
-        info!(
+        debug!(
             "Topological sort successful. {} nodes in sorted list.",
             sorted_list.len()
         );

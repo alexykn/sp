@@ -4,7 +4,7 @@
 use crate::model::formula::ResourceSpec;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::{error, info, warn};
+use log::{error, warn};
 use reqwest::header::{HeaderMap, ACCEPT, USER_AGENT};
 use reqwest::{Client, StatusCode}; // Use async Client
 use sha2::{Digest, Sha256};
@@ -49,7 +49,7 @@ pub async fn fetch_formula_source_or_bottle(
             match verify_checksum(&cache_path, sha256_expected) {
                 // Checksum verification is sync
                 Ok(_) => {
-                    info!("Using valid cached file: {}", cache_path.display());
+                    log::debug!("Using valid cached file: {}", cache_path.display());
                     return Ok(cache_path);
                 }
                 Err(e) => {
@@ -68,7 +68,7 @@ pub async fn fetch_formula_source_or_bottle(
                 }
             }
         } else {
-            info!(
+            log::debug!(
                 "Using cached file (no checksum provided): {}",
                 cache_path.display()
             );
@@ -97,7 +97,7 @@ pub async fn fetch_formula_source_or_bottle(
         match download_and_verify(&client, current_url, &cache_path, sha256_expected).await {
             // Await async download
             Ok(path) => {
-                info!("Successfully downloaded and verified: {}", path.display());
+                log::debug!("Successfully downloaded and verified: {}", path.display());
                 return Ok(path);
             }
             Err(e) => {
@@ -155,7 +155,7 @@ pub async fn fetch_resource(
         match verify_checksum(&cache_path, &resource.sha256) {
             // Checksum is sync
             Ok(_) => {
-                info!("Using cached resource: {}", cache_path.display());
+                log::debug!("Using cached resource: {}", cache_path.display());
                 return Ok(cache_path);
             }
             Err(e) => {
@@ -181,7 +181,7 @@ pub async fn fetch_resource(
     match download_and_verify(&client, &resource.url, &cache_path, &resource.sha256).await {
         // Await async download
         Ok(path) => {
-            info!(
+            log::debug!(
                 "Successfully downloaded and verified resource: {}",
                 path.display()
             );

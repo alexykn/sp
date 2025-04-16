@@ -7,7 +7,7 @@ use reqwest::Client;
 //use serde::de::DeserializeOwned; // Import DeserializeOwned - might be used later
 use crate::model::cask::{Cask, CaskList};
 use crate::model::formula::Formula;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use serde_json::Value; // Use log crate
 
 /// Base URL for the Homebrew API (formulae.brew.sh)
@@ -52,7 +52,7 @@ fn build_api_client(config: &Config) -> Result<Client> {
 /// This does *not* typically require GitHub API token authentication.
 pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
     let url = format!("{}/{}", FORMULAE_API_BASE_URL, endpoint);
-    info!("Fetching data from Homebrew Formulae API: {}", url);
+    debug!("Fetching data from Homebrew Formulae API: {}", url);
 
     // Use a default client for formulae.brew.sh, usually no auth needed
     let client = reqwest::Client::builder()
@@ -175,7 +175,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
 /// Uses the client configured with HOMEBREW_GITHUB_API_TOKEN if available.
 async fn fetch_github_api_json(endpoint: &str, config: &Config) -> Result<Value> {
     let url = format!("{}{}", GITHUB_API_BASE_URL, endpoint); // Endpoint should start with /
-    info!("Fetching data from GitHub API: {}", url);
+    debug!("Fetching data from GitHub API: {}", url);
     let client = build_api_client(config)?; // Build client with potential auth token
 
     let response = client.get(&url).send().await.map_err(|e| {
@@ -221,7 +221,7 @@ async fn fetch_github_repo_info(owner: &str, repo: &str, config: &Config) -> Res
 /// Get data for a specific formula, parsed into the Formula struct.
 pub async fn get_formula(name: &str) -> Result<Formula> {
     let url = format!("{}/formula/{}.json", FORMULAE_API_BASE_URL, name);
-    info!(
+    debug!(
         "Fetching and parsing formula data for '{}' from {}",
         name, url
     );
@@ -262,7 +262,7 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
                     // Try parsing as Vec<Formula>
                     match serde_json::from_str::<Vec<Formula>>(&text) {
                         Ok(mut formulas) if !formulas.is_empty() => {
-                            info!(
+                            debug!(
                                 "Parsed formula {} from a single-element array response.",
                                 name
                             );

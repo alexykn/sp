@@ -10,7 +10,7 @@ use std::fs::File;
 //use std::io::copy;
 use async_recursion::async_recursion; // Ensure this is in Cargo.toml
 use futures::StreamExt;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::path::Path;
 use std::time::Duration;
 use url::Url; // For processing response stream
@@ -122,7 +122,7 @@ pub async fn download_oci_blob(
     config: &Config, // Pass config
     client: &Client,
 ) -> Result<()> {
-    info!("Attempting to download OCI blob: {}", blob_url);
+    debug!("Attempting to download OCI blob: {}", blob_url);
     let url = Url::parse(blob_url).map_err(|e| {
         SapphireError::Generic(format!("Invalid OCI blob URL '{}': {}", blob_url, e))
     })?;
@@ -211,7 +211,7 @@ pub async fn download_oci_blob(
         ))
     })?;
 
-    info!(
+    debug!(
         "Successfully downloaded blob to {}",
         destination_path.display()
     );
@@ -224,7 +224,7 @@ pub async fn fetch_oci_manifest_index(
     config: &Config, // Pass config
     client: &Client,
 ) -> Result<OciManifestIndex> {
-    info!("Fetching OCI Manifest Index from: {}", manifest_url);
+    debug!("Fetching OCI Manifest Index from: {}", manifest_url);
     // Pass config to fetch_oci_resource
     fetch_oci_resource(manifest_url, OCI_MANIFEST_V1_TYPE, config, client).await
 }
@@ -262,7 +262,7 @@ async fn determine_auth(
 ) -> Result<OciAuth> {
     // 1. Check for explicit bearer token
     if let Some(token) = &config.docker_registry_token {
-        info!(
+        debug!(
             "Using explicit bearer token from HOMEBREW_DOCKER_REGISTRY_TOKEN for {}",
             registry_domain
         );
@@ -273,7 +273,7 @@ async fn determine_auth(
 
     // 2. Check for explicit basic auth
     if let Some(encoded_auth) = &config.docker_registry_basic_auth {
-        info!(
+        debug!(
             "Using explicit basic auth from HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN for {}",
             registry_domain
         );
@@ -288,7 +288,7 @@ async fn determine_auth(
             warn!("Cannot determine repository scope for anonymous token fetch for domain {}. Proceeding without auth.", registry_domain);
             return Ok(OciAuth::None);
         }
-        info!(
+        debug!(
             "No explicit token found, attempting anonymous token fetch for scope '{}' at {}",
             repo_path, registry_domain
         );
@@ -300,7 +300,7 @@ async fn determine_auth(
             }
         }
     } else {
-        info!("Registry {} is not default ghcr.io and no explicit token provided. Proceeding without auth.", registry_domain);
+        debug!("Registry {} is not default ghcr.io and no explicit token provided. Proceeding without auth.", registry_domain);
         Ok(OciAuth::None)
     }
 }
@@ -322,7 +322,7 @@ async fn fetch_anonymous_token(
         "{}?service={}&scope={}",
         token_endpoint, registry_domain, scope
     );
-    info!("Fetching anonymous token from: {}", token_url_str);
+    debug!("Fetching anonymous token from: {}", token_url_str);
 
     let response = client
         .get(&token_url_str)
@@ -431,7 +431,7 @@ async fn execute_oci_request(
             Ok(new_auth) => {
                 // Check if we actually got a new anonymous token, or if it fell back to None/Errored
                 if matches!(new_auth, OciAuth::AnonymousBearer { .. }) {
-                    info!("Successfully refreshed anonymous token for retry.");
+                    debug!("Successfully refreshed anonymous token for retry.");
                     new_auth
                 } else {
                     warn!("Token refresh attempt did not result in a new anonymous token (got {:?}). Retrying with original auth details.", new_auth);

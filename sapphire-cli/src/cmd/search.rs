@@ -2,6 +2,9 @@
 // Contains the logic for the `search` command.
 
 use sapphire_core::fetch::api;
+use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
@@ -16,7 +19,12 @@ pub enum SearchType {
 
 /// Searches for packages matching the query
 pub async fn run_search(query: &str, search_type: SearchType) -> Result<()> {
-    log::info!("Searching for packages matching: {}", query);
+    log::debug!("Searching for packages matching: {}", query);
+    // Spinner for searching
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
+    pb.set_message(format!("Searching for \"{}\"", query));
+    pb.enable_steady_tick(Duration::from_millis(100));
 
     // Initialize config and cache
     let config = Config::load()?;
@@ -36,6 +44,8 @@ pub async fn run_search(query: &str, search_type: SearchType) -> Result<()> {
         cask_matches = search_casks(&cache, query).await?;
     }
 
+    // Finished searching
+    pb.finish_and_clear();
     // Print results
     print_search_results(query, &formula_matches, &cask_matches);
 
@@ -60,7 +70,7 @@ async fn search_formulas(cache: &Cache, query: &str) -> Result<Vec<Value>> {
         }
     } else {
         // If cache fails, fetch from API
-        log::info!("Formula cache not found, fetching from API...");
+        log::debug!("Formula cache not found, fetching from API...");
         let all_formulas = api::fetch_all_formulas().await?;
         let formulas: Vec<Value> = serde_json::from_str(&all_formulas)?;
 
@@ -71,6 +81,8 @@ async fn search_formulas(cache: &Cache, query: &str) -> Result<Vec<Value>> {
         }
     }
 
+    // Only include formulae that have bottles available
+    matches.retain(|formula| is_bottle_available(formula));
     Ok(matches)
 }
 
@@ -92,7 +104,7 @@ async fn search_casks(cache: &Cache, query: &str) -> Result<Vec<Value>> {
         }
     } else {
         // If cache fails, fetch from API
-        log::info!("Cask cache not found, fetching from API...");
+        log::debug!("Cask cache not found, fetching from API...");
         let all_casks = api::fetch_all_casks().await?;
         let casks: Vec<Value> = serde_json::from_str(&all_casks)?;
 
@@ -173,45 +185,53 @@ fn is_cask_match(cask: &Value, query: &str) -> bool {
     false
 }
 
-/// Print search results in a formatted way
-fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[Value]) {
-    let formula_count = formula_matches.len();
-    let cask_count = cask_matches.len();
-    let total_count = formula_count + cask_count;
+/// Check if a formula has a bottle available
+fn is_bottle_available(formula: &Value) -> bool {
+    if let Some(bottle) = formula.get("bottle").and_then(|b| b.as_object()) {
+        if let Some(stable) = bottle.get("stable").and_then(|s| s.as_object()) {
+            if let Some(files) = stable.get("files").and_then(|f| f.as_object()) {
+                return !files.is_empty();
+            }
+        }
+    }
+    false
+}
 
-    if total_count == 0 {
-        println!("No matches found for \"{}\"", query);
+/// Print search results in a formatted table
+fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[Value]) {
+    let total = formula_matches.len() + cask_matches.len();
+    if total == 0 {
+        println!("{}",
+            format!("No matches found for '{}'", query).yellow()
+        );
         return;
     }
+    println!("{}",
+        format!("Found {} result(s) for '{}'", total, query).bold()
+    );
 
-    // Print formula matches
-    if !formula_matches.is_empty() {
-        println!("==> Formulae");
-        for formula in formula_matches {
-            let name = formula
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("Unknown");
-            let desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-            println!("{}: {}", name, desc);
-        }
-    }
+    // Build table for results
+    let mut table = prettytable::Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    table.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
-    // Add a separator if both types of matches exist
-    if !formula_matches.is_empty() && !cask_matches.is_empty() {
-        println!();
+    for formula in formula_matches {
+        let name = formula.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+        let desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        table.add_row(prettytable::row![
+            "formula",
+            name.blue().bold(),
+            desc
+        ]);
     }
-
-    // Print cask matches
-    if !cask_matches.is_empty() {
-        println!("==> Casks");
-        for cask in cask_matches {
-            let token = cask
-                .get("token")
-                .and_then(|t| t.as_str())
-                .unwrap_or("Unknown");
-            let desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-            println!("{}: {}", token, desc);
-        }
+    for cask in cask_matches {
+        let token = cask.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+        let desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        table.add_row(prettytable::row![
+            "cask",
+            token.blue().bold(),
+            desc
+        ]);
     }
+    table.printstd();
 }

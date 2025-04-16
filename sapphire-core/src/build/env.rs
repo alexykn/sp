@@ -4,7 +4,7 @@
 use crate::build::devtools;
 use crate::model::formula::FormulaDependencies;
 use crate::utils::error::{Result, SapphireError};
-use log::{debug, info};
+use log::debug;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -168,7 +168,7 @@ impl BuildEnvironment {
         cellar_path: &Path,
         all_installed_opt_paths: &[PathBuf],
     ) -> Result<Self> {
-        info!(
+        debug!(
             "Creating BuildEnvironment for formula '{}'...",
             formula.name()
         );
@@ -191,7 +191,7 @@ impl BuildEnvironment {
         let arch_flag = devtools::get_arch_flag();
         let formula_install_prefix = formula.install_prefix(cellar_path)?;
 
-        info!(
+        debug!(
             "Resolved tools: CC={}, CXX={}, SDK={}, macOS={}, ArchFlag='{}', InstallPrefix={}",
             cc.display(),
             cxx.display(),
@@ -298,7 +298,7 @@ impl BuildEnvironment {
                 ))
             })?;
         vars.insert("PATH".to_string(), final_path_string.clone());
-        info!("Final PATH: {}", final_path_string);
+        debug!("Final PATH: {}", final_path_string);
 
         if cfg!(target_os = "macos") {
             if sdk_path != PathBuf::from("/") {
@@ -388,7 +388,7 @@ impl BuildEnvironment {
             vars.remove("PYTHONPATH");
         }
 
-        info!("BuildEnvironment created successfully.");
+        debug!("BuildEnvironment created successfully.");
 
         Ok(Self {
             vars,

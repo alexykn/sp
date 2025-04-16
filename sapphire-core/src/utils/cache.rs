@@ -166,7 +166,7 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
 /// Clears the entire application cache directory.
 pub fn clear_cache() -> Result<()> {
     let path = get_cache_dir()?;
-    log::info!("Clearing cache directory: {:?}", path);
+    log::debug!("Clearing cache directory: {:?}", path);
     if path.exists() {
         fs::remove_dir_all(&path)?;
     }

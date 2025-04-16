@@ -11,8 +11,20 @@ use cli::{Cli, Commands}; // Import the structs/enums from the cli module
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logger
-    env_logger::init_from_env(env_logger::Env::default().filter_or("SAPPHIRE_LOG", "info"));
+    // Parse command line arguments using the Cli struct
+    let cli_args = Cli::parse();
+
+    // Initialize logger based on verbosity (default to info)
+    let log_level = match cli_args.verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    env_logger::Builder::from_env(
+        env_logger::Env::default().filter_or("SAPPHIRE_LOG", log_level)
+    )
+    .format_timestamp(None)
+    .init();
 
     // Initialize config
     let config = Config::load().unwrap_or_else(|e| {
@@ -20,8 +32,6 @@ async fn main() -> Result<()> {
         process::exit(1);
     });
 
-    // Parse command line arguments using the Cli struct from the cli module
-    let cli_args = Cli::parse();
 
     // Run the requested command
     let command_result = match cli_args.command {

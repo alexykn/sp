@@ -2,15 +2,24 @@
 // Contains the logic for the `info` command.
 
 use sapphire_core::fetch::api;
+use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
 use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json::Value;
+// Removed unused prettytable imports; using fully qualified paths for table and row macros
 
 /// Displays detailed information about a formula or cask.
 pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
-    log::info!("Getting info for package: {}, is_cask: {}", name, is_cask);
+    log::debug!("Getting info for package: {}, is_cask: {}", name, is_cask);
+    // Spinner for info loading
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::with_template("{spinner:.magenta} {msg}").unwrap());
+    pb.set_message(format!("Loading info for {}", name));
+    pb.enable_steady_tick(Duration::from_millis(100));
 
     // Initialize config and cache
     let config = Config::load()?;
@@ -19,6 +28,7 @@ pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
     if is_cask {
         // Try as cask first when the flag is set
         if let Ok(info) = get_cask_info(&cache, name).await {
+            pb.finish_and_clear();
             print_cask_info(name, &info);
             return Ok(());
         }
@@ -28,14 +38,19 @@ pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
             name
         )));
     } else {
-        // Try as formula first
+        // Try as formula first (only if a bottle is available)
         if let Ok(info) = get_formula_info_raw(&cache, name).await {
-            print_formula_info(name, &info);
-            return Ok(());
+            if is_bottle_available(&info) {
+                pb.finish_and_clear();
+                print_formula_info(name, &info);
+                return Ok(());
+            }
+            // Skip formulas without bottles
         }
 
         // If not found as formula, try as cask
         if let Ok(info) = get_cask_info(&cache, name).await {
+            pb.finish_and_clear();
             print_cask_info(name, &info);
             return Ok(());
         }
@@ -81,7 +96,7 @@ async fn get_formula_info_raw(cache: &Cache, name: &str) -> Result<Value> {
     }
 
     // If not found in cache, try the API
-    log::info!("Formula not found in cache, fetching from API...");
+    log::debug!("Formula not found in cache, fetching from API...");
     api::fetch_formula(name).await
 }
 
@@ -103,99 +118,95 @@ async fn get_cask_info(cache: &Cache, name: &str) -> Result<Value> {
     }
 
     // If not found in cache, try the API
-    log::info!("Cask not found in cache, fetching from API...");
+    log::debug!("Cask not found in cache, fetching from API...");
     api::fetch_cask(name).await
 }
 
-/// Prints formula information in a human-readable format
+/// Prints formula information in a formatted table
 fn print_formula_info(_name: &str, formula: &Value) {
-    println!("Formula Info:");
+    let full_name = formula.get("full_name").and_then(|f| f.as_str()).unwrap_or("N/A");
+    let version = formula.get("versions").and_then(|v| v.get("stable")).and_then(|s| s.as_str()).unwrap_or("N/A");
+    let license = formula.get("license").and_then(|l| l.as_str()).unwrap_or("N/A");
+    let homepage = formula.get("homepage").and_then(|h| h.as_str()).unwrap_or("N/A");
 
-    // Print basic information
-    let full_name = formula
-        .get("full_name")
-        .and_then(|f| f.as_str())
-        .unwrap_or("N/A");
-    let version = formula
-        .get("versions")
-        .and_then(|v| v.get("stable"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("N/A");
-    let license = formula
-        .get("license")
-        .and_then(|l| l.as_str())
-        .unwrap_or("N/A");
-    println!("{} ({}), license: {}", full_name, version, license);
+    // Summary table
+    let mut table = prettytable::Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    table.add_row(prettytable::row!["Name", full_name]);
+    table.add_row(prettytable::row!["Version", version]);
+    table.add_row(prettytable::row!["License", license]);
+    table.add_row(prettytable::row!["Homepage", homepage]);
+    table.printstd();
 
-    // Print homepage if available
-    if let Some(homepage) = formula.get("homepage").and_then(|h| h.as_str()) {
-        println!("Homepage: {}", homepage);
-    } else {
-        println!("Homepage: N/A");
-    }
-
-    // Print description if available
+    // Detailed sections
     if let Some(desc) = formula.get("desc").and_then(|d| d.as_str()) {
-        println!("\nDescription:");
-        println!("  {}", desc);
+        if !desc.is_empty() {
+            println!("\n{}", "Description".blue().bold());
+            println!("  {}", desc);
+        }
     }
-
-    // Print caveats if available
     if let Some(caveats) = formula.get("caveats").and_then(|c| c.as_str()) {
         if !caveats.is_empty() {
-            println!("\nCaveats:");
+            println!("\n{}", "Caveats".blue().bold());
             println!("  {}", caveats);
         }
     }
-
-    // Print dependencies if available
-    if let Some(dependencies) = formula.get("dependencies").and_then(|d| d.as_array()) {
-        if !dependencies.is_empty() {
-            println!("\nDependencies:");
-            for dep in dependencies {
-                if let Some(dep_name) = dep.as_str() {
-                    println!("  - {}", dep_name);
-                }
+    if let Some(deps) = formula.get("dependencies").and_then(|d| d.as_array()) {
+        let dep_list: Vec<&str> = deps.iter().filter_map(|d| d.as_str()).collect();
+        if !dep_list.is_empty() {
+            println!("\n{}", "Dependencies".blue().bold());
+            for d in dep_list {
+                println!("  - {}", d);
             }
         }
     }
-
-    // Optionally print other metadata like bottle information, installation options, etc.
-    // TODO: Print bottle information when needed
 }
 
-/// Prints cask information in a human-readable format
+/// Prints cask information in a formatted table
 fn print_cask_info(name: &str, cask: &Value) {
-    println!("=== Cask: {} ===", name);
+    // Header
+    println!("{}",
+        format!("Cask: {}", name).green().bold()
+    );
 
-    // Print basic information
-    if let Some(name) = cask
-        .get("name")
-        .and_then(|n| n.as_array())
-        .and_then(|a| a.first())
-        .and_then(|s| s.as_str())
-    {
-        println!("Name: {}", name);
+    // Summary table
+    let mut table = prettytable::Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    if let Some(names) = cask.get("name").and_then(|n| n.as_array()) {
+        if let Some(first) = names.first().and_then(|s| s.as_str()) {
+            table.add_row(prettytable::row!["Name", first]);
+        }
     }
-
     if let Some(desc) = cask.get("desc").and_then(|d| d.as_str()) {
-        println!("Description: {}", desc);
+        table.add_row(prettytable::row!["Description", desc]);
     }
-
     if let Some(homepage) = cask.get("homepage").and_then(|h| h.as_str()) {
-        println!("Homepage: {}", homepage);
+        table.add_row(prettytable::row!["Homepage", homepage]);
     }
-
     if let Some(version) = cask.get("version").and_then(|v| v.as_str()) {
-        println!("Version: {}", version);
+        table.add_row(prettytable::row!["Version", version]);
     }
-
-    // Print download URL
     if let Some(url) = cask.get("url").and_then(|u| u.as_str()) {
-        println!("Download URL: {}", url);
+        table.add_row(prettytable::row!["Download URL", url]);
     }
-
-    // Print installation instructions
-    println!("\nInstallation:");
-    println!("  brew install --cask {}", name);
+    table.printstd();
+    
+    // Installation hint
+    println!("\n{}", "Installation".blue().bold());
+    println!("  {} install {}{}",
+        "sapphire".cyan(),
+        if name.contains(":") { "--cask " } else { "" },
+        name
+    );
+}
+/// Check if a formula has a bottle available
+fn is_bottle_available(formula: &Value) -> bool {
+    if let Some(bottle) = formula.get("bottle").and_then(|b| b.as_object()) {
+        if let Some(stable) = bottle.get("stable").and_then(|s| s.as_object()) {
+            if let Some(files) = stable.get("files").and_then(|f| f.as_object()) {
+                return !files.is_empty();
+            }
+        }
+    }
+    false
 }

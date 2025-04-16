@@ -84,7 +84,6 @@ pub fn extract_archive_strip_components(
         }
     }
 
-    println!("Executing tar command: {:?}", cmd);
     let output = cmd.output()?;
 
     if !output.status.success() {

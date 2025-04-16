@@ -2,12 +2,16 @@
 // Defines the command-line argument structure using clap.
 
 use crate::cmd::install::InstallArgs;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ArgAction};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
 pub struct CliArgs {
+    /// Increase verbosity (-v for debug output, -vv for trace)
+    #[arg(short, long, action = ArgAction::Count, global = true)]
+    pub verbose: u8,
+
     #[command(subcommand)]
     pub command: Commands,
 }

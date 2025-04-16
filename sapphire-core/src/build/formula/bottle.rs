@@ -6,7 +6,7 @@ use crate::fetch::{http, oci};
 use crate::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -26,7 +26,7 @@ pub async fn download_bottle(
     client: &Client,
 ) -> Result<PathBuf> {
     // (Implementation remains the same)
-     info!("Attempting to download bottle for {}", formula.name);
+     debug!("Attempting to download bottle for {}", formula.name);
 
     let (platform_tag, bottle_file_spec) = get_bottle_for_platform(formula)?;
     debug!(
@@ -55,7 +55,7 @@ pub async fn download_bottle(
         if !bottle_file_spec.sha256.is_empty() {
             match http::verify_checksum(&bottle_cache_path, &bottle_file_spec.sha256) {
                 Ok(_) => {
-                    info!("Using valid cached bottle: {}", bottle_cache_path.display());
+                    debug!("Using valid cached bottle: {}", bottle_cache_path.display());
                     return Ok(bottle_cache_path);
                 }
                 Err(e) => {
@@ -74,7 +74,7 @@ pub async fn download_bottle(
                 }
             }
         } else {
-            info!(
+            debug!(
                 "Using cached bottle (checksum not specified): {}",
                 bottle_cache_path.display()
             );
@@ -98,13 +98,13 @@ pub async fn download_bottle(
     );
 
     if is_oci_blob_url {
-        info!(
+        debug!(
             "Detected OCI blob URL, initiating direct blob download: {}",
             bottle_url_str
         );
         match oci::download_oci_blob(bottle_url_str, &bottle_cache_path, config, client).await {
             Ok(_) => {
-                info!(
+                debug!(
                     "Successfully downloaded OCI blob to {}",
                     bottle_cache_path.display()
                 );
@@ -120,7 +120,7 @@ pub async fn download_bottle(
             }
         }
     } else {
-        info!(
+        debug!(
             "Detected standard HTTPS URL, using direct download for: {}",
             bottle_url_str
         );
@@ -146,7 +146,7 @@ pub async fn download_bottle(
                         return Err(SapphireError::Io(move_err));
                     }
                 }
-                info!(
+                debug!(
                     "Successfully downloaded directly to {}",
                     bottle_cache_path.display()
                 );
@@ -172,7 +172,7 @@ pub async fn download_bottle(
         );
     }
 
-    info!(
+    debug!(
         "Bottle download successful: {}",
         bottle_cache_path.display()
     );
@@ -305,7 +305,7 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
         }
     };
     if install_dir.exists() {
-        info!(
+        debug!(
             "Removing existing keg directory before installing: {}",
             install_dir.display()
         );
@@ -341,30 +341,20 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
         ))
     })?;
 
-    println!("==> Installing {} from bottle", formula.name());
-    println!(
-        "==> Pouring {} into {}",
-        bottle_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
-        install_dir.display()
-    );
-
     crate::build::extract_archive_strip_components(bottle_path, &install_dir, 1)?; // sync
-    info!(
+    debug!(
         "==> Ensuring write permissions for extracted files in {}",
         install_dir.display()
     );
     ensure_write_permissions(&install_dir)?; // sync
-    info!(
+    debug!(
         "==> Performing bottle relocation in {}",
         install_dir.display()
     );
     perform_bottle_relocation(formula, &install_dir, config)?; // sync call
     crate::build::write_receipt(formula, &install_dir)?; // sync
 
-    info!(
+    debug!(
         "Bottle installation complete for {} at {}",
         formula.name(),
         install_dir.display()
@@ -462,7 +452,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         replacements.insert("@@HOMEBREW_PERL@@".to_string(), perl_path.clone());
     }
 
-    info!("Starting file scan for text replacement and Mach-O patching in: {}", install_dir.display());
+    debug!("Starting file scan for text replacement and Mach-O patching in: {}", install_dir.display());
     for (placeholder, replacement) in &replacements {
         debug!("  Will replace '{}' with '{}'", placeholder, replacement);
     }
@@ -567,7 +557,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     }
 
     if cfg!(unix) {
-        info!("Ensuring execute permissions for {} identified files...", files_to_chmod.len());
+        debug!("Ensuring execute permissions for {} identified files...", files_to_chmod.len());
         for path in &files_to_chmod {
             match fs::metadata(path) {
                 Ok(metadata) => {
@@ -593,7 +583,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         }
     }
 
-    info!("Relocation scan complete. Text files modified: {}, Mach-O files patched: {}", text_replaced_count, macho_patched_count);
+    debug!("Relocation scan complete. Text files modified: {}, Mach-O files patched: {}", text_replaced_count, macho_patched_count);
     if permission_errors > 0 || macho_errors > 0 {
         error!("Relocation encountered errors! Permission errors: {}, Mach-O errors: {}. Installation may be broken.", permission_errors, macho_errors);
         return Err(SapphireError::InstallError(format!("Bottle relocation failed for {} files ({} permission, {} Mach-O). Check logs and permissions of {}.", permission_errors + macho_errors, permission_errors, macho_errors, install_dir.display())));
