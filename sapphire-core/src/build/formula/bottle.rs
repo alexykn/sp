@@ -342,6 +342,10 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     })?;
 
     crate::build::extract_archive_strip_components(bottle_path, &install_dir, 2)?;
+    
+    // NEW: Ensure that libLLVM.dylib is available via a symlink in keg’s lib folder.
+    ensure_llvm_symlinks(&install_dir, formula, config)?;
+    
     debug!(
         "==> Ensuring write permissions for extracted files in {}",
         install_dir.display()
@@ -401,32 +405,74 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// --- Drop‑in replacement for perform_bottle_relocation() ---
 fn perform_bottle_relocation(
-    _formula: &Formula,
+    formula: &Formula,
     install_dir: &Path,
     config: &Config,
 ) -> Result<()> {
-    // Build up all the placeholder→real‐path mappings as before...
-    let mut replacements = HashMap::new();
-    let cellar_path_str = config.cellar.to_string_lossy().to_string();
-    let prefix_path_str = config.prefix.to_string_lossy().to_string();
-    let repo_path = config.prefix.join("Library/Taps/homebrew/homebrew-core");
-    let repo_path_str = repo_path.to_string_lossy().to_string();
-    let library_path = config.prefix.join("Library");
-    let library_path_str = library_path.to_string_lossy().to_string();
+    // 1 ─ Build placeholder → real‑path map
+    let mut repl: HashMap<String, String> = HashMap::new();
+    repl.insert("@@HOMEBREW_CELLAR@@".into(), config.cellar.to_string_lossy().into());
+    repl.insert("@@HOMEBREW_PREFIX@@".into(), config.prefix.to_string_lossy().into());
+    repl.insert(
+        "@@HOMEBREW_REPOSITORY@@".into(),
+        config.prefix.join("Library/Taps/homebrew/homebrew-core").to_string_lossy().into()
+    );
+    repl.insert(
+        "@@HOMEBREW_LIBRARY@@".into(),
+        config.prefix.join("Library").to_string_lossy().into()
+    );
 
-    replacements.insert("@@HOMEBREW_CELLAR@@".to_string(), cellar_path_str.clone());
-    replacements.insert("@@HOMEBREW_PREFIX@@".to_string(), prefix_path_str.clone());
-    replacements.insert("@@HOMEBREW_REPOSITORY@@".to_string(), repo_path_str);
-    replacements.insert("@@HOMEBREW_LIBRARY@@".to_string(), library_path_str);
+    // @@HOMEBREW_OPT_<PKG>@@ for this formula
+    let opt_placeholder = format!(
+        "@@HOMEBREW_OPT_{}@@",
+        formula.name().to_uppercase().replace('-', "_")
+    );
+    repl.insert(
+        opt_placeholder,
+        config.prefix.join("opt").join(formula.name()).to_string_lossy().into()
+    );
 
-    // … plus perl, opt, resource placeholders … (unchanged) …
-
-    debug!("Starting file scan for text replacement and Mach-O patching in: {}", install_dir.display());
-    for (placeholder, replacement) in &replacements {
-        debug!("  Will replace '{}' with '{}'", placeholder, replacement);
+    // @@HOMEBREW_PERL@@ – brewed first; fall back to system perl on macOS only
+    if let Some(p) = find_brewed_perl(&config.prefix)
+        .or_else(|| if cfg!(target_os = "macos") { Some(PathBuf::from("/usr/bin/perl")) } else { None })
+    {
+        repl.insert("@@HOMEBREW_PERL@@".into(), p.to_string_lossy().into());
     }
 
+    // 2 ─ Rewrite “@loader_path/../lib” to absolute llvm lib dir
+    let llvm_name = formula
+        .dependencies()
+        .unwrap_or_default()
+        .iter()
+        .find(|d| d.name.starts_with("llvm"))
+        .map(|d| d.name.clone())
+        .unwrap_or_else(|| "llvm".into());
+    let llvm_lib = config.prefix.join("opt").join(llvm_name).join("lib");
+    if llvm_lib.is_dir() {
+        repl.insert("@loader_path/../lib".into(), llvm_lib.to_string_lossy().into());
+    }
+
+    log::debug!("relocation table:");
+    for (k, v) in &repl {
+        log::debug!("  {}  →  {}", k, v);
+    }
+
+    // 3 ─ Call the original relocation scan and patch logic
+    original_relocation_scan_and_patch(formula, install_dir, config, repl)
+}
+
+// --- Thin wrapper for original scan‑and‑patch logic ---
+// This function should contain all of your prior file‑walk logic,
+// text replacement, Mach‑O patching, chmod, etc.
+// For brevity, we use a placeholder comment.
+fn original_relocation_scan_and_patch(
+    _formula: &Formula,
+    install_dir: &Path,
+    _config: &Config,
+    replacements: HashMap<String, String>,
+) -> Result<()> {
     let mut text_replaced_count = 0;
     let mut macho_patched_count = 0;
     let mut permission_errors = 0;
@@ -605,4 +651,91 @@ fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
          original_path.display()
      );
      Ok(())
+}
+
+/* ------------------------------------------------------------------ */
+/* Helper: pick the newest brewed perl (or “plain” perl) in …/opt     */
+/* ------------------------------------------------------------------ */
+fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
+    let opt_dir = prefix.join("opt");
+    let mut best: Option<(semver::Version, PathBuf)> = None;
+
+    for entry in std::fs::read_dir(opt_dir).ok()?.flatten() {
+        let name = entry.file_name();
+        let s = name.to_string_lossy();
+
+        if let Some(rest) = s.strip_prefix("perl@") {
+            // perl@5.38   →  5.38.0  (semver needs 3 fields)
+            let v = rest
+                .parse()
+                .ok()
+                .or_else(|| format!("{rest}.0").parse().ok())?;
+            let cand = entry.path().join("bin/perl");
+            if cand.is_file() && best.as_ref().map_or(true, |(b, _)| v > *b) {
+                best = Some((v, cand));
+            }
+        } else if s == "perl" {
+            let cand = entry.path().join("bin/perl");
+            if cand.is_file() && best.is_none() {
+                // treat un‑versioned “perl” as 5.0.0 – will be trumped by any perl@5.xx
+                best = Some((semver::Version::new(5, 0, 0), cand));
+            }
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+// NEW: Ensure a symlink for libLLVM.dylib exists in every lib folder paired with a bin folder.
+fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) -> Result<()> {
+    // Check if the keg contains a "bin" and "lib" directory.
+    let bin_dir = install_dir.join("bin");
+    let lib_dir = install_dir.join("lib");
+    if !bin_dir.exists() || !lib_dir.exists() {
+        debug!("Skipping LLVM symlink creation as bin or lib dir is missing in {}", install_dir.display());
+        return Ok(());
+    }
+
+    // Determine the expected LLVM directory.
+    let llvm_name = formula
+        .dependencies()
+        .unwrap_or_default()
+        .iter()
+        .find(|d| d.name.starts_with("llvm"))
+        .map(|d| d.name.clone())
+        .unwrap_or_else(|| "llvm".into());
+    let llvm_lib_path = config
+        .prefix
+        .join("opt")
+        .join(llvm_name)
+        .join("lib")
+        .join("libLLVM.dylib");
+
+    // If the LLVM dylib does not exist at the target, log a warning and skip.
+    if !llvm_lib_path.exists() {
+        warn!("LLVM library not found at {}. Skipping symlink creation.", llvm_lib_path.display());
+        return Ok(());
+    }
+
+    let symlink_path = lib_dir.join("libLLVM.dylib");
+    if symlink_path.exists() {
+        debug!("Symlink or file already exists at {}.", symlink_path.display());
+        return Ok(());
+    }
+
+    // Create the symlink; on macOS we assume Unix-like behavior.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        match symlink(&llvm_lib_path, &symlink_path) {
+            Ok(_) => debug!("Created symlink {} -> {}", symlink_path.display(), llvm_lib_path.display()),
+            Err(e) => {
+                warn!("Failed to create symlink {} -> {}: {}", symlink_path.display(), llvm_lib_path.display(), e);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        debug!("Symlink creation not supported on this platform.");
+    }
+    Ok(())
 }

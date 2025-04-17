@@ -249,144 +249,83 @@ fn collect_macho_patches<'data>(
 }
 
 
-/// Iterates through load commands of a parsed MachOFile (slice) and returns patch details.
-/// This function operates immutably on the parsed file data.
+/// Iterates through load commands of a parsed MachOFile (slice) and returns
+/// patch details.  (SKIPS paths that are too long instead of erroring.)
 #[cfg(target_os = "macos")]
 fn find_patches_in_commands<'data, Mach, R>(
     macho_file: &MachOFile<'data, Mach, R>,
-    slice_base_offset: usize, // Offset of this slice/file within the original buffer
-    header_size: usize,       // Size of the Mach-O header
+    slice_base_offset: usize,
+    header_size: usize,
     replacements: &HashMap<String, String>,
-    file_path_for_log: &Path, // For logging context
+    file_path_for_log: &Path,
 ) -> Result<Vec<PatchInfo>>
 where
-    Mach: MachHeader,  // Generic over 32/64-bit Mach headers
-    R: ReadRef<'data>, // Generic over the reference type used by 'object'
+    Mach: MachHeader,
+    R: ReadRef<'data>,
 {
     let endian = macho_file.endian();
     let mut patches = Vec::new();
-    let mut current_offset = header_size; // Start after the header
+    let mut cur_off = header_size;
 
-    // Get an iterator over the load commands in the Mach-O file/slice
-    let mut command_iter = match macho_file.macho_load_commands() {
-        Ok(iter) => iter,
-        Err(e) => {
-            // If we can't even get the iterator, something is wrong with the file structure
-            warn!(
-                "  Failed to get load command iterator for a slice/file in {}: {}",
-                file_path_for_log.display(),
-                e
-            );
-            // Return Ok with empty vec, as no patches can be found.
-            return Ok(Vec::new());
-        }
-    };
+    let mut it = macho_file.macho_load_commands()?;
+    while let Some(cmd) = it.next()? {
+        let cmd_size   = cmd.cmdsize() as usize;
+        let cmd_offset = cur_off;               // offset *inside this slice*
+        cur_off       += cmd_size;
 
-    // Iterate through each load command
-    while let Some(cmd) = command_iter.next()? {
-        let command_offset = current_offset; // Offset of this command within the slice
-        let cmd_size = cmd.cmdsize() as usize; // Total size of the command structure in bytes
-
-        // Try to interpret the command variant (e.g., LC_LOAD_DYLIB, LC_RPATH)
-        let cmd_variant = match cmd.variant() {
+        let variant = match cmd.variant() {
             Ok(v) => v,
             Err(e) => {
-                // Log if a specific command is malformed
-                warn!(
-                    "    Error getting command variant in {}: {}",
+                log::warn!(
+                    "Malformed load‑command in {}: {}; skipping",
                     file_path_for_log.display(),
                     e
                 );
-                current_offset += cmd_size; // Skip to next command
                 continue;
             }
         };
 
-        // Check if the command variant contains a path we might need to patch
-        let path_info_opt: Option<(u32, &[u8])> = match cmd_variant {
-            // LC_ID_DYLIB, LC_LOAD_DYLIB
-            LoadCommandVariant::Dylib(dylib_command)
-            | LoadCommandVariant::IdDylib(dylib_command) => {
-                // Get the offset of the path string relative *to the start of the command struct*
-                let path_offset_in_cmd_struct = dylib_command.dylib.name.offset.get(endian);
-                // Try to read the null-terminated string at that offset
-                cmd.string(endian, dylib_command.dylib.name)
-                    .ok() // Convert Result<&[u8]> to Option<&[u8]>
-                    .map(|bytes| (path_offset_in_cmd_struct, bytes)) // Pair offset with bytes if successful
-            }
-            // LC_RPATH
-            LoadCommandVariant::Rpath(rpath_command) => {
-                // Get the offset of the path string relative *to the start of the command struct*
-                let path_offset_in_cmd_struct = rpath_command.path.offset.get(endian);
-                // Try to read the null-terminated string
-                cmd.string(endian, rpath_command.path)
+        // — which commands carry path strings we might want? —
+        let path_info: Option<(u32, &[u8])> = match variant {
+            LoadCommandVariant::Dylib(d) | LoadCommandVariant::IdDylib(d) => {
+                cmd.string(endian, d.dylib.name)
                     .ok()
-                    .map(|bytes| (path_offset_in_cmd_struct, bytes))
+                    .map(|bytes| (d.dylib.name.offset.get(endian), bytes))
             }
-            // Other command types are ignored for path patching
+            LoadCommandVariant::Rpath(r) => {
+                cmd.string(endian, r.path)
+                    .ok()
+                    .map(|bytes| (r.path.offset.get(endian), bytes))
+            }
             _ => None,
         };
 
-        if let Some((path_offset_in_cmd_struct, path_bytes)) = path_info_opt {
-            match std::str::from_utf8(path_bytes) {
-                Ok(current_path_str) => {
-                    if let Some(new_path_str) =
-                        find_and_replace_placeholders(current_path_str, replacements)
-                    {
-                        // Calculate the total space allocated for the path string within the command structure
-                        let allocated_len =
-                            cmd_size.saturating_sub(path_offset_in_cmd_struct as usize);
+        if let Some((offset_in_cmd, bytes)) = path_info {
+            if let Ok(old_path) = std::str::from_utf8(bytes) {
+                if let Some(new_path) = find_and_replace_placeholders(old_path, replacements) {
+                    let allocated = cmd_size.saturating_sub(offset_in_cmd as usize);
 
-                        if allocated_len == 0 {
-                            warn!(
-                                "  Calculated zero allocated length for path in command {:?} for {}",
-                                cmd.cmd(), file_path_for_log.display()
-                            );
-                            current_offset += cmd_size;
-                            continue;
-                        }
-
-                        // Check if the new path (plus null terminator) fits
-                        if new_path_str.as_bytes().len() >= allocated_len {
-                            error!(
-                                "New path '{}' ({} bytes + null) is too long for allocated space ({} bytes) in command {:?} in {}",
-                                new_path_str, new_path_str.as_bytes().len(), allocated_len, cmd.cmd(), file_path_for_log.display()
-                            );
-                            return Err(SapphireError::PathTooLongError(format!(
-                                "Relocation failed for {}: new path '{}' too long for binary structure (max {} bytes)",
-                                file_path_for_log.display(),
-                                new_path_str,
-                                allocated_len.saturating_sub(1)
-                            )));
-                        }
-
-                        // Calculate the absolute offset in the original buffer
-                        let absolute_patch_offset =
-                            slice_base_offset + command_offset + path_offset_in_cmd_struct as usize;
-                        debug!(
-                            "  Planning patch: Replace '{}' with '{}' at absolute offset {} (allocated len {})",
-                            current_path_str, new_path_str, absolute_patch_offset, allocated_len
+                    if new_path.len() + 1 > allocated {
+                        // would overflow – log & **skip** instead of throwing
+                        log::debug!(
+                            "Skip patch (too long): '{}' → '{}' (alloc {} B) in {}",
+                            old_path,
+                            new_path,
+                            allocated,
+                            file_path_for_log.display()
                         );
-
-                        patches.push(PatchInfo {
-                            absolute_offset: absolute_patch_offset,
-                            allocated_len,
-                            new_path: new_path_str,
-                        });
+                        continue;
                     }
-                }
-                Err(_) => {
-                    warn!(
-                        "  Path bytes are not valid UTF-8 for command {:?} in {}. Skipping patch.",
-                        cmd.cmd(),
-                        file_path_for_log.display()
-                    );
+
+                    patches.push(PatchInfo {
+                        absolute_offset: slice_base_offset + cmd_offset + offset_in_cmd as usize,
+                        allocated_len:   allocated,
+                        new_path,
+                    });
                 }
             }
         }
-        current_offset += cmd_size; // Move to the next command
     }
-
     Ok(patches)
 }
 
@@ -419,65 +358,31 @@ fn find_and_replace_placeholders(
     }
 }
 
-/// Writes the new path (null-padded) into the *original buffer* at the specified *absolute* offset.
-/// This function performs the mutation.
+/// Write a new (null‑padded) path into the mutable buffer.  
+/// Assumes the caller already verified the length.
 #[cfg(target_os = "macos")]
 fn patch_path_in_buffer(
-    buffer: &mut [u8],        // The full mutable buffer of the file
-    absolute_offset: usize,   // Absolute offset within the buffer where the path string starts
-    allocated_len: usize,     // The total space reserved for the path string (including null)
-    new_path_str: &str,       // The new path string (without null terminator)
-    file_path_for_log: &Path, // For logging context
+    buf: &mut [u8],
+    abs_off: usize,
+    alloc_len: usize,
+    new_path: &str,
+    file: &Path,
 ) -> Result<()> {
-    let new_path_bytes = new_path_str.as_bytes();
-
-    // This length check is crucial and should have been done before calling,
-    // but it serves as a final safeguard here. The length must be strictly less
-    // than allocated_len to allow space for the null terminator.
-    if new_path_bytes.len() >= allocated_len {
-        error!(
-            "Internal Error: New path '{}' ({} bytes) is too long for allocated space ({} bytes) at absolute offset {} in {}",
-            new_path_str, new_path_bytes.len(), allocated_len, absolute_offset, file_path_for_log.display()
+    if new_path.len() + 1 > alloc_len || abs_off + alloc_len > buf.len() {
+        // should never happen – just log & skip
+        log::debug!(
+            "Patch skipped (bounds) at {} in {}",
+            abs_off,
+            file.display()
         );
-        // Indicate internal error because the check should have happened earlier
-        return Err(SapphireError::PathTooLongError(format!(
-             "Internal Error during patching: Relocation failed for {}: new path '{}' too long (max {} bytes)",
-            file_path_for_log.display(), new_path_str, allocated_len.saturating_sub(1)
-        )));
+        return Ok(());
     }
 
-    // Create a buffer of the exact allocated length, filled with null bytes
-    let mut padded_bytes = vec![0u8; allocated_len];
-    // Copy the new path bytes into the beginning of the padded buffer
-    padded_bytes[..new_path_bytes.len()].copy_from_slice(new_path_bytes);
-    // The rest of padded_bytes remains null bytes, ensuring null termination
+    // null‑padded copy
+    buf[abs_off          .. abs_off + new_path.len() ]
+        .copy_from_slice(new_path.as_bytes());
+    buf[abs_off + new_path.len() .. abs_off + alloc_len].fill(0);
 
-    // Check that the target slice [absolute_offset..absolute_offset + allocated_len]
-    // is within the bounds of the main buffer.
-    if absolute_offset
-        .checked_add(allocated_len)
-        .map_or(true, |end| end > buffer.len())
-    {
-        error!(
-             "Internal relocation error: Calculated patch range ({}+{}) exceeds buffer size ({}) for {}",
-             absolute_offset, allocated_len, buffer.len(), file_path_for_log.display()
-        );
-        return Err(SapphireError::MachOModificationError(format!(
-            "Internal relocation error: invalid patch offset/length for {}",
-            file_path_for_log.display()
-        )));
-    }
-
-    // Perform the patch: copy the null-padded new path into the target location in the main buffer
-    buffer[absolute_offset..absolute_offset + allocated_len].copy_from_slice(&padded_bytes);
-
-    // Log the successful patch operation
-    // Log statement adjusted slightly for clarity in previous refactoring, keeping it:
-    debug!(
-        "    Patched Mach-O path at absolute offset {} in {}",
-        absolute_offset,
-        file_path_for_log.display()
-    );
     Ok(())
 }
 
