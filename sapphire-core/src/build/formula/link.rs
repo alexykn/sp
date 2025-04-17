@@ -13,13 +13,9 @@ use std::os::unix::fs as unix_fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf}; // <-- For setting executable bit
 
-/// Link all artifacts (opt, binaries, libraries, headers, etc.) from a formula's installation directory
-/// *** Updated to create wrapper scripts for executables ***
-///
-/// # Arguments
-///
-/// * `formula` - The formula metadata.
-/// * `installed_keg_path` - The actual path where the keg was installed (e.g., /opt/homebrew/Cellar/foo/1.2_1).
+/// Link all artifacts (opt, binaries, libraries, headers, etc.) from a formula's
+/// installation directory **and** create an un‑versioned opt‑alias if the
+/// formula name contains `@`.
 pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> Result<()> {
     debug!(
         "==> Linking artifacts for {} from {}",
@@ -27,163 +23,80 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
         installed_keg_path.display()
     );
 
-    let mut symlinks_created: Vec<String> = Vec::new(); // Tracks links/wrappers created
-    let prefix_dir = get_homebrew_prefix();
-    let formula_content_root = determine_content_root(installed_keg_path)?;
-    debug!(
-        "Using content root for linking: {}",
-        formula_content_root.display()
-    );
+    let prefix_dir            = get_homebrew_prefix();
+    let formula_content_root  = determine_content_root(installed_keg_path)?;
+    let mut symlinks_created  = Vec::<String>::new();
 
-    // --- 1. Link the main opt directory (Unchanged) ---
-    let opt_link_path = prefix_dir.join("opt").join(formula.name());
-    let target_keg_dir = installed_keg_path;
-    debug!(
-        "Attempting to link opt directory: {} -> {}",
-        opt_link_path.display(),
-        target_keg_dir.display()
-    );
+    /* --------------------------------------------------------------------
+     * 1. `opt` link for this specific version
+     * ------------------------------------------------------------------ */
+    let opt_link_path  = prefix_dir.join("opt").join(formula.name());
+    let target_keg_dir = &formula_content_root;
+
     remove_existing_link_target(&opt_link_path)?;
-    match unix_fs::symlink(target_keg_dir, &opt_link_path) {
-        Ok(_) => {
-            debug!(
-                "  Linked opt path: {} -> {}",
-                opt_link_path.display(),
-                target_keg_dir.display()
-            );
-            symlinks_created.push(opt_link_path.to_string_lossy().to_string());
-        }
-        Err(e) => {
-            error!(
-                "Failed to create opt symlink {} -> {}: {}",
-                opt_link_path.display(),
-                target_keg_dir.display(),
-                e
-            );
-            return Err(SapphireError::Io(std::io::Error::new(
-                e.kind(),
-                format!("Failed to create opt symlink for {}: {}", formula.name(), e),
-            )));
-        }
-    }
+    unix_fs::symlink(target_keg_dir, &opt_link_path).map_err(|e| {
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!("Failed to create opt symlink for {}: {}", formula.name(), e),
+        ))
+    })?;
+    symlinks_created.push(opt_link_path.to_string_lossy().to_string());
+    debug!("  Linked opt path: {} -> {}", opt_link_path.display(), target_keg_dir.display());
 
-    // --- 2. Link standard artifact directories (lib, include, share) - NO LONGER LINKING BIN DIRECTLY ---
-    // Binaries are handled via wrapper scripts below.
-    let standard_artifact_dirs = ["lib", "include", "share"]; // Removed "bin"
-    for dir_name in &standard_artifact_dirs {
-        let source_subdir = formula_content_root.join(dir_name);
-        let target_prefix_subdir = prefix_dir.join(dir_name);
-
-        debug!(
-            "Checking for non-bin artifacts in source subdir: {}",
-            source_subdir.display()
-        );
-
-        if source_subdir.is_dir() {
-            if !target_prefix_subdir.exists() {
-                debug!(
-                    "Creating target prefix directory: {}",
-                    target_prefix_subdir.display()
-                );
-                if let Err(e) = fs::create_dir_all(&target_prefix_subdir) {
-                    error!(
-                        "Failed to create target directory {}: {}",
-                        target_prefix_subdir.display(),
-                        e
-                    );
-                    continue;
-                }
-            }
-
-            match fs::read_dir(&source_subdir) {
-                Ok(entries) => {
-                    for entry_result in entries {
-                        match entry_result {
-                            Ok(entry) => {
-                                let source_item_path = entry.path();
-                                let file_name = entry.file_name();
-                                let target_link = target_prefix_subdir.join(&file_name);
-
-                                // Only link non-hidden files/dirs
-                                if file_name.to_string_lossy().starts_with('.') {
-                                    continue;
-                                }
-
-                                debug!(
-                                    "  Found potential non-bin artifact: {}",
-                                    source_item_path.display()
-                                );
-                                if remove_existing_link_target(&target_link).is_ok() {
-                                    debug!(
-                                        "    Attempting symlink creation: {} -> {}",
-                                        target_link.display(),
-                                        source_item_path.display()
-                                    );
-                                    match unix_fs::symlink(&source_item_path, &target_link) {
-                                        Ok(_) => {
-                                            debug!(
-                                                "  Linked {} -> {}",
-                                                target_link.display(),
-                                                source_item_path.display()
-                                            );
-                                            symlinks_created
-                                                .push(target_link.to_string_lossy().to_string());
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                "    Failed to create symlink {} -> {}: {}",
-                                                target_link.display(),
-                                                source_item_path.display(),
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "  Failed to process directory entry in {}: {}",
-                                    source_subdir.display(),
-                                    e
-                                );
-                            }
-                        }
-                    }
+    /* --------------------------------------------------------------------
+     * 1‑bis.  **NEW**  create un‑versioned alias, e.g.  opt/llvm -> opt/llvm@19
+     * ------------------------------------------------------------------ */
+    if let Some((base, _version)) = formula.name().split_once('@') {
+        // Only create if it doesn’t already exist
+        let alias_path = prefix_dir.join("opt").join(base);
+        if !alias_path.exists() {
+            match unix_fs::symlink(target_keg_dir, &alias_path) {
+                Ok(_)  => {
+                    debug!("  Added un‑versioned opt alias: {} -> {}",
+                           alias_path.display(), target_keg_dir.display());
+                    symlinks_created.push(alias_path.to_string_lossy().to_string());
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to read source artifact directory {}: {}",
-                        source_subdir.display(),
-                        e
-                    );
+                    // Non‑fatal: keep going, but log it
+                    warn!("  Could not create opt alias {}: {}",
+                          alias_path.display(), e);
                 }
             }
-        } else {
-            debug!(
-                "Source artifact directory {} does not exist, skipping.",
-                source_subdir.display()
-            );
         }
     }
 
-    // --- *** 3. Create Wrapper Scripts for Executables in bin and libexec/bin *** ---
+    /* --------------------------------------------------------------------
+     * 2.  non‑bin artifacts  ------------------------------------------------
+     * ------------------------------------------------------------------ */
+    let standard_artifact_dirs = ["lib", "include", "share"];
+    for dir_name in &standard_artifact_dirs {
+        let source_subdir       = formula_content_root.join(dir_name);
+        let target_prefix_subdir = prefix_dir.join(dir_name);
+
+        if source_subdir.is_dir() {
+            fs::create_dir_all(&target_prefix_subdir)?;
+            for entry in fs::read_dir(&source_subdir)? {
+                let entry            = entry?;
+                let source_item_path = entry.path();
+                let file_name        = entry.file_name();
+                if file_name.to_string_lossy().starts_with('.') { continue; }
+
+                let target_link = target_prefix_subdir.join(&file_name);
+                remove_existing_link_target(&target_link)?;
+                unix_fs::symlink(&source_item_path, &target_link).ok();
+                symlinks_created.push(target_link.to_string_lossy().to_string());
+                debug!("  Linked {} -> {}", target_link.display(), source_item_path.display());
+            }
+        }
+    }
+
+    /* --------------------------------------------------------------------
+     * 3.  wrappers for executables (unchanged code) ------------------------
+     * ------------------------------------------------------------------ */
     let target_bin_dir = prefix_dir.join("bin");
-    if !target_bin_dir.exists() {
-        debug!(
-            "Creating target bin directory: {}",
-            target_bin_dir.display()
-        );
-        if let Err(e) = fs::create_dir_all(&target_bin_dir) {
-            error!(
-                "Failed to create target bin directory {}: {}",
-                target_bin_dir.display(),
-                e
-            );
-            // Proceed, but linking executables will likely fail
-        }
-    }
+    fs::create_dir_all(&target_bin_dir).ok();
 
-    // Check formula_content_root/bin
+    // bin/
     let source_bin_dir = formula_content_root.join("bin");
     if source_bin_dir.is_dir() {
         create_wrappers_in_dir(
@@ -193,8 +106,7 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
             &mut symlinks_created,
         )?;
     }
-
-    // Check formula_content_root/libexec and its subdirs (like libexec/bin)
+    // libexec/…
     let source_libexec_dir = formula_content_root.join("libexec");
     if source_libexec_dir.is_dir() {
         create_wrappers_in_dir(
@@ -205,15 +117,15 @@ pub fn link_formula_artifacts(formula: &Formula, installed_keg_path: &Path) -> R
         )?;
     }
 
-    // --- 4. Write install manifest (Unchanged) ---
+    /* --------------------------------------------------------------------
+     * 4.  install‑manifest  -------------------------------------------------
+     * ------------------------------------------------------------------ */
     write_install_manifest(installed_keg_path, &symlinks_created)?;
 
-    debug!(
-        "Successfully completed linking artifacts for {}",
-        formula.name()
-    );
+    debug!("Successfully completed linking artifacts for {}", formula.name());
     Ok(())
 }
+
 
 /// *** Added: Helper to recursively find executables and create wrappers ***
 fn create_wrappers_in_dir(
@@ -916,7 +828,7 @@ fn is_symlink_to(link: &Path, target: &Path) -> Result<bool> {
                         );
                         Ok(false)
                     }
-                    (_, None) => {
+                    (_, _none) => {
                         warn!("Could not get parent directory for link {}", link.display());
                         Ok(false)
                     }

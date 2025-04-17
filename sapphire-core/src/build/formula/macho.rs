@@ -67,407 +67,187 @@ pub fn patch_macho_file(path: &Path, replacements: &HashMap<String, String>) -> 
     }
 }
 
-/// macOS-specific implementation dispatcher.
 #[cfg(target_os = "macos")]
-fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -> Result<bool> {
+fn patch_macho_file_macos(
+    path: &Path,
+    replacements: &HashMap<String, String>,
+) -> Result<bool> {
     debug!("Processing potential Mach-O file: {}", path.display());
 
-    // Read the whole file into a mutable buffer upfront
+    // 1) Read the entire file into memory
     let mut buffer = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            warn!(
-                "  Failed to read file {}: {}. Skipping relocation.",
-                path.display(),
-                e
-            );
+            warn!("  Failed to read {}: {}. Skipping.", path.display(), e);
             return Ok(false);
         }
     };
 
-    if buffer.len() < 32 {
-        // Basic sanity check for minimum Mach-O header size
-        debug!("  Skipping file too small to be Mach-O: {}", path.display());
+    // 2) Quick size check: skip anything too small
+    if buffer.len() < MACHO_HEADER32_SIZE {
+        debug!("  Skipping too‑small file: {}", path.display());
         return Ok(false);
     }
 
-    // Determine file kind using an immutable borrow of the buffer
+    // 3) Classify via magic‑number (no extensions needed)
     let file_kind = match FileKind::parse(buffer.as_slice()) {
         Ok(kind) => kind,
         Err(_) => {
-            // Not an object file recognizable by the 'object' crate
-            debug!(
-                "  Skipping non-object file based on initial parse: {}",
-                path.display()
-            );
+            debug!("  Not an object file: {}", path.display());
             return Ok(false);
         }
     };
 
-    // Check if it's a Mach-O or FAT Mach-O variant we handle
-    let is_macho_or_fat = matches!(
-        file_kind,
-        FileKind::MachO32 | FileKind::MachO64 | FileKind::MachOFat32 | FileKind::MachOFat64
-    );
+    // 4) Only handle real Mach‑O variants here; bail on archives & others
+    match file_kind {
+        FileKind::MachO32
+        | FileKind::MachO64
+        | FileKind::MachOFat32
+        | FileKind::MachOFat64 => {
+            debug!("  Recognized Mach-O kind {:?}: {}", file_kind, path.display());
+        }
+        FileKind::Archive => {
+            debug!("  Skipping static archive (not Mach‑O): {}", path.display());
+            return Ok(false);
+        }
+        other => {
+            debug!("  Not a Mach‑O binary (kind: {:?}), skipping: {}", other, path.display());
+            return Ok(false);
+        }
+    }
 
-    if !is_macho_or_fat {
-        debug!(
-            "  Skipping non-Mach-O/FAT file based on FileKind ({:?}): {}",
-            file_kind,
-            path.display()
-        );
+    // 5) Phase 1/2: collect all needed patches (immutable)
+    let patches = collect_macho_patches(&buffer, file_kind, replacements, path)?;
+    if patches.is_empty() {
+        debug!("  No patches needed for {}", path.display());
         return Ok(false);
     }
 
-    // --- Phase 1 & 2: Collect patch information (immutable analysis) ---
-    let patches = match collect_macho_patches(&buffer, file_kind, replacements, path) {
-        Ok(p) => p,
-        Err(e) => {
-            // Log error during patch collection (e.g., parse error, path too long)
-            error!("Failed to collect patches for {}: {}", path.display(), e);
-            // Decide if this should be a hard error or just prevent patching this file
-            // Returning the error seems appropriate as patching failed.
-            return Err(e);
-        }
-    };
-
-    // --- Phase 3: Apply patches (mutable modification) ---
-    let modified = !patches.is_empty();
-    if modified {
-        debug!("  Applying {} patches to {}", patches.len(), path.display());
-        for patch in patches {
-            // Apply each collected patch to the mutable buffer
-            // Error handling for path length is done during collection, but patch_path_in_buffer has safeguards.
-            patch_path_in_buffer(
-                &mut buffer, // Pass mutable buffer now
-                patch.absolute_offset,
-                patch.allocated_len,
-                &patch.new_path,
-                path,
-            )?; // Propagate potential errors from patching (e.g., bounds checks)
-        }
-
-        // Write the modified buffer back to the file
-        write_patched_buffer(path, &buffer)?;
-        debug!("  Successfully patched and wrote: {}", path.display());
-
-        // Re-sign the binary if on Apple Silicon
-        #[cfg(target_arch = "aarch64")]
-        resign_binary(path)?;
-    } else {
-        debug!("  No patches needed for {}", path.display());
+    // 6) Phase 3: apply each patch to the buffer (mutable)
+    debug!("  Applying {} patches to {}", patches.len(), path.display());
+    for patch in patches {
+        patch_path_in_buffer(
+            &mut buffer,
+            patch.absolute_offset,
+            patch.allocated_len,
+            &patch.new_path,
+            path,
+        )?;
     }
 
-    Ok(modified)
+    // 7) Write the modified buffer back to disk atomically
+    write_patched_buffer(path, &buffer)?;
+    debug!("  Wrote patched Mach-O: {}", path.display());
+
+    // 8) Re‑sign on Apple Silicon
+    #[cfg(target_arch = "aarch64")]
+    {
+        resign_binary(path)?;
+        debug!("  Re‑signed patched binary: {}", path.display());
+    }
+
+    Ok(true)
 }
 
-/// Phase 1 & 2: Parses the buffer (immutably) and collects necessary patches.
+
+/// ASCII magic for the start of a static `ar` archive  (`!<arch>\n`)
+#[cfg(target_os = "macos")]
+const AR_MAGIC: &[u8; 8] = b"!<arch>\n";
+
+/// Examine a buffer (Mach‑O or FAT) and return every patch we must apply.
 #[cfg(target_os = "macos")]
 fn collect_macho_patches<'data>(
-    buffer: &'data [u8], // Takes immutable buffer slice
-    file_kind: FileKind,
+    buffer: &'data [u8],
+    kind: FileKind,
     replacements: &HashMap<String, String>,
-    file_path_for_log: &Path,
+    path_for_log: &Path,
 ) -> Result<Vec<PatchInfo>> {
-    let mut patches_to_apply = Vec::new();
+    let mut patches = Vec::<PatchInfo>::new();
 
-    match file_kind {
+    match kind {
+        /* ---------------------------------------------------------- */
         FileKind::MachO32 => {
-            debug!(
-                "  Collecting patches for single-arch Mach-O 32-bit: {}",
-                file_path_for_log.display()
-            );
-            // Parse the entire buffer as a single 32-bit Mach-O file
-            let macho_file = MachOFile::<MachHeader32<Endianness>, _>::parse(buffer)?;
-            // Find patches within this file, base offset is 0
-            patches_to_apply.extend(find_patches_in_commands(
-                &macho_file,
-                0, // Base offset for this "slice" is 0
-                MACHO_HEADER32_SIZE,
-                replacements,
-                file_path_for_log,
+            let m = MachOFile::<MachHeader32<Endianness>, _>::parse(buffer)?;
+            patches.extend(find_patches_in_commands(
+                &m, 0, MACHO_HEADER32_SIZE, replacements, path_for_log,
             )?);
         }
+        /* ---------------------------------------------------------- */
         FileKind::MachO64 => {
-            debug!(
-                "  Collecting patches for single-arch Mach-O 64-bit: {}",
-                file_path_for_log.display()
-            );
-            // Parse the entire buffer as a single 64-bit Mach-O file
-            let macho_file = MachOFile::<MachHeader64<Endianness>, _>::parse(buffer)?;
-            // Find patches within this file, base offset is 0
-            patches_to_apply.extend(find_patches_in_commands(
-                &macho_file,
-                0, // Base offset for this "slice" is 0
-                MACHO_HEADER64_SIZE,
-                replacements,
-                file_path_for_log,
+            let m = MachOFile::<MachHeader64<Endianness>, _>::parse(buffer)?;
+            patches.extend(find_patches_in_commands(
+                &m, 0, MACHO_HEADER64_SIZE, replacements, path_for_log,
             )?);
         }
+        /* ---------------------------------------------------------- */
         FileKind::MachOFat32 => {
-            debug!(
-                "  Collecting patches for FAT Mach-O 32-bit: {}",
-                file_path_for_log.display()
-            );
-            // Parse the FAT header
-            let fat_file = MachOFatFile32::parse(buffer)?;
-            // Iterate through architecture slices defined in the FAT header
-            for (index, arch) in fat_file.arches().iter().enumerate() {
-                let cpu_type = arch.cputype();
-                // Filter for architectures we might need to patch (adjust as needed)
-                if cpu_type != object::macho::CPU_TYPE_X86_64
-                    && cpu_type != object::macho::CPU_TYPE_ARM64 // Even in FAT32, slices can be 64-bit (though unusual)
-                    && cpu_type != object::macho::CPU_TYPE_X86
-                // Add 32-bit x86 if needed
-                {
-                    debug!(
-                        "    Skipping unsupported architecture slice {} (type 0x{:x}) in {}",
-                        index,
-                        cpu_type,
-                        file_path_for_log.display()
-                    );
+            let fat = MachOFatFile32::parse(buffer)?;
+            for (idx, arch) in fat.arches().iter().enumerate() {
+                let (off, sz) = arch.file_range();
+                let slice     = &buffer[off as usize .. (off + sz) as usize];
+
+                /* short‑circuit: static .a archive inside FAT ---------- */
+                if slice.starts_with(AR_MAGIC) {
+                    debug!("    [slice {}] static archive – skipped", idx);
                     continue;
                 }
 
-                let (offset, size) = arch.file_range();
-                let offset = offset as usize;
-                let size = size as usize;
-
-                // Validate slice bounds against the main buffer length
-                if offset
-                    .checked_add(size)
-                    .map_or(true, |end| end > buffer.len())
-                {
-                    warn!(
-                        "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}",
-                        offset,
-                        size,
-                        index,
-                        file_path_for_log.display()
-                    );
-                    continue; // Skip invalid slice
-                }
-
-                // Get an immutable slice of the buffer corresponding to this architecture
-                let slice_data = &buffer[offset..offset + size];
-                // Check the magic number to determine bitness
-                if slice_data.len() < 4 {
-                    warn!(
-                        "    FAT arch slice {} too small to read magic number in {}",
-                        index,
-                        file_path_for_log.display()
-                    );
-                    continue;
-                }
-                let magic = u32::from_le_bytes([
-                    slice_data[0],
-                    slice_data[1],
-                    slice_data[2],
-                    slice_data[3],
-                ]);
-                let (header_size, is_64bit) = match magic {
-                    MH_MAGIC => (MACHO_HEADER32_SIZE, false),
-                    MH_MAGIC_64 => (MACHO_HEADER64_SIZE, true),
-                    _ => {
-                        warn!(
-                            "    Unknown magic number 0x{:x} for FAT arch slice {} in {}",
-                            magic,
-                            index,
-                            file_path_for_log.display()
-                        );
-                        continue;
-                    }
-                };
-
-                // Parse the slice based on bitness
-                if is_64bit {
-                    match MachOFile::<MachHeader64<Endianness>, _>::parse(slice_data) {
-                        Ok(macho_file_slice) => {
-                            debug!(
-                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 64-bit.",
-                                index, arch.architecture(), cpu_type, arch.cpusubtype()
-                            );
-                            patches_to_apply.extend(find_patches_in_commands(
-                                &macho_file_slice,
-                                offset,
-                                header_size,
-                                replacements,
-                                file_path_for_log,
+                /* decide 32 / 64 by magic ------------------------------ */
+                if slice.len() >= 4 {
+                    let magic = u32::from_le_bytes(slice[0..4].try_into().unwrap());
+                    if magic == MH_MAGIC_64 {
+                        if let Ok(m) = MachOFile::<MachHeader64<Endianness>, _>::parse(slice) {
+                            patches.extend(find_patches_in_commands(
+                                &m, off as usize, MACHO_HEADER64_SIZE, replacements, path_for_log,
                             )?);
                         }
-                        Err(e) => {
-                            warn!(
-                                "    Failed to parse Mach-O 64-bit slice {} in {}: {}",
-                                index,
-                                file_path_for_log.display(),
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    match MachOFile::<MachHeader32<Endianness>, _>::parse(slice_data) {
-                        Ok(macho_file_slice) => {
-                            debug!(
-                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 32-bit.",
-                                index, arch.architecture(), cpu_type, arch.cpusubtype()
-                            );
-                            patches_to_apply.extend(find_patches_in_commands(
-                                &macho_file_slice,
-                                offset,
-                                header_size,
-                                replacements,
-                                file_path_for_log,
+                    } else if magic == MH_MAGIC {
+                        if let Ok(m) = MachOFile::<MachHeader32<Endianness>, _>::parse(slice) {
+                            patches.extend(find_patches_in_commands(
+                                &m, off as usize, MACHO_HEADER32_SIZE, replacements, path_for_log,
                             )?);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "    Failed to parse Mach-O 32-bit slice {} in {}: {}",
-                                index,
-                                file_path_for_log.display(),
-                                e
-                            );
                         }
                     }
                 }
             }
         }
+        /* ---------------------------------------------------------- */
         FileKind::MachOFat64 => {
-            debug!(
-                "  Collecting patches for FAT Mach-O 64-bit: {}",
-                file_path_for_log.display()
-            );
-            // Parse the FAT header
-            let fat_file = MachOFatFile64::parse(buffer)?;
-            // Iterate through architecture slices
-            for (index, arch) in fat_file.arches().iter().enumerate() {
-                let cpu_type = arch.cputype();
-                // Filter for relevant architectures
-                if cpu_type != object::macho::CPU_TYPE_X86_64
-                    && cpu_type != object::macho::CPU_TYPE_ARM64
-                {
-                    debug!(
-                        "    Skipping unsupported architecture slice {} (type 0x{:x}) in {}",
-                        index,
-                        cpu_type,
-                        file_path_for_log.display()
-                    );
+            let fat = MachOFatFile64::parse(buffer)?;
+            for (idx, arch) in fat.arches().iter().enumerate() {
+                let (off, sz) = arch.file_range();
+                let slice     = &buffer[off as usize .. (off + sz) as usize];
+
+                if slice.starts_with(AR_MAGIC) {
+                    debug!("    [slice {}] static archive – skipped", idx);
                     continue;
                 }
 
-                let (offset, size) = arch.file_range();
-                let offset = offset as usize;
-                let size = size as usize;
-
-                // Validate slice bounds
-                if offset
-                    .checked_add(size)
-                    .map_or(true, |end| end > buffer.len())
-                {
-                    warn!(
-                        "    Invalid FAT arch slice range (offset={}, size={}) for slice {} in {}",
-                        offset,
-                        size,
-                        index,
-                        file_path_for_log.display()
-                    );
-                    continue;
-                }
-
-                // Get immutable slice data
-                let slice_data = &buffer[offset..offset + size];
-                // Check the magic number to determine bitness
-                if slice_data.len() < 4 {
-                    warn!(
-                        "    FAT arch slice {} too small to read magic number in {}",
-                        index,
-                        file_path_for_log.display()
-                    );
-                    continue;
-                }
-                let magic = u32::from_le_bytes([
-                    slice_data[0],
-                    slice_data[1],
-                    slice_data[2],
-                    slice_data[3],
-                ]);
-                let (header_size, is_64bit) = match magic {
-                    MH_MAGIC => (MACHO_HEADER32_SIZE, false),
-                    MH_MAGIC_64 => (MACHO_HEADER64_SIZE, true),
-                    _ => {
-                        warn!(
-                            "    Unknown magic number 0x{:x} for FAT arch slice {} in {}",
-                            magic,
-                            index,
-                            file_path_for_log.display()
-                        );
-                        continue;
-                    }
-                };
-
-                // Parse the slice based on bitness
-                if is_64bit {
-                    match MachOFile::<MachHeader64<Endianness>, _>::parse(slice_data) {
-                        Ok(macho_file_slice) => {
-                            debug!(
-                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 64-bit.",
-                                index, arch.architecture(), cpu_type, arch.cpusubtype()
-                            );
-                            patches_to_apply.extend(find_patches_in_commands(
-                                &macho_file_slice,
-                                offset,
-                                header_size,
-                                replacements,
-                                file_path_for_log,
+                if slice.len() >= 4 {
+                    let magic = u32::from_le_bytes(slice[0..4].try_into().unwrap());
+                    if magic == MH_MAGIC_64 {
+                        if let Ok(m) = MachOFile::<MachHeader64<Endianness>, _>::parse(slice) {
+                            patches.extend(find_patches_in_commands(
+                                &m, off as usize, MACHO_HEADER64_SIZE, replacements, path_for_log,
                             )?);
                         }
-                        Err(e) => {
-                            warn!(
-                                "    Failed to parse Mach-O 64-bit slice {} in {}: {}",
-                                index,
-                                file_path_for_log.display(),
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    match MachOFile::<MachHeader32<Endianness>, _>::parse(slice_data) {
-                        Ok(macho_file_slice) => {
-                            debug!(
-                                "      Analyzing slice {} (Arch: {:?}, Type: 0x{:x}, Subtype: 0x{:x}) as 32-bit.",
-                                index, arch.architecture(), cpu_type, arch.cpusubtype()
-                            );
-                            patches_to_apply.extend(find_patches_in_commands(
-                                &macho_file_slice,
-                                offset,
-                                header_size,
-                                replacements,
-                                file_path_for_log,
+                    } else if magic == MH_MAGIC {
+                        if let Ok(m) = MachOFile::<MachHeader32<Endianness>, _>::parse(slice) {
+                            patches.extend(find_patches_in_commands(
+                                &m, off as usize, MACHO_HEADER32_SIZE, replacements, path_for_log,
                             )?);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "    Failed to parse Mach-O 32-bit slice {} in {}: {}",
-                                index,
-                                file_path_for_log.display(),
-                                e
-                            );
                         }
                     }
                 }
             }
         }
-        // This case should not be reached due to the check in patch_macho_file_macos,
-        // but handle defensively.
-        _ => {
-            warn!(
-                "Unexpected file kind encountered in collect_macho_patches: {:?}",
-                file_kind
-            );
-        }
+        /* ---------------------------------------------------------- */
+        _ => { /* archives & unknown kinds are ignored */ }
     }
 
-    Ok(patches_to_apply)
+    Ok(patches)
 }
+
 
 /// Iterates through load commands of a parsed MachOFile (slice) and returns patch details.
 /// This function operates immutably on the parsed file data.
