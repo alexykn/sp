@@ -34,7 +34,6 @@ The project is split into:
   - `update`, `search`, `info`, `install` (formulae), and `uninstall` (formulae) are implemented but may contain bugs.
 - **Stability:**  
   - No system-breaking issues have been observed after reinstalling all previously installed formulae.  
-  - Further testing is ongoing; expected to reach full bottle & cask stability by Monday, April 21, 2025.
 
 ## Roadmap
 
@@ -46,7 +45,6 @@ The project is split into:
 6. **Reinstall feature** to reinstall existing formulae or casks easily.
 7. **Isolate Sapphire directory** under `/opt/sapphire` instead of Homebrew’s prefix, enabling independent development and testing.
 8. **Add `sapphire init`** setup command to bootstrap Sapphire in one step (similar to `brew install --prefix`).
-9. **CLI UX Improvements:** Ongoing effort to refine the interface—help welcome!
 
 ## Upcoming Usage Examples
 
