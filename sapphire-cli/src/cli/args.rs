@@ -48,6 +48,10 @@ pub enum Commands {
     /// Install a formula or cask
     Install(InstallArgs),
 
-    /// Uninstall a formula or cask (placeholder)
-    Uninstall { name: String },
+    /// Uninstall one or more formulas or casks
+    Uninstall {
+        /// The names of the formulas or casks to uninstall
+        #[arg(required = true)] // Ensure at least one name is given
+        names: Vec<String>
+    },
 }

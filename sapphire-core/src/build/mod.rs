@@ -8,6 +8,7 @@ pub mod formula;
 use crate::utils::error::{Result, SapphireError};
 use std::path::Path;
 use std::process::Command;
+use std::process::Stdio; // <-- Added
 
 // Re-export common functionality
 pub use formula::{get_cellar_path, get_formula_cellar_path, write_receipt};
@@ -63,32 +64,34 @@ pub fn extract_archive_strip_components(
         .arg(target_dir)
         .arg(format!("--strip-components={}", strip_components)); // Strip leading components
 
-    match extension {
+    let cmd = match extension {
         "gz" | "tgz" => {
-            cmd.arg("-z");
+            cmd.arg("-z")
         } // gzip
         "bz2" | "tbz" | "tbz2" => {
-            cmd.arg("-j");
+            cmd.arg("-j")
         } // bzip2
         "xz" | "txz" => {
-            cmd.arg("-J");
+            cmd.arg("-J")
         } // xz
-        "tar" => { /* No compression flag needed */ }
-        // TODO: Add zip support if needed (would require a different command)
-        // "zip" => return extract_zip_strip(archive_path, target_dir, strip_components),
+        "tar" => &mut cmd, // No flag needed
         _ => {
             return Err(SapphireError::Generic(format!(
                 "Unsupported archive format for stripping: {}",
                 extension
             )))
         }
-    }
+    };
 
-    let output = cmd.output()?;
+    // Capture stdout/stderr
+    let output = cmd.stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()?;
 
     if !output.status.success() {
-        eprintln!("Tar stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("Tar stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        // Log errors instead of printing to console
+        log::error!("Tar stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        log::error!("Tar stderr:\n{}", String::from_utf8_lossy(&output.stderr));
         return Err(SapphireError::Generic(format!(
             "Failed to extract archive with strip-components: {}",
             String::from_utf8_lossy(&output.stderr)

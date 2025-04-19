@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write; // Keep for write_patched_buffer
 use std::path::Path;
-use std::process::Command as StdCommand; // Keep for codesign
+use std::process::{Command as StdCommand, Stdio}; // Keep for codesign
 use tempfile::NamedTempFile; // Keep for write_patched_buffer
 
 // --- Imports needed for Mach-O patching (macOS only) ---
@@ -437,11 +437,7 @@ fn write_patched_buffer(original_path: &Path, buffer: &[u8]) -> Result<()> {
 /// This is typically necessary on Apple Silicon (aarch64) after modifying executables.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn resign_binary(path: &Path) -> Result<()> {
-    debug!("    Re-signing patched binary: {}", path.display());
-    // Execute `codesign -s - --force --preserve-metadata=identifier,entitlements <path>`
-    // -s - : Use ad-hoc signing (no specific identity needed)
-    // --force : Overwrite existing signature
-    // --preserve-metadata=... : Keep existing identifier and entitlements if possible
+    // Suppressed: debug!("    Re-signing patched binary: {}", path.display());
     let status = StdCommand::new("codesign")
         .args([
             "-s",
@@ -450,29 +446,25 @@ fn resign_binary(path: &Path) -> Result<()> {
             "--preserve-metadata=identifier,entitlements",
         ])
         .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status() // Execute the command and get its exit status
         .map_err(|e| {
-            // Handle errors in *executing* the command (e.g., codesign not found)
             error!(
                 "    Failed to execute codesign command for {}: {}",
                 path.display(),
                 e
             );
-            SapphireError::Io(e) // Wrap the OS error
+            SapphireError::Io(e)
         })?;
-
-    // Check if the command executed successfully (exit code 0)
     if status.success() {
-        debug!("    Successfully re-signed {}", path.display());
+        // Suppressed: debug!("    Successfully re-signed {}", path.display());
         Ok(())
     } else {
-        // Log if codesign command returned a non-zero exit status
         error!(
             "    codesign command failed for {} with status: {}",
-            path.display(),
-            status
+            path.display(), status
         );
-        // Return a specific error indicating codesign failure
         Err(SapphireError::CodesignError(format!(
             "Failed to re-sign patched binary {}, it may not be executable. Exit status: {}",
             path.display(),

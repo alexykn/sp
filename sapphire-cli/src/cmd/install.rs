@@ -1,27 +1,31 @@
-// src/cmd/install.rs
-// *** Corrected async/await usage ***
+// src/cmd/install.rs — bounded‑concurrency work‑queue implementation
+// --------------------------------------------------------------------------------
+// The installer now uses an explicit queue plus a Tokio `Semaphore` to cap the
+// number of parallel bottle / cask installs **while still honouring the
+// dependency DAG** calculated by `DependencyResolver`.
+// --------------------------------------------------------------------------------
 
 use clap::Args;
-use futures::future::BoxFuture;
-use log::debug;
+use colored::Colorize;
+use log::{debug, error, info, warn};
 use reqwest::Client;
 use sapphire_core::build;
-use sapphire_core::dependency::{
-    DependencyResolver, DependencyTag, ResolutionContext, ResolutionStatus, ResolvedDependency,
-};
-use sapphire_core::fetch::api;
+use sapphire_core::dependency::{DependencyResolver, DependencyTag, ResolutionContext, ResolutionStatus};
+use sapphire_core::formulary::Formulary;
 use sapphire_core::keg::KegRegistry;
 use sapphire_core::model::cask::Cask;
 use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use indicatif::ProgressBar;
-use colored::Colorize;
-use std::time::Duration;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::task::{JoinError, JoinSet};
+use futures::future::{BoxFuture, FutureExt}; // Add this import // Ensure Arc is imported if not already
+
+// ==================================================== CLI args
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
@@ -35,688 +39,355 @@ pub struct InstallArgs {
     include_optional: bool,
     #[arg(long)]
     skip_recommended: bool,
+    #[arg(long, default_value_t = 4)]
+    max_concurrent_installs: usize,
 }
 
-pub async fn execute(args: &InstallArgs, config: &Config) -> Result<()> {
-    let cache = Cache::new(&config.cache_dir)
-        .map_err(|e| SapphireError::Generic(format!("Failed to initialize cache: {}", e)))?;
+// ==================================================== public entry point
 
-    let formulary = sapphire_core::formulary::Formulary::new(config.clone());
-    let keg_registry = KegRegistry::new(config.clone());
+// --- Entry Point Modification ---
+// The main `execute` function now needs to await the BoxFuture
+pub async fn execute(args: &InstallArgs, cfg: &Config) -> Result<()> {
+    if args.cask {
+        // Await the BoxFuture returned by install_casks
+        return install_casks(&args.names, args.max_concurrent_installs, cfg).await;
+    }
 
-    let context = ResolutionContext {
+    if args.skip_deps {
+        warn!("--skip-deps not fully supported; dependencies will still be processed.");
+    }
+
+    install_formulae(args, cfg).await
+}
+
+// Helper (ensure it exists)
+fn join_to_err(e: JoinError) -> SapphireError {
+    SapphireError::Generic(format!("Join error: {e}"))
+}
+
+// ==================================================== internal state for bottle queue
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InstallState {
+    Pending,          // waiting for deps
+    Ready,            // in queue, waiting for permit
+    Running,          // currently installing
+    Ok(PathBuf),      // success (opt path)
+    Failed(String),   // error message
+}
+
+#[derive(Debug)]
+struct Node {
+    formula: Arc<Formula>,
+    deps_remaining: usize,
+    dependents: Vec<String>,
+    state: InstallState,
+}
+
+// ==================================================== formula / bottle workflow
+
+async fn install_formulae(args: &InstallArgs, cfg: &Config) -> Result<()> {
+    info!("{}", "📦 Beginning bottle installation…".blue().bold());
+
+    // -------- Phase 1: dependency resolution (sync) --------
+    let formulary    = Formulary::new(cfg.clone());
+    let keg_registry = KegRegistry::new(cfg.clone());
+    let ctx = ResolutionContext {
         formulary: &formulary,
         keg_registry: &keg_registry,
-        sapphire_prefix: &config.prefix,
+        sapphire_prefix: &cfg.prefix,
         include_optional: args.include_optional,
         include_test: false,
         skip_recommended: args.skip_recommended,
         force_build: false,
     };
+    let mut resolver = DependencyResolver::new(ctx);
+    let graph        = resolver.resolve_targets(&args.names)?;
+    if graph.install_plan.is_empty() {
+        info!("Everything already installed – nothing to do.");
+        return Ok(());
+    }
 
-    let mut resolver = DependencyResolver::new(context);
-
-    if args.cask {
-        for name in &args.names {
-            // Cask (app) installation with dnf5-inspired design
-            println!(
-                "{}",
-                format!("\nInstalling cask: {}", name).blue().bold()
-            );
-            debug!("Installing cask: {}", name);
-            install_cask(name, &cache, false).await?;
-            println!(
-                "{}",
-                format!("✔ Installed cask: {}", name).green().bold()
-            );
+    // -------- Phase 2: build node map from plan --------
+    let mut nodes: HashMap<String, Node> = HashMap::new();
+    for dep in &graph.install_plan {
+        if dep.status == ResolutionStatus::Installed {
+            continue; // skip fully installed items
         }
-    } else {
-        let resolved_graph = resolver.resolve_targets(&args.names)?;
+        nodes.insert(
+            dep.formula.name().to_string(),
+            Node {
+                formula: dep.formula.clone(),
+                deps_remaining: 0,
+                dependents: vec![],
+                state: InstallState::Pending,
+            },
+        );
+    }
 
-        if args.skip_deps {
-            debug!("Skipping dependency installation due to --skip-deps flag.");
-            for target_name in &args.names {
-                let resolved_dep = match resolved_graph
-                    .install_plan
-                    .iter()
-                    .find(|d| d.formula.name() == target_name)
-                {
-                    Some(dep) => dep,
-                    None => {
-                    log::debug!(
-                            "Target '{}' not found in final install plan despite resolution.",
-                            target_name
-                        );
-                        continue;
-                    }
-                };
-                if resolved_dep.status != ResolutionStatus::Installed {
-                    let pb = ProgressBar::new_spinner();
-                    pb.set_message(format!("Installing {} (deps skipped)", target_name));
-                    pb.enable_steady_tick(Duration::from_millis(100));
-                    let installed_paths_for_env =
-                        get_all_currently_installed_opt_paths(&resolver, &keg_registry)?;
-                    install_formula_internal(
-                        resolved_dep.formula.clone(),
-                        resolved_dep,
-                        config,
-                        &installed_paths_for_env,
-                        /* build_from_source disabled */ false,
-                    )
-                    .await?;
-                    pb.finish_with_message(format!("Installed {}", target_name));
-                } else {
-                    debug!("Target {} already installed.", target_name);
-                }
+    // collect edges without violating the borrow‑checker
+    let mut edges: Vec<(String, String)> = vec![]; // (parent, dependency)
+    for name in nodes.keys().cloned().collect::<Vec<_>>() {
+        let deps = nodes[&name].formula.dependencies()?;
+        for d in deps {
+            if d.tags.contains(DependencyTag::TEST)
+                || (d.tags.contains(DependencyTag::OPTIONAL) && !args.include_optional)
+                || (d.tags.contains(DependencyTag::RECOMMENDED) && args.skip_recommended)
+            {
+                continue;
             }
-        } else {
-            // Multi-pass Installation Logic
-            // Spinner for processing installation plan
+            if nodes.contains_key(&d.name) {
+                edges.push((name.clone(), d.name.clone()));
+            }
+        }
+    }
 
-            let mut install_status: HashMap<String, ResolutionStatus> = resolved_graph
-                .install_plan
-                .iter()
-                .map(|dep| (dep.formula.name().to_string(), dep.status.clone()))
-                .collect();
-            let mut installed_opt_paths: HashMap<String, PathBuf> = resolved_graph
-                .install_plan
-                .iter()
-                .filter_map(|dep| {
-                    if dep.status == ResolutionStatus::Installed {
-                        dep.opt_path.as_ref().and_then(|p| {
-                            if p.exists() {
-                                Some((dep.formula.name().to_string(), p.clone()))
-                            } else {
-                                log::debug!(
-                                    "Opt path {} for installed dependency {} does not exist.",
-                                    p.display(),
-                                    dep.formula.name()
-                                );
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            add_globally_installed_paths(
-                &resolver,
-                &keg_registry,
-                &mut installed_opt_paths,
-                &mut install_status,
-            )?;
-            let total_to_install_initially = install_status
-                .iter()
-                .filter(|(_, status)| {
-                    **status == ResolutionStatus::Missing || **status == ResolutionStatus::Requested
-                })
-                .count();
-            let mut remaining_to_install = total_to_install_initially;
-            let mut pass_count = 0;
-            let max_passes = resolved_graph.install_plan.len() + 2;
+    // apply edges to nodes
+    for (parent, dep) in edges {
+        nodes.get_mut(&parent).unwrap().deps_remaining += 1;
+        nodes.get_mut(&dep).unwrap().dependents.push(parent);
+    }
 
-            while remaining_to_install > 0 && pass_count < max_passes {
-                pass_count += 1;
-                let mut progress_made_this_pass = false;
-                let mut newly_installed_in_pass = 0;
-                let keys_to_process: Vec<String> = resolved_graph
-                    .install_plan
-                    .iter()
-                    .filter_map(|resolved_dep| {
-                        let name = resolved_dep.formula.name();
-                        if install_status.get(name).map_or(false, |s| {
-                            *s == ResolutionStatus::Missing || *s == ResolutionStatus::Requested
-                        }) {
-                            Some(name.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                debug!(
-                    "Installation pass {} ({} remaining)",
-                    pass_count,
-                    keys_to_process.len()
-                );
-                if keys_to_process.is_empty() {
-                    if remaining_to_install > 0 {
-                        log::error!("Installation loop inconsistency: {} items reported remaining, but none found needing installation in plan.", remaining_to_install);
-                    }
+    // seed queue with nodes ready to install
+    let mut queue: VecDeque<String> = nodes
+        .iter()
+        .filter(|(_, n)| n.deps_remaining == 0)
+        .map(|(n, _)| n.clone())
+        .collect();
+
+    // -------- Phase 3: concurrent work‑queue --------
+    let sem   = Arc::new(Semaphore::new(args.max_concurrent_installs));
+    let mut js: JoinSet<(String, Result<PathBuf>)> = JoinSet::new();
+    let client = Arc::new(Client::new());
+
+    while !queue.is_empty() || !js.is_empty() {
+        // spawn tasks while permits & queue allow
+        while let Some(name) = queue.pop_front() {
+            match sem.clone().try_acquire_owned() {
+                Ok(permit) => {
+                    let node     = nodes.get_mut(&name).unwrap();
+                    node.state   = InstallState::Running;
+                    let formula  = node.formula.clone();
+                    let cfg      = cfg.clone();
+                    let cli      = client.clone();
+
+                    js.spawn(async move {
+                        let res = install_formula_task(&name, formula, cfg, cli).await;
+                        drop(permit);
+                        (name, res)
+                    });
+                }
+                Err(_) => {
+                    // no permit – push back & break
+                    queue.push_front(name);
                     break;
                 }
+            }
+        }
 
-                for name in keys_to_process {
-                    let current_status = install_status
-                        .get(&name)
-                        .cloned()
-                        .unwrap_or(ResolutionStatus::Missing);
-                    if current_status != ResolutionStatus::Missing
-                        && current_status != ResolutionStatus::Requested
-                    {
-                        continue;
-                    }
-                    let resolved_dep = resolved_graph
-                        .install_plan
-                        .iter()
-                        .find(|d| d.formula.name() == name)
-                        .expect("Item in keys_to_process must be in install_plan");
-                    let direct_deps = match resolved_dep.formula.dependencies() {
-                        Ok(deps) => deps,
-                        Err(e) => {
-                            log::error!(
-                                "Error getting dependencies for {}: {}. Skipping formula.",
-                                name,
-                                e
-                            );
-                            continue;
-                        }
-                    };
-                    let mut all_deps_met = true;
-                    for dep in &direct_deps {
-                        if !should_consider_dependency(dep, args) {
-                            continue;
-                        }
-                        let dep_status = install_status.get(&dep.name).cloned();
-                        let is_met = match dep_status {
-                            Some(ResolutionStatus::Installed) => check_and_update_opt_path(
-                                &dep.name,
-                                &keg_registry,
-                                &mut installed_opt_paths,
-                            ),
-                            Some(ResolutionStatus::SkippedOptional) => true,
-                            _ => false,
-                        };
-                        if !is_met {
-                            let keg_exists = keg_registry.get_installed_keg(&dep.name)?.is_some();
-                            if keg_exists
-                                && install_status
-                                    .get(&dep.name)
-                                    .map_or(false, |s| *s == ResolutionStatus::Installed)
-                            {
-                            log::debug!("Keg found for {} but opt path does not exist (needs linking). Considering dependency met for install check.", dep.name);
-                            } else {
-                                log::debug!("Dependency '{}' for '{}' not met (status: {:?}, opt_path_exists: {}).", dep.name, name, dep_status, installed_opt_paths.contains_key(&dep.name));
-                                all_deps_met = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    if all_deps_met {
-                        log::debug!("All dependencies met for: {}", name);
-                        let all_current_installed_paths: Vec<PathBuf> =
-                            installed_opt_paths.values().cloned().collect();
-                        match install_formula_internal(
-                            resolved_dep.formula.clone(),
-                            resolved_dep,
-                            config,
-                            &all_current_installed_paths,
-                            /* build_from_source disabled */ false,
-                        )
-                        .await
-                        {
-                            // Await here
-                            Ok(installed_opt_path) => {
-                                log::debug!("Successfully installed {} internally.", name);
-                                install_status.insert(name.clone(), ResolutionStatus::Installed);
-                                if installed_opt_path.exists() {
-                                    installed_opt_paths.insert(name.clone(), installed_opt_path);
-                                } else {
-                                    log::error!( "Install succeeded for {}, but opt path {} was not found immediately after. Check linking.", name, installed_opt_path.display() );
-                                }
-                                progress_made_this_pass = true;
-                                newly_installed_in_pass += 1;
-                            }
-                            Err(e) => {
-                                log::error!("Error installing {}: {}", name, e);
-                                return Err(e);
-                            }
-                        }
-                    } else {
-                        log::debug!(
-                            "Deferring installation of '{}' until dependencies are ready.",
-                            name
-                        );
-                    }
+        if let Some(join_res) = js.join_next().await {
+            let (name, outcome) = join_res.expect("task panicked");
+            let node = nodes.get_mut(&name).unwrap();
+            match outcome {
+                Ok(opt_path) => {
+                    node.state = InstallState::Ok(opt_path);
+                    debug!("{name} installed successfully");
                 }
-                remaining_to_install -= newly_installed_in_pass;
-                if !progress_made_this_pass && remaining_to_install > 0 {
-                    let remaining_names: Vec<_> = install_status
-                        .iter()
-                        .filter(|(_, s)| {
-                            **s == ResolutionStatus::Missing || **s == ResolutionStatus::Requested
-                        })
-                        .map(|(n, _)| n.clone())
-                        .collect();
-                    log::error!(
-                        "No progress made in installation pass {}. Could not install: {:?}",
-                        pass_count,
-                        remaining_names
-                    );
-                    for r_name in &remaining_names {
-                        if let Some(r_dep) = resolved_graph
-                            .install_plan
-                            .iter()
-                            .find(|d| d.formula.name() == r_name)
-                        {
-                            if let Ok(deps) = r_dep.formula.dependencies() {
-                                log::error!(
-                                    "  Dependencies for {}: {:?}",
-                                    r_name,
-                                    deps.iter()
-                                        .map(|d| (&d.name, install_status.get(&d.name)))
-                                        .collect::<Vec<_>>()
-                                );
-                            }
-                        }
-                    }
-                    return Err(SapphireError::DependencyError(format!(
-                        "Unresolved dependencies or cycle after pass {}. Remaining: {:?}",
-                        pass_count, remaining_names
-                    )));
+                Err(e) => {
+                    node.state = InstallState::Failed(e.to_string());
+                    error!("install of {name} failed: {e}");
                 }
             }
-            if remaining_to_install > 0 {
-                let remaining_names: Vec<_> = install_status
-                    .iter()
-                    .filter(|(_, s)| {
-                        **s == ResolutionStatus::Missing || **s == ResolutionStatus::Requested
-                    })
-                    .map(|(n, _)| n.clone())
-                    .collect();
-                log::error!("Installation incomplete (max passes {} reached or other issue). Remaining: {:?}", max_passes, remaining_names);
-                return Err(SapphireError::DependencyError(format!(
-                    "Installation incomplete. Remaining: {:?}",
-                    remaining_names
-                )));
+            info!("Finished install: {name}");
+
+            // propagate to dependents
+            let childrens = node.dependents.clone();
+            let succeeded = matches!(node.state, InstallState::Ok(_));
+            for child in childrens {
+                let cnode = nodes.get_mut(&child).unwrap();
+                if succeeded {
+                    cnode.deps_remaining -= 1;
+                    if cnode.deps_remaining == 0 && matches!(cnode.state, InstallState::Pending) {
+                        cnode.state = InstallState::Ready;
+                        queue.push_back(child);
+                    }
+                } else {
+                    if !matches!(cnode.state, InstallState::Failed(_)) {
+                        cnode.state = InstallState::Failed(format!("dependency {name} failed"));
+                    }
+                }
             }
         }
     }
-    Ok(())
+
+    let failures: Vec<_> = nodes
+        .iter()
+        .filter_map(|(n, node)| match &node.state {
+            InstallState::Failed(msg) => Some((n, msg)),
+            _ => None,
+        })
+        .collect();
+
+    if failures.is_empty() {
+        info!("{}", "✅ All bottles installed".green().bold());
+        Ok(())
+    } else {
+        for (pkg, msg) in &failures {
+            error!("✖ {pkg}: {msg}");
+        }
+        Err(SapphireError::InstallError(format!("{} bottle(s) failed", failures.len())))
+    }
 }
 
-// Helper functions (should_consider_dependency, check_and_update_opt_path, get_all_currently_installed_opt_paths, add_globally_installed_paths) remain unchanged
-fn should_consider_dependency(
-    dep: &sapphire_core::dependency::Dependency,
-    args: &InstallArgs,
-) -> bool {
-    let tags = dep.tags;
-    if tags.contains(DependencyTag::TEST) {
-        return false;
-    }
-    if tags.contains(DependencyTag::OPTIONAL) && !args.include_optional {
-        return false;
-    }
-    if tags.contains(DependencyTag::RECOMMENDED) && args.skip_recommended {
-        return false;
-    }
-    true
-}
-fn check_and_update_opt_path(
+// ---------------- helper: single bottle task ---------------------------------
+
+async fn install_formula_task(
     name: &str,
-    keg_registry: &KegRegistry,
-    installed_opt_paths: &mut HashMap<String, PathBuf>,
-) -> bool {
-    if installed_opt_paths.get(name).map_or(false, |p| p.exists()) {
-        return true;
-    }
-    let opt_path = keg_registry.get_opt_path(name);
-    if opt_path.exists() {
-        log::debug!(
-            "Found existing opt path for {}: {}",
-            name,
-            opt_path.display()
-        );
-        installed_opt_paths.insert(name.to_string(), opt_path);
-        return true;
-    }
-    log::debug!("Dependency {} not found via opt path.", name);
-    false
-}
-fn get_all_currently_installed_opt_paths(
-    resolver: &DependencyResolver,
-    keg_registry: &KegRegistry,
-) -> Result<Vec<PathBuf>> {
-    let mut paths = HashSet::new();
-    for (_, resolved_dep) in resolver.resolved.iter() {
-        if resolved_dep.status == ResolutionStatus::Installed {
-            if let Some(opt_path) = &resolved_dep.opt_path {
-                if opt_path.exists() {
-                    paths.insert(opt_path.clone());
-                } else {
-                    log::warn!(
-                        "Resolved dependency {} marked installed, but opt path {} does not exist.",
-                        resolved_dep.formula.name(),
-                        opt_path.display()
-                    );
-                }
-            }
-        }
-    }
-    if let Ok(installed_kegs) = keg_registry.list_installed_kegs() {
-        for keg in installed_kegs {
-            let opt_path = keg_registry.get_opt_path(&keg.name);
-            if opt_path.exists() {
-                paths.insert(opt_path);
-            }
-        }
-    }
-    Ok(paths.into_iter().collect())
-}
-fn add_globally_installed_paths(
-    _resolver: &DependencyResolver,
-    keg_registry: &KegRegistry,
-    installed_opt_paths: &mut HashMap<String, PathBuf>,
-    install_status: &mut HashMap<String, ResolutionStatus>,
-) -> Result<()> {
-    if let Ok(installed_kegs) = keg_registry.list_installed_kegs() {
-        for keg in installed_kegs {
-            let name = keg.name.clone();
-            let opt_path = keg_registry.get_opt_path(&name);
-            if opt_path.exists() {
-                installed_opt_paths.entry(name.clone()).or_insert(opt_path);
-                install_status
-                    .entry(name)
-                    .or_insert(ResolutionStatus::Installed);
-            } else if keg.path.exists() {
-                install_status
-                    .entry(name)
-                    .or_insert(ResolutionStatus::Installed);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Internal function to handle the actual installation of a single formula.
-async fn install_formula_internal(
     formula: Arc<Formula>,
-    resolved_info: &ResolvedDependency,
-    config: &Config,
-    _all_installed_paths: &[PathBuf],
-    _force_build: bool,
+    cfg: Config,
+    client: Arc<Client>,
 ) -> Result<PathBuf> {
-    let name = formula.name();
-    println!(
-        "{}",
-        format!("\nStarting installation process for: {}", name).blue().bold()
-    );
+    // download bottle
+    let bottle_path = build::formula::bottle::download_bottle(&formula, &cfg, &client).await?;
 
-    let client = Client::new(); // Create client for potential bottle download
+    // pour + link in blocking task pool
+    let opt_path: PathBuf = tokio::task::spawn_blocking({
+        let formula = formula.clone();
+        let cfg     = cfg.clone();
+        let bottle  = bottle_path.clone();
+        move || {
+            let install_dir = build::formula::bottle::install_bottle(&bottle, &formula, &cfg)?;
+            build::formula::link::link_formula_artifacts(&formula, &install_dir)?;
+            Ok::<PathBuf, SapphireError>(build::get_formula_opt_path(&formula))
+        }
+    })
+    .await
+    .map_err(join_to_err)??;
 
-    let status = &resolved_info.status;
-    let keg_path = resolved_info.keg_path.as_deref();
-    let opt_path_expected: PathBuf =
-        resolved_info.opt_path.as_ref().cloned().unwrap_or_else(|| {
-            log::warn!(
-                "Opt path missing in resolved info for {}, recalculating.",
-                name
-            );
-            build::get_formula_opt_path(&formula)
-        });
+    info!("✔ {name} installed → {}", opt_path.display());
+    Ok(opt_path)
+}
 
-    if *status == ResolutionStatus::Installed {
-        let keg_path_actual = keg_path.ok_or_else(|| {
-            SapphireError::Generic(format!(
-                "Installed formula {} missing keg path in resolved info",
-                name
-            ))
-        })?;
-        if !keg_path_actual.exists() {
-            log::warn!("Formula {} marked installed, but keg path {} does not exist. Attempting re-install.", name, keg_path_actual.display());
-            // Fall through to install logic
+// ==================================================== cask workflow
+
+// BOXING: Change return type from impl Future (implicit) to BoxFuture
+// BOXING: Make the function return BoxFuture, not async fn
+fn install_casks<'a>(tokens: &'a [String], max_parallel: usize, cfg: &'a Config) -> BoxFuture<'static, Result<()>> {
+    // BOXING: Clone owned data needed for the 'static future
+    let tokens_owned = tokens.to_vec();
+    let cfg_clone = cfg.clone(); // Assuming Config is Clone
+
+    async move {
+        // Use owned/cloned data inside the async block
+        info!("{}", "🍹 Beginning cask installation…".blue().bold());
+
+        // Use cfg_clone here
+        let cache = Arc::new(Cache::new(&cfg_clone.cache_dir).map_err(|e| SapphireError::Cache(e.to_string()))?);
+        let sem = Arc::new(Semaphore::new(max_parallel));
+        let mut js: JoinSet<(String, Result<()>)> = JoinSet::new();
+
+        // Use tokens_owned here
+        for token in tokens_owned.iter().cloned() {
+            // BOXING NOTE: Permit acquisition might need adjustment if acquire_owned introduces lifetime issues.
+            // Arc::clone(&sem).acquire_owned() should be fine as Semaphore is Send + Sync.
+            let permit = sem.clone().acquire_owned().await.map_err(|e| SapphireError::Generic(format!("Semaphore closed: {e}")))?;
+            let cache_clone = cache.clone(); // Clone Arc for the task
+
+            js.spawn(async move { // This future needs to be Send + 'static
+                // Directly call the task without spinner:
+                let res = install_cask_task(&token, &cache_clone).await;
+                drop(permit); // Permit is dropped here
+                (token, res)
+            });
+        }
+
+        let mut failures = vec![];
+        while let Some(join_res) = js.join_next().await {
+            let (token, outcome) = join_res.expect("task panicked");
+            match outcome {
+                Ok(()) => info!("✔ installed cask {token}"),
+                Err(e) => {
+                    error!("✖ {token}: {e}");
+                    failures.push(token.clone()); // clone token to avoid moving it
+                }
+            }
+            info!("Finished install for: {token}");
+        }
+
+        if failures.is_empty() {
+            info!("{}", "✅ All casks installed".green().bold());
+            Ok(())
         } else {
-            println!(
-                "Formula {} is already installed (Version: {} at {}).",
-                name,
-                resolved_info.formula.version_str_full(),
-                keg_path_actual.display()
-            );
-            if !opt_path_expected.exists() {
-                println!(
-                    "{}",
-                    format!("Opt link missing, linking installed formula: {}", name).blue().bold()
-                );
-                build::formula::link::link_formula_artifacts(&formula, keg_path_actual)?;
-                if !opt_path_expected.exists() {
-                    return Err(SapphireError::InstallError(format!(
-                        "Failed to create opt link {} after installation.",
-                        opt_path_expected.display()
-                    )));
-                }
-            }
-            return Ok(opt_path_expected.to_path_buf());
+            Err(SapphireError::InstallError(format!("{} cask(s) failed", failures.len())))
         }
-    } else if *status == ResolutionStatus::SkippedOptional {
-        log::debug!("Attempted to internally install skipped formula {}", name);
-        return Err(SapphireError::Generic(format!(
-            "Attempted to install skipped formula {}",
-            name
-        )));
     }
-
-    println!(
-        "{}",
-        format!("Installing formula: {}", name).blue().bold()
-    );
-
-    let install_dir = build::formula::get_formula_cellar_path(&formula);
-    let opt_path = build::get_formula_opt_path(&formula);
-    // Only bottle installation is supported; ensure a bottle is available
-    let use_bottle = build::formula::has_bottle_for_current_platform(&formula);
-    if !use_bottle {
-        return Err(SapphireError::InstallError(format!(
-            "No bottle available for {} on this platform",
-            name
-        )));
-    }
-
-    // Download the bottle
-    let bottle_path = match build::formula::bottle::download_bottle(&formula, config, &client).await {
-        Ok(path) => path,
-        Err(e) => {
-            log::error!("Download failed for {}: {}", name, e);
-            return Err(SapphireError::InstallError(format!(
-                "Download failed for {}: {}",
-                name, e
-            )));
-        }
-    };
-
-    // Prepare installation directory
-    if let Some(parent) = install_dir.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| SapphireError::Io(e))?;
-    }
-
-    // Pour the bottle
-    println!(
-        "{}",
-        format!("Pouring bottle: {}", bottle_path.display()).blue().bold()
-    );
-    build::formula::bottle::install_bottle(&bottle_path, &formula, config)?;
-
-    println!(
-        "{}",
-        format!("Linking formula: {}", name).blue().bold()
-    );
-    if install_dir.exists() {
-        build::formula::link::link_formula_artifacts(&formula, &install_dir)?; // Synchronous link
-    } else {
-        log::error!(
-            "Standard install directory {} does not exist after installation attempt. Cannot link.",
-            install_dir.display()
-        );
-        return Err(SapphireError::InstallError(format!(
-            "Installation directory {} not found after build/install of {}",
-            install_dir.display(),
-            name
-        )));
-    }
-
-    if !opt_path.exists() {
-        log::error!(
-            "Linking step for {} completed, but opt link {} was not found.",
-            name,
-            opt_path.display()
-        );
-        return Err(SapphireError::InstallError(format!(
-            "Linking failed for {}: Opt link {} not found after installation.",
-            name,
-            opt_path.display()
-        )));
-    } else {
-        println!(
-            "{}",
-            format!("Successfully installed {}", name).blue().bold()
-        );
-        return Ok(opt_path);
-    }
-
+    .boxed() // BOXING: Box the future, erasing its concrete type
 }
 
-// Cask Installation (Remains the same)
-fn install_cask<'a>(
-    name: &'a str,
-    cache: &'a Cache,
-    force_build: bool,
-) -> BoxFuture<'a, Result<()>> {
-    Box::pin(async move {
-        println!(
-            "{}",
-            format!("Installing cask: {}", name).blue().bold()
-        );
-        let cask: Cask = match api::get_cask(name).await {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Failed to fetch cask metadata for '{}': {}", name, e);
-                return Err(SapphireError::NotFound(format!(
-                    "Cask '{}' not found or API error: {}",
-                    name, e
-                )));
+// Modify install_cask_task slightly for clarity if needed, but the call should work
+async fn install_cask_task(token: &str, cache: &Arc<Cache>) -> Result<()> {
+    // fetch metadata
+    let cask: Cask = sapphire_core::fetch::api::get_cask(token).await?;
+
+    // formula dependencies
+    if let Some(deps) = &cask.depends_on {
+        // --- Handle Formula Dependencies --- (No change needed here usually)
+        if let Some(formulas) = &deps.formula {
+            if !formulas.is_empty() {
+                info!("Installing formula dependency for cask {token}");
+                let cfg = Config::load()?; // Load config as needed
+                let dep_args = InstallArgs {
+                    names: formulas.clone(),
+                    skip_deps: false, cask: false, include_optional: false, skip_recommended: false,
+                    max_concurrent_installs: 4, // Consider adjusting concurrency
+                };
+                // Assuming install_formulae remains async fn
+                install_formulae(&dep_args, &cfg).await?;
             }
-        };
-        if cask.is_installed() {
-            if let Some(installed_version) = cask.installed_version() {
-                let current_version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
-                if installed_version == current_version && !force_build {
-                    println!(
-                        "{}",
-                        format!("Cask '{}' version {} is already installed.", name, installed_version)
-                            .yellow()
-                            .bold()
-                    );
-                    return Ok(());
-                } else if installed_version != current_version {
-                    println!(
-                        "{}",
-                        format!("Upgrading cask '{}' from {} to {}", name, installed_version, current_version)
-                            .blue()
-                            .bold()
-                    );
-                } else {
-                    println!(
-                        "{}",
-                        format!("Reinstalling cask '{}' (version {}) due to force flag", name, installed_version)
-                            .blue()
-                            .bold()
-                    );
+        }
+
+        // --- Handle Cask Dependencies ---
+        if let Some(casks) = &deps.cask {
+            if !casks.is_empty() {
+                info!("Installing cask dependency for cask {token}");
+                let casks_to_install = casks.clone();
+
+                // Spawn the recursive call as a new, independent Tokio task
+                let join_handle = tokio::spawn(async move {
+                    // Load config inside the new task scope
+                    let cfg = Config::load().map_err(|e| SapphireError::Generic(format!("Failed to load config for recursive cask install: {}", e)))?;
+                    // Call the modified install_casks function. It returns BoxFuture now,
+                    // but .await works directly on it.
+                    install_casks(&casks_to_install, 2, &cfg).await // Limit concurrency
+                });
+
+                // Await the result (no change needed here)
+                match join_handle.await {
+                    Ok(Ok(())) => { /* Recursive install succeeded */ }
+                    Ok(Err(e)) => return Err(e), // Propagate SapphireError
+                    Err(e) => return Err(join_to_err(e)), // Handle JoinError
                 }
-            } else {
-                println!(
-                    "{}",
-                    format!("Cask '{}' is installed, but version unknown. Proceeding with installation.", name)
-                        .blue()
-                        .bold()
-                );
             }
         }
-        install_cask_dependencies(&cask, cache, force_build).await?;
-        let download_path = match build::cask::download_cask(&cask, cache).await {
-            Ok(path) => path,
-            Err(e) => {
-                log::error!("Failed to download cask '{}': {}", name, e);
-                return Err(SapphireError::InstallError(format!(
-                    "Download failed for cask '{}': {}",
-                    name, e
-                )));
-            }
-        };
-        if let Err(e) = build::cask::install_cask(&cask, &download_path) {
-            log::error!("Failed to install cask '{}': {}", name, e);
-            return Err(SapphireError::InstallError(format!(
-                "Installation failed for cask '{}': {}",
-                name, e
-            )));
-        }
-        println!("✅ Successfully installed cask: {}", cask.display_name());
-        Ok(())
+    }
+
+    // skip if already installed
+    if cask.is_installed() {
+        info!("cask {token} already installed – skipping");
+        return Ok(());
+    }
+
+    info!("Downloading cask {token}…");
+    let dl = build::cask::download_cask(&cask, cache.as_ref()).await?;
+    info!("Installing cask {token}…");
+    tokio::task::spawn_blocking({
+        let cask = cask.clone();
+        let dl   = dl.clone();
+        move || build::cask::install_cask(&cask, &dl)
     })
-}
-fn install_cask_dependencies<'a>(
-    cask: &'a Cask,
-    cache: &'a Cache,
-    _force_build: bool,
-) -> BoxFuture<'a, Result<()>> {
-    Box::pin(async move {
-        if let Some(deps) = &cask.depends_on {
-            let config_result = Config::load();
-            if let Some(formula_deps) = &deps.formula {
-                if !formula_deps.is_empty() {
-                    println!(
-                        "{}",
-                        format!("Installing formula dependencies for cask {}: {:?}", cask.token, formula_deps)
-                            .blue()
-                            .bold()
-                    );
-                    let config = match config_result.as_ref() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            return Err(SapphireError::Config(format!(
-                                "Failed to load config for dependency install: {}",
-                                e
-                            )))
-                        }
-                    };
-                    let args_for_deps = InstallArgs {
-                        names: formula_deps.clone(),
-                        skip_deps: false,
-                        cask: false,
-                        include_optional: false,
-                        skip_recommended: false,
-                    };
-                    if let Err(e) = execute(&args_for_deps, config).await {
-                        log::error!(
-                            "Failed to install formula dependency for cask {}: {}",
-                            cask.token,
-                            e
-                        );
-                        return Err(e);
-                    }
-                }
-            }
-            if let Some(cask_deps) = &deps.cask {
-                if !cask_deps.is_empty() {
-                    println!(
-                        "{}",
-                        format!("Installing cask dependencies for cask {}: {:?}", cask.token, cask_deps)
-                            .blue()
-                            .bold()
-                    );
-                    for dep_name in cask_deps {
-                        if let Err(e) = install_cask(dep_name, cache, false).await {
-                            log::error!(
-                                "Failed to install cask dependency '{}' for cask {}: {}",
-                                dep_name,
-                                cask.token,
-                                e
-                            );
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    })
+    .await
+    .map_err(join_to_err)??;
+
+    info!("✔ cask {token} installed successfully");
+    Ok(())
 }
