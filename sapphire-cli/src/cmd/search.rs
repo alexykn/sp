@@ -198,50 +198,78 @@ fn is_bottle_available(formula: &Value) -> bool {
     false
 }
 
-/// Drop‑in replacement for your existing `print_search_results`.
-pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[Value]) {
-    let total = formula_matches.len() + cask_matches.len();
-    if total == 0 {
-        println!("{}", format!("No matches found for '{}'", query).yellow());
-        return;
-    }
-    // Header
-    println!("{}", format!("Found {} result(s) for '{}'", total, query).bold());
+/// between the first and second ‘|’.
+pub fn print_search_results(query: &str,
+    formula_matches: &[Value],
+    cask_matches: &[Value]) {
+let total = formula_matches.len() + cask_matches.len();
+if total == 0 {
+println!("{}", format!("No matches found for '{}'", query).yellow());
+return;
+}
+println!("{}", format!("Found {} result(s) for '{}'", total, query).bold());
 
-    // 1) Build table on *plain* text so widths are correct
-    let mut table = Table::new();
-    table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-    table.set_titles(prettytable::row!["Type", "Name", "Description"]);
+// ---------------------------------------------------------------------
+// 1) Build the plain table
+// ---------------------------------------------------------------------
+let mut table = Table::new();
+table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+table.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
-    for f in formula_matches {
-        let name_plain = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
-        let desc       = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        table.add_row(prettytable::row!["formula", name_plain, desc]);
-    }
-    for c in cask_matches {
-        let token = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
-        let desc  = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        table.add_row(prettytable::row!["cask", token, desc]);
-    }
+for f in formula_matches {
+let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+let desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+table.add_row(prettytable::row!["formula", name, desc]);
+}
+for c in cask_matches {
+let token = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+let desc  = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+table.add_row(prettytable::row!["cask", token, desc]);
+}
 
-    // 2) Render to a String (layout based on un‐coloured text)
-    let table_str = table.to_string();
+// ---------------------------------------------------------------------
+// 2) Render to string, then colour only the Name column
+// ---------------------------------------------------------------------
+let table_str = table.to_string();
+let mut lines: Vec<String> = table_str.lines().map(|l| l.to_string()).collect();
 
-    // 3) Post‐process: re‐inject ANSI colours around just the names/tokens
-    let mut coloured = table_str.clone();
-    for f in formula_matches {
-        if let Some(name) = f.get("name").and_then(|n| n.as_str()) {
-            let coloured_name = name.blue().bold().to_string();
-            coloured = coloured.replace(name, &coloured_name);
-        }
-    }
-    for c in cask_matches {
-        if let Some(token) = c.get("token").and_then(|t| t.as_str()) {
-            let coloured_token = token.blue().bold().to_string();
-            coloured = coloured.replace(token, &coloured_token);
-        }
-    }
+// Determine the column boundaries from the first data row
+let (col1, col2) = lines
+.iter()
+.find_map(|line| {
+if line.contains('|') && (line.contains("formula") || line.contains("cask")) {
+let idx: Vec<_> = line.match_indices('|').map(|(i, _)| i).collect();
+if idx.len() >= 2 { Some((idx[0], idx[1])) } else { None }
+} else {
+None
+}
+})
+.unwrap_or((0, 0)); // fall‑back; should never hit
 
-    // 4) Print the final, colourised table
-    println!("{}", coloured);
+for line in &mut lines {
+// skip rule lines (----) and header
+if line.starts_with('-') || line.contains("Name | Description") {
+continue;
+}
+if line.len() > col2 {
+// slice out the Name cell (keeps its spaces!)
+let cell = &line[col1 + 1..col2];
+let trimmed = cell.trim();
+if !trimmed.is_empty() {
+let coloured = trimmed.blue().bold().to_string();
+let mut new_cell = cell.to_string();
+if let Some(pos) = new_cell.find(trimmed) {
+new_cell.replace_range(pos..pos + trimmed.len(), &coloured);
+}
+*line = format!("{}{}{}", &line[..col1 + 1], new_cell, &line[col2..]);
+}
+}
+}
+
+// ---------------------------------------------------------------------
+// 3) Print the final result
+// ---------------------------------------------------------------------
+for l in lines {
+println!("{l}");
+}
 }
