@@ -198,7 +198,6 @@ async fn install_formulae(args: &InstallArgs, cfg: &Config) -> Result<()> {
                     error!("install of {name} failed: {e}");
                 }
             }
-            info!("Finished install: {name}");
 
             // propagate to dependents
             let childrens = node.dependents.clone();

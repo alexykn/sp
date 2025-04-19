@@ -9,6 +9,7 @@ use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
 use serde_json::Value;
+use prettytable::{Table, format};
 
 /// Represents the type of package to search for
 pub enum SearchType {
@@ -197,41 +198,50 @@ fn is_bottle_available(formula: &Value) -> bool {
     false
 }
 
-/// Print search results in a formatted table
-fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[Value]) {
+/// Drop‑in replacement for your existing `print_search_results`.
+pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[Value]) {
     let total = formula_matches.len() + cask_matches.len();
     if total == 0 {
-        println!("{}",
-            format!("No matches found for '{}'", query).yellow()
-        );
+        println!("{}", format!("No matches found for '{}'", query).yellow());
         return;
     }
-    println!("{}",
-        format!("Found {} result(s) for '{}'", total, query).bold()
-    );
+    // Header
+    println!("{}", format!("Found {} result(s) for '{}'", total, query).bold());
 
-    // Build table for results
-    let mut table = prettytable::Table::new();
-    table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    // 1) Build table on *plain* text so widths are correct
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
     table.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
-    for formula in formula_matches {
-        let name = formula.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
-        let desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        table.add_row(prettytable::row![
-            "formula",
-            name.blue().bold(),
-            desc
-        ]);
+    for f in formula_matches {
+        let name_plain = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+        let desc       = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        table.add_row(prettytable::row!["formula", name_plain, desc]);
     }
-    for cask in cask_matches {
-        let token = cask.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
-        let desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        table.add_row(prettytable::row![
-            "cask",
-            token.blue().bold(),
-            desc
-        ]);
+    for c in cask_matches {
+        let token = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+        let desc  = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        table.add_row(prettytable::row!["cask", token, desc]);
     }
-    table.printstd();
+
+    // 2) Render to a String (layout based on un‐coloured text)
+    let table_str = table.to_string();
+
+    // 3) Post‐process: re‐inject ANSI colours around just the names/tokens
+    let mut coloured = table_str.clone();
+    for f in formula_matches {
+        if let Some(name) = f.get("name").and_then(|n| n.as_str()) {
+            let coloured_name = name.blue().bold().to_string();
+            coloured = coloured.replace(name, &coloured_name);
+        }
+    }
+    for c in cask_matches {
+        if let Some(token) = c.get("token").and_then(|t| t.as_str()) {
+            let coloured_token = token.blue().bold().to_string();
+            coloured = coloured.replace(token, &coloured_token);
+        }
+    }
+
+    // 4) Print the final, colourised table
+    println!("{}", coloured);
 }
