@@ -200,113 +200,102 @@ fn is_bottle_available(formula: &Value) -> bool {
     false
 }
 
-/// Truncate a UTF‑8 string to max visible width and append '…' if needed
+/// Truncates to max visible width, adding '…' if cut.
 fn truncate_vis(s: &str, max: usize) -> String {
     if UnicodeWidthStr::width(s) <= max {
         return s.to_string();
     }
-    let mut w = 0_usize;
+    let mut w = 0;
     let mut out = String::new();
     for ch in s.chars() {
-        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + ch_w >= max.saturating_sub(1) {
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w + cw >= max.saturating_sub(1) {
             break;
         }
         out.push(ch);
-        w += ch_w;
+        w += cw;
     }
     out.push('…');
     out
 }
 
-/// Width‑aware search‑result table (single‑line rows, Name column coloured)
-pub fn print_search_results(query: &str,
+/// Width‑aware search results with Name:Desc = 1:2 truncation and Name coloured.
+pub fn print_search_results(
+    query: &str,
     formula_matches: &[Value],
-    cask_matches: &[Value]) {
-let total = formula_matches.len() + cask_matches.len();
-if total == 0 {
-println!("{}", format!("No matches found for '{}'", query).yellow());
-return;
-}
-println!("{}", format!("Found {} result(s) for '{}'", total, query).bold());
+    cask_matches: &[Value],
+) {
+    let total = formula_matches.len() + cask_matches.len();
+    if total == 0 {
+        println!("{}", format!("No matches found for '{}'", query).yellow());
+        return;
+    }
+    println!("{}", format!("Found {} result(s) for '{}'", total, query).bold());
 
-// — determine current terminal width —
-let term_cols = terminal_size()
-.map(|(Width(w), _)| w as usize)
-.unwrap_or(120);
+    // 1) Terminal width
+    let term_cols = terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(120);
 
-let max_name_len = formula_matches
-.iter()
-.filter_map(|v| v.get("name").and_then(|s| s.as_str()))
-.chain(
-cask_matches
-.iter()
-.filter_map(|v| v.get("token").and_then(|s| s.as_str())),
-)
-.map(|s| UnicodeWidthStr::width(s))
-.max()
-.unwrap_or(0);
+    // 2) Fixed columns: "formula"/"cask" plus two " | "
+    let type_col    = 7;
+    let sep_pad     = 3; 
+    let leftover    = term_cols.saturating_sub(type_col + sep_pad * 2);
+    let name_max    = leftover / 3;       // one third for names
+    let desc_max    = leftover.saturating_sub(name_max); // two thirds for desc
 
-let type_col = 7;            // "formula"/"cask"
-let sep_pad  = 3;            // " | "
-let fixed    = type_col + sep_pad + max_name_len + sep_pad;
-let desc_max = term_cols.saturating_sub(fixed).max(20);
+    // 3) Build plain table with truncated cells
+    let mut tbl = Table::new();
+    tbl.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    tbl.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
-// — build plain table, truncating descriptions —
-let mut table = Table::new();
-table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-table.set_titles(prettytable::row!["Type", "Name", "Description"]);
+    for f in formula_matches {
+        let raw_name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+        let raw_desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        let name = truncate_vis(raw_name, name_max);
+        let desc = truncate_vis(raw_desc, desc_max);
+        tbl.add_row(prettytable::row!["formula", name, desc]);
+    }
+    for c in cask_matches {
+        let raw_name = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+        let raw_desc = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        let name = truncate_vis(raw_name, name_max);
+        let desc = truncate_vis(raw_desc, desc_max);
+        tbl.add_row(prettytable::row!["cask", name, desc]);
+    }
 
-for f in formula_matches {
-let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
-let desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-table.add_row(prettytable::row![
-"formula",
-name,
-truncate_vis(desc, desc_max)
-]);
-}
-for c in cask_matches {
-let token = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
-let desc  = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-table.add_row(prettytable::row![
-"cask",
-token,
-truncate_vis(desc, desc_max)
-]);
-}
-
-// — render → recolour Name column only —
-let mut lines: Vec<String> =
-table.to_string().lines().map(|l| l.to_owned()).collect();
-
-let (left_bar, right_bar) = lines
-.iter()
-.find_map(|line| {
-if line.contains('|') && (line.contains("formula") || line.contains("cask")) {
-let idx: Vec<_> =
-line.match_indices('|').map(|(i, _)| i).collect();
-if idx.len() >= 2 { Some((idx[0], idx[1])) } else { None }
-} else { None }
-})
-.unwrap_or((0, 0));
-
-for line in &mut lines {
-if line.starts_with('-') || line.contains("Name | Description") { continue; }
-if line.len() > right_bar {
-let cell    = &line[left_bar + 1..right_bar];
-let trimmed = cell.trim();
-if !trimmed.is_empty() {
-let coloured = trimmed.blue().bold().to_string();
-let mut new_cell = cell.to_string();
-if let Some(pos) = new_cell.find(trimmed) {
-new_cell.replace_range(pos..pos + trimmed.len(), &coloured);
-}
-*line = format!("{}{}{}", &line[..left_bar + 1], new_cell, &line[right_bar..]);
-}
-}
-}
-
-// — print —
-for l in lines { println!("{l}"); }
+    // 4) Render → recolour only the Name column slice
+    let mut lines: Vec<String> = tbl.to_string().lines().map(|l| l.to_owned()).collect();
+    for line in &mut lines {
+        // skip the header row and the dashed border rows
+        if line.starts_with('-') || line.contains("Name | Description") {
+            continue;
+        }
+    
+        // split into exactly three pieces: before |, between the two |, and after
+        let parts: Vec<&str> = line.splitn(3, '|').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        let (left, mid, right) = (parts[0], parts[1], parts[2]);
+    
+        // mid includes the whitespace padding around the Name cell
+        let name_text = mid.trim();
+        if name_text.is_empty() {
+            continue;
+        }
+    
+        // colour JUST the trimmed name, leave padding in place
+        let coloured = name_text.blue().bold().to_string();
+        // replace only the first occurrence so we don’t accidentally colour pipes or desc
+        let coloured_mid = mid.replacen(name_text, &coloured, 1);
+    
+        // rebuild the line
+        *line = format!("{left}|{coloured_mid}|{right}");
+    }
+    
+    // finally, print
+    for l in lines {
+        println!("{l}");
+    }
 }
