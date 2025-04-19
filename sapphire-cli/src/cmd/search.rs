@@ -10,6 +10,8 @@ use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
 use serde_json::Value;
 use prettytable::{Table, format};
+use terminal_size::{terminal_size, Width};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Represents the type of package to search for
 pub enum SearchType {
@@ -198,7 +200,26 @@ fn is_bottle_available(formula: &Value) -> bool {
     false
 }
 
-/// between the first and second ‘|’.
+/// Truncate a UTF‑8 string to max visible width and append '…' if needed
+fn truncate_vis(s: &str, max: usize) -> String {
+    if UnicodeWidthStr::width(s) <= max {
+        return s.to_string();
+    }
+    let mut w = 0_usize;
+    let mut out = String::new();
+    for ch in s.chars() {
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w + ch_w >= max.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        w += ch_w;
+    }
+    out.push('…');
+    out
+}
+
+/// Width‑aware search‑result table (single‑line rows, Name column coloured)
 pub fn print_search_results(query: &str,
     formula_matches: &[Value],
     cask_matches: &[Value]) {
@@ -209,9 +230,29 @@ return;
 }
 println!("{}", format!("Found {} result(s) for '{}'", total, query).bold());
 
-// ---------------------------------------------------------------------
-// 1) Build the plain table
-// ---------------------------------------------------------------------
+// — determine current terminal width —
+let term_cols = terminal_size()
+.map(|(Width(w), _)| w as usize)
+.unwrap_or(120);
+
+let max_name_len = formula_matches
+.iter()
+.filter_map(|v| v.get("name").and_then(|s| s.as_str()))
+.chain(
+cask_matches
+.iter()
+.filter_map(|v| v.get("token").and_then(|s| s.as_str())),
+)
+.map(|s| UnicodeWidthStr::width(s))
+.max()
+.unwrap_or(0);
+
+let type_col = 7;            // "formula"/"cask"
+let sep_pad  = 3;            // " | "
+let fixed    = type_col + sep_pad + max_name_len + sep_pad;
+let desc_max = term_cols.saturating_sub(fixed).max(20);
+
+// — build plain table, truncating descriptions —
 let mut table = Table::new();
 table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
 table.set_titles(prettytable::row!["Type", "Name", "Description"]);
@@ -219,41 +260,41 @@ table.set_titles(prettytable::row!["Type", "Name", "Description"]);
 for f in formula_matches {
 let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
 let desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-table.add_row(prettytable::row!["formula", name, desc]);
+table.add_row(prettytable::row![
+"formula",
+name,
+truncate_vis(desc, desc_max)
+]);
 }
 for c in cask_matches {
 let token = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
 let desc  = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-table.add_row(prettytable::row!["cask", token, desc]);
+table.add_row(prettytable::row![
+"cask",
+token,
+truncate_vis(desc, desc_max)
+]);
 }
 
-// ---------------------------------------------------------------------
-// 2) Render to string, then colour only the Name column
-// ---------------------------------------------------------------------
-let table_str = table.to_string();
-let mut lines: Vec<String> = table_str.lines().map(|l| l.to_string()).collect();
+// — render → recolour Name column only —
+let mut lines: Vec<String> =
+table.to_string().lines().map(|l| l.to_owned()).collect();
 
-// Determine the column boundaries from the first data row
-let (col1, col2) = lines
+let (left_bar, right_bar) = lines
 .iter()
 .find_map(|line| {
 if line.contains('|') && (line.contains("formula") || line.contains("cask")) {
-let idx: Vec<_> = line.match_indices('|').map(|(i, _)| i).collect();
+let idx: Vec<_> =
+line.match_indices('|').map(|(i, _)| i).collect();
 if idx.len() >= 2 { Some((idx[0], idx[1])) } else { None }
-} else {
-None
-}
+} else { None }
 })
-.unwrap_or((0, 0)); // fall‑back; should never hit
+.unwrap_or((0, 0));
 
 for line in &mut lines {
-// skip rule lines (----) and header
-if line.starts_with('-') || line.contains("Name | Description") {
-continue;
-}
-if line.len() > col2 {
-// slice out the Name cell (keeps its spaces!)
-let cell = &line[col1 + 1..col2];
+if line.starts_with('-') || line.contains("Name | Description") { continue; }
+if line.len() > right_bar {
+let cell    = &line[left_bar + 1..right_bar];
 let trimmed = cell.trim();
 if !trimmed.is_empty() {
 let coloured = trimmed.blue().bold().to_string();
@@ -261,15 +302,11 @@ let mut new_cell = cell.to_string();
 if let Some(pos) = new_cell.find(trimmed) {
 new_cell.replace_range(pos..pos + trimmed.len(), &coloured);
 }
-*line = format!("{}{}{}", &line[..col1 + 1], new_cell, &line[col2..]);
+*line = format!("{}{}{}", &line[..left_bar + 1], new_cell, &line[right_bar..]);
 }
 }
 }
 
-// ---------------------------------------------------------------------
-// 3) Print the final result
-// ---------------------------------------------------------------------
-for l in lines {
-println!("{l}");
-}
+// — print —
+for l in lines { println!("{l}"); }
 }
