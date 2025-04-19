@@ -4,6 +4,8 @@
 
 *I do not know if I will ever manage to finish or maintain this, it is a bit much for one person as a side project.*
 
+**I'd be happy to if you report any bugs you find, I can't test everything myself and this will help immensly in getting this thing polished**
+
 ---
 
 ## Introduction
