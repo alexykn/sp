@@ -33,7 +33,7 @@ pub fn install_app_from_staged(
     let applications_dir = config.applications_dir();
     let final_app_destination = applications_dir.join(app_name.as_ref());
 
-    info!(
+    debug!(
         "Moving app '{}' from stage to {}",
         app_name,
         applications_dir.display()
@@ -41,7 +41,7 @@ pub fn install_app_from_staged(
 
     // --- Remove Existing Destination ---
     if final_app_destination.exists() || final_app_destination.symlink_metadata().is_ok() {
-        info!("==> Removing existing app at {}", final_app_destination.display());
+        debug!("Removing existing app at {}", final_app_destination.display());
         let remove_result = if final_app_destination.is_dir() {
             fs::remove_dir_all(&final_app_destination)
         } else {
@@ -64,13 +64,13 @@ pub fn install_app_from_staged(
                         "Failed to remove existing app at {}: {}", final_app_destination.display(), stderr
                     )));
                 }
-                info!("Successfully removed existing app with sudo.");
+                debug!("Successfully removed existing app with sudo.");
             } else {
                 error!("Failed to remove existing app at {}: {}", final_app_destination.display(), e);
                 return Err(SapphireError::Io(e));
             }
         } else {
-            info!("Successfully removed existing app.");
+            debug!("Successfully removed existing app.");
         }
     }
 
@@ -98,7 +98,7 @@ pub fn install_app_from_staged(
                     "Failed to copy app from stage to {}: {}", final_app_destination.display(), copy_stderr
                 )));
             }
-            info!("Successfully copied app using cp -R.");
+            debug!("Successfully copied app using cp -R.");
         } else {
             error!("mv command failed ({}): {}", move_output.status, stderr);
             return Err(SapphireError::InstallError(format!(
@@ -106,7 +106,7 @@ pub fn install_app_from_staged(
             )));
         }
     } else {
-        info!("Successfully moved app using mv.");
+        debug!("Successfully moved app using mv.");
     }
 
     // --- Record the main app artifact ---

@@ -108,7 +108,7 @@ impl Tap {
                 self.full_name()
             )));
         }
-        println!("==> Removing tap {}", self.full_name());
+        println!("Removing tap {}", self.full_name());
         std::fs::remove_dir_all(&self.path).map_err(|e| {
             SapphireError::Generic(format!("Failed to remove tap {}: {}", self.full_name(), e))
         })

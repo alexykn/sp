@@ -5,12 +5,11 @@ use crate::utils::error::{Result, SapphireError};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use log::{debug, error, info, warn}; // Added log imports
+use log::{debug, error, warn}; // Added log imports
 
 // --- Keep Existing Helpers ---
 pub fn mount_dmg(dmg_path: &Path) -> Result<PathBuf> {
-    // ... (existing implementation) ...
-    info!("==> Mounting DMG: {}", dmg_path.display());
+    debug!("Mounting DMG: {}", dmg_path.display());
     let output = Command::new("hdiutil")
         .arg("attach")
         .arg("-plist")
@@ -30,13 +29,12 @@ pub fn mount_dmg(dmg_path: &Path) -> Result<PathBuf> {
     }
 
     let mount_point = parse_mount_point(&output.stdout)?;
-    info!("==> DMG mounted at: {}", mount_point.display());
+    debug!("DMG mounted at: {}", mount_point.display());
     Ok(mount_point)
 }
 
 pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
-    // ... (existing implementation) ...
-    info!("==> Unmounting DMG from: {}", mount_point.display());
+    debug!("Unmounting DMG from: {}", mount_point.display());
     // Add logging for commands
     debug!("Executing: hdiutil detach -force {}", mount_point.display());
     let output = Command::new("hdiutil")
@@ -66,7 +64,7 @@ pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
             )));
         }
     }
-    info!("==> DMG successfully unmounted");
+    debug!("DMG successfully unmounted");
     Ok(())
 }
 
@@ -133,7 +131,7 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
         fs::create_dir_all(stage_dir).map_err(SapphireError::Io)?;
     }
 
-    info!(
+    debug!(
         "Copying contents from DMG mount {} to stage {} using ditto...",
         mount_point.display(),
         stage_dir.display()

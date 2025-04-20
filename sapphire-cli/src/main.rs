@@ -71,11 +71,11 @@ async fn check_and_run_auto_update(config: &Config, cache: &Arc<Cache>) -> Sapph
 
     // 4. Run update if needed
     if needs_update {
-        log::info!("Running auto-update...");
+        println!("Running auto-update...");
         // Use the existing update command logic
         match cmd::update::run_update(config, cache).await { // Pass Arc::clone if needed, depends on run_update signature
              Ok(_) => {
-                 log::info!("Auto-update successful.");
+                 println!("Auto-update successful.");
                  // 5. Update timestamp file on success
                  match fs::File::create(&timestamp_file) {
                     Ok(_) => {

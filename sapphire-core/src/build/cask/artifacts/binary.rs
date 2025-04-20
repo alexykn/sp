@@ -4,7 +4,7 @@ use crate::model::cask::Cask;
 use crate::build::cask::InstalledArtifact;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::{info, warn};
+use log::{info, debug};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
@@ -84,13 +84,13 @@ pub fn install_binary(
 
                             (source, target, chmod)
                         } else {
-                            warn!("Invalid binary artifact entry: {:?}", entry);
+                            debug!("Invalid binary artifact entry: {:?}", entry);
                             continue;
                         };
 
                         let src_path = stage_path.join(&source_rel);
                         if !src_path.exists() {
-                            warn!(
+                            debug!(
                                 "Binary source '{}' not found, skipping",
                                 src_path.display()
                             );

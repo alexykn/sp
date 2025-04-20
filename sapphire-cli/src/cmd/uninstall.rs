@@ -280,7 +280,7 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
 
 /// Helper to forget a pkgutil receipt using sudo.
 fn forget_pkgutil_receipt(id: &str) -> bool {
-    log::info!("==> Forgetting package receipt (requires sudo): {}", id);
+    log::info!("Forgetting package receipt (requires sudo): {}", id);
     let output = Command::new("sudo").arg("pkgutil").arg("--forget").arg(id).output();
     match output {
         Ok(out) => {
@@ -305,7 +305,7 @@ fn forget_pkgutil_receipt(id: &str) -> bool {
 
 /// Helper to unload and optionally remove launchd plists.
 fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
-    log::info!("==> Unloading launchd agent/daemon (requires sudo): {}", label);
+    log::info!("Unloading launchd agent/daemon (requires sudo): {}", label);
     let mut success = true;
 
     // Attempt to unload first

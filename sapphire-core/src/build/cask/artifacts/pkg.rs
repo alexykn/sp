@@ -14,7 +14,7 @@ pub fn install_pkg_from_path(
     cask_version_install_path: &Path, // e.g., /opt/homebrew/Caskroom/foo/1.2.3
     _config: &Config, // Keep for potential future use
 ) -> Result<Vec<InstalledArtifact>> { // <-- Return type changed
-    info!("==> Installing pkg file: {}", pkg_path.display());
+    info!("Installing pkg file: {}", pkg_path.display());
 
     if !pkg_path.exists() || !pkg_path.is_file() {
         return Err(SapphireError::NotFound(format!(
@@ -31,7 +31,7 @@ pub fn install_pkg_from_path(
 
     // --- Copy PKG to Caskroom for Reference ---
     let caskroom_pkg_path = cask_version_install_path.join(pkg_name);
-    info!("==> Copying pkg to caskroom for reference: {}", caskroom_pkg_path.display());
+    debug!("Copying pkg to caskroom for reference: {}", caskroom_pkg_path.display());
     if let Some(parent) = caskroom_pkg_path.parent() {
         fs::create_dir_all(parent).map_err(|e| SapphireError::Io(
             std::io::Error::new(e.kind(), format!("Failed create parent dir {}: {}", parent.display(), e))
@@ -51,7 +51,7 @@ pub fn install_pkg_from_path(
 
 
     // --- Run Installer ---
-    info!("==> Running installer (this may require sudo)");
+    debug!("Running installer (this may require sudo)");
     debug!("Executing: sudo installer -pkg {} -target /", pkg_path.display());
     let output = Command::new("sudo")
         .arg("installer")
@@ -72,7 +72,7 @@ pub fn install_pkg_from_path(
             "Package installation failed for {}: {}", pkg_path.display(), stderr
         )));
     }
-    info!("Successfully ran installer command.");
+    debug!("Successfully ran installer command.");
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !stdout.trim().is_empty() {
         debug!("Installer stdout:\n{}", stdout);
@@ -85,7 +85,7 @@ pub fn install_pkg_from_path(
                 for stanza_value in uninstall_array {
                     if let Some(stanza_obj) = stanza_value.as_object() {
                         if let Some(pkgutil_id) = stanza_obj.get("pkgutil").and_then(|v| v.as_str()) {
-                            info!("Found pkgutil ID to record: {}", pkgutil_id);
+                            debug!("Found pkgutil ID to record: {}", pkgutil_id);
                             // Check for duplicates before adding
                             let new_artifact = InstalledArtifact::PkgUtilReceipt { id: pkgutil_id.to_string() };
                             if !installed_artifacts.contains(&new_artifact) { // Need PartialEq for InstalledArtifact
@@ -99,6 +99,6 @@ pub fn install_pkg_from_path(
              // Optionally check "zap" stanzas too
         }
     }
-    info!("==> Successfully installed pkg: {}", pkg_path.display());
+    info!("Successfully installed pkg: {}", pkg_path.display());
     Ok(installed_artifacts) // <-- Return collected artifacts
 }

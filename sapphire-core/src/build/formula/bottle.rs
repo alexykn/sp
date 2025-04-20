@@ -350,12 +350,12 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     ensure_llvm_symlinks(&install_dir, formula, config)?;
 
     debug!(
-        "==> Ensuring write permissions for extracted files in {}",
+        "Ensuring write permissions for extracted files in {}",
         install_dir.display()
     );
     ensure_write_permissions(&install_dir)?;
     debug!(
-        "==> Performing bottle relocation in {}",
+        "Performing bottle relocation in {}",
         install_dir.display()
     );
     perform_bottle_relocation(formula, &install_dir, config)?;

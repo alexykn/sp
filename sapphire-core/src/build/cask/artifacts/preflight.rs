@@ -1,7 +1,7 @@
 use crate::model::cask::Cask;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::info;
+use log::debug;
 use std::path::Path;
 use std::process::Command;
 use crate::build::cask::InstalledArtifact;
@@ -20,7 +20,7 @@ pub fn run_preflight(
                 for cmd_val in cmds.iter().filter_map(|v| v.as_str()) {
                     // Substitute $STAGEDIR placeholder
                     let cmd_str = cmd_val.replace("$STAGEDIR", stage_path.to_str().unwrap());
-                    info!("Running preflight: {}", cmd_str);
+                    debug!("Running preflight: {}", cmd_str);
                     let status = Command::new("sh").arg("-c").arg(&cmd_str).status()?;
                     if !status.success() {
                         return Err(SapphireError::InstallError(

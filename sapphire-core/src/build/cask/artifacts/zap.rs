@@ -4,10 +4,11 @@ use crate::model::cask::Cask;
 use crate::build::cask::InstalledArtifact;
 use crate::utils::config::Config;
 use crate::utils::error::Result;
-use log::{info, warn};
+use log::{debug, warn};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+// Import Stdio for output redirection
+use std::process::{Command, Stdio};
 
 /// Implements the `zap` stanza by performing deep-clean actions
 /// such as trash, delete, rmdir, pkgutil forget, launchctl unload,
@@ -16,7 +17,7 @@ pub fn install_zap(
     cask: &Cask,
     config: &Config,
 ) -> Result<Vec<InstalledArtifact>> {
-    let mut artifacts = Vec::new();
+    let mut artifacts: Vec<InstalledArtifact> = Vec::new();
     let home = config.home_dir();
 
     if let Some(entries) = &cask.artifacts {
@@ -31,34 +32,58 @@ pub fn install_zap(
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home);
-                                                info!("Trashing {}...", target.display());
-                                                let _ = Command::new("trash").arg(&target).status();
+                                                debug!("Trashing {}...", target.display());
+                                                // Redirect stdout and stderr to null
+                                                let _ = Command::new("trash")
+                                                    .arg(&target)
+                                                    .stdout(Stdio::null()) // <--- Added
+                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .status();
                                             }
                                         }
                                     }
                                     "delete" => {
+                                        // fs::remove_file doesn't print to stdout/stderr,
+                                        // errors are handled via Result. No change needed here.
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home);
-                                                info!("Deleting file {}...", target.display());
-                                                let _ = fs::remove_file(&target);
+                                                debug!("Deleting file {}...", target.display());
+                                                if let Err(e) = fs::remove_file(&target) {
+                                                     // Log error only if it's NOT file not found
+                                                     if e.kind() != std::io::ErrorKind::NotFound {
+                                                         warn!("Failed to delete {}: {}", target.display(), e);
+                                                     }
+                                                 }
                                             }
                                         }
                                     }
                                     "rmdir" => {
+                                        // fs::remove_dir_all doesn't print to stdout/stderr.
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home);
-                                                info!("Removing directory {}...", target.display());
-                                                let _ = fs::remove_dir_all(&target);
+                                                debug!("Removing directory {}...", target.display());
+                                                 if let Err(e) = fs::remove_dir_all(&target) {
+                                                     // Log error only if it's NOT file not found
+                                                     if e.kind() != std::io::ErrorKind::NotFound {
+                                                         warn!("Failed to rmdir {}: {}", target.display(), e);
+                                                     }
+                                                 }
                                             }
                                         }
                                     }
                                     "pkgutil" => {
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
-                                                info!("Forgetting pkgutil receipt {}...", item);
-                                                let _ = Command::new("pkgutil").arg("--forget").arg(item).status();
+                                                debug!("Forgetting pkgutil receipt {}...", item);
+                                                // Redirect stdout and stderr to null
+                                                let _ = Command::new("pkgutil")
+                                                    .arg("--forget")
+                                                    .arg(item)
+                                                    .stdout(Stdio::null()) // <--- Added
+                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .status();
                                                 artifacts.push(InstalledArtifact::PkgUtilReceipt { id: item.to_string() });
                                             }
                                         }
@@ -67,23 +92,44 @@ pub fn install_zap(
                                         if let Some(arr) = val.as_array() {
                                             for label in arr.iter().filter_map(|v| v.as_str()) {
                                                 let plist = home.join("Library/LaunchAgents").join(format!("{}.plist", label));
-                                                info!("Unloading launchctl {}...", plist.display());
-                                                let _ = Command::new("launchctl").arg("unload").arg(&plist).status();
+                                                debug!("Unloading launchctl {}...", plist.display());
+                                                // Redirect stdout and stderr to null
+                                                let _ = Command::new("launchctl")
+                                                    .arg("unload")
+                                                    // Consider adding -w for persistent unload if needed
+                                                    .arg(&plist)
+                                                    .stdout(Stdio::null()) // <--- Added
+                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .status();
                                                 artifacts.push(InstalledArtifact::Launchd { label: label.to_string(), path: Some(plist) });
                                             }
                                         }
                                     }
                                     "script" => {
                                         if let Some(cmd) = val.as_str() {
-                                            info!("Running zap script: {}...", cmd);
-                                            let _ = Command::new("sh").arg("-c").arg(cmd).status();
+                                            debug!("Running zap script: {}...", cmd);
+                                            // Redirect stdout and stderr to null
+                                            let _ = Command::new("sh")
+                                                .arg("-c")
+                                                .arg(cmd)
+                                                .stdout(Stdio::null()) // <--- Added
+                                                .stderr(Stdio::null()) // <--- Added
+                                                .status();
                                         }
                                     }
                                     "signal" => {
+                                        // Signals often target processes directly, less likely to have stdout/stderr,
+                                        // but redirecting won't hurt.
                                         if let Some(arr) = val.as_array() {
                                             for cmd in arr.iter().filter_map(|v| v.as_str()) {
-                                                info!("Running signal command: {}...", cmd);
-                                                let _ = Command::new("sh").arg("-c").arg(cmd).status();
+                                                debug!("Running signal command: {}...", cmd);
+                                                // Redirect stdout and stderr to null
+                                                let _ = Command::new("sh")
+                                                    .arg("-c")
+                                                    .arg(cmd)
+                                                    .stdout(Stdio::null()) // <--- Added
+                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .status();
                                             }
                                         }
                                     }

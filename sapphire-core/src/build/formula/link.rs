@@ -19,7 +19,7 @@ pub fn link_formula_artifacts(
     config: &Config, // Added config
 ) -> Result<()> {
     debug!(
-        "==> Linking artifacts for {} from {}",
+        "Linking artifacts for {} from {}",
         formula.name(),
         installed_keg_path.display()
     );
@@ -312,7 +312,7 @@ fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]
 /// Unlink artifacts based on the manifest file.
 // Added Config parameter
 pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()> {
-    debug!("==> Unlinking artifacts for {}", formula.name());
+    debug!("Unlinking artifacts for {}", formula.name());
     // Use config method to get expected keg path
     let expected_keg_path = config.formula_keg_path(formula.name(), &formula.version_str_full());
     let manifest_path = expected_keg_path.join("INSTALL_MANIFEST.json");
@@ -403,7 +403,7 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
 
 // Legacy unlink needs Config now
 fn unlink_formula_binaries_legacy(formula: &Formula, expected_keg_path: &Path, config: &Config) -> Result<()> {
-    warn!("==> Using legacy unlink for {}", formula.name());
+    warn!("Using legacy unlink for {}", formula.name());
     // Use config method
     let bin_dir = config.bin_dir();
     if !bin_dir.exists() {

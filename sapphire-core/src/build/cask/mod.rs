@@ -69,7 +69,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     }
 
     let url_str = urls[0].as_str();
-    println!("==> Downloading cask from {}", url_str);
+    println!("Downloading cask from {}", url_str);
 
     let parsed = Url::parse(url_str)
         .map_err(|e| SapphireError::Generic(format!("Invalid URL '{}': {}", url_str, e)))?;
@@ -83,7 +83,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     let cache_path = cache.get_dir().join(&cache_key);
 
     if cache_path.exists() {
-        println!("==> Using cached download at {}", cache_path.display());
+        println!("Using cached download at {}", cache_path.display());
         return Ok(cache_path);
     }
 
@@ -113,7 +113,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     let mut file = fs::File::create(&cache_path)?;
     file.write_all(&bytes)?;
 
-    println!("==> Download completed: {}", cache_path.display());
+    println!("Download completed: {}", cache_path.display());
     Ok(cache_path)
 }
 
@@ -123,7 +123,7 @@ pub fn install_cask(
     download_path: &Path,
     config: &Config,
 ) -> Result<()> {
-    info!("==> Installing cask: {}", cask.token);
+    info!("Installing cask: {}", cask.token);
 
     let cask_version_install_path = get_cask_version_path(cask, config);
     if !cask_version_install_path.exists() {
@@ -144,14 +144,14 @@ pub fn install_cask(
 
     // --- Handle PKG directly ---
     if extension == "pkg" || extension == "mpkg" {
-        info!("Detected PKG, installing directly...");
+        debug!("Detected PKG, installing directly...");
         match artifacts::pkg::install_pkg_from_path(cask, download_path, &cask_version_install_path, config) {
              Ok(artifacts) => {
                  all_installed_artifacts.extend(artifacts);
                  // PKG install succeeded, now write manifest and return
-                 info!("Writing PKG install manifest...");
+                 debug!("Writing PKG install manifest...");
                  write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
-                 info!("✅ Successfully installed PKG cask: {}", cask.token);
+                 debug!("✅ Successfully installed PKG cask: {}", cask.token);
                  return Ok(());
              }
              Err(e) => {
@@ -177,7 +177,7 @@ pub fn install_cask(
         "dmg" => {
             debug!("Extracting DMG {} to stage {}...", download_path.display(), stage_path.display());
             match dmg::extract_dmg_to_stage(download_path, stage_path) {
-                 Ok(_) => info!("Successfully extracted DMG to staging area."),
+                 Ok(_) => debug!("Successfully extracted DMG to staging area."),
                  Err(e) => {
                      error!("Failed to extract DMG to staging area: {}", e);
                      return Err(e); // Stop installation if extraction fails
@@ -187,7 +187,7 @@ pub fn install_cask(
         "zip" => {
             debug!("Extracting ZIP {} to stage {}...", download_path.display(), stage_path.display());
             match extract::extract_archive(download_path, stage_path, 0) {
-                Ok(_) => info!("Successfully extracted ZIP to staging area."),
+                Ok(_) => debug!("Successfully extracted ZIP to staging area."),
                 Err(e) => {
                     error!("Failed to extract ZIP to staging area: {}", e);
                     return Err(e);
@@ -206,7 +206,7 @@ pub fn install_cask(
     // --- Process Staged Artifacts ---
     let mut artifact_install_errors = Vec::new();
     if let Some(artifacts_def) = &cask.artifacts { // Renamed 'artifacts' -> 'artifacts_def'
-        info!("Processing {} declared artifacts from staging area...", artifacts_def.len());
+        debug!("Processing {} declared artifacts from staging area...", artifacts_def.len());
         for artifact_value in artifacts_def.iter() {
             if let Some(artifact_obj) = artifact_value.as_object() {
                 for (key, value) in artifact_obj.iter() {
@@ -354,7 +354,7 @@ pub fn install_cask(
          let _ = fs::remove_dir_all(&cask_version_install_path);
         return Err(SapphireError::InstallError(format!("Installation failed for cask '{}': No artifacts installed.", cask.token)));
     } else {
-        info!("Writing cask installation manifest...");
+        debug!("Writing cask installation manifest...");
         // Use the new function with the detailed artifact list
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     }
