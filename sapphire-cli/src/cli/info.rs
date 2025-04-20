@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use clap::Args;
 use colored::Colorize;
 use sapphire_core::fetch::api;
 use sapphire_core::model::formula::Formula;
@@ -10,69 +11,77 @@ use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json::Value;
 
-// Removed unused ProgressBar and ProgressStyle imports
-use crate::ui; // <-- ADDED: Import ui module
+use crate::ui;
 
-/// Displays detailed information about a formula or cask.
-pub async fn run_info(
-    name: &str,
-    is_cask: bool,
-    _config: &Config,
-    cache: &Arc<Cache>,
-) -> Result<()> {
-    log::debug!("Getting info for package: {}, is_cask: {}", name, is_cask);
+#[derive(Args, Debug)]
+pub struct Info {
+    /// Name of the formula or cask
+    pub name: String,
 
-    // Use the ui utility function to create the spinner
-    let pb = ui::create_spinner(&format!("Loading info for {}", name)); // <-- CHANGED
+    /// Show information for a cask, not a formula
+    #[arg(long)]
+    pub cask: bool,
+}
 
-    if is_cask {
-        match get_cask_info(Arc::clone(cache), name).await {
-            Ok(info) => {
-                pb.finish_and_clear();
-                print_cask_info(name, &info);
-                return Ok(());
+impl Info {
+    /// Displays detailed information about a formula or cask.
+    pub async fn run(&self, _config: &Config, cache: Arc<Cache>) -> Result<()> {
+        let name = &self.name;
+        let is_cask = self.cask;
+        log::debug!("Getting info for package: {name}, is_cask: {is_cask}",);
+
+        // Use the ui utility function to create the spinner
+        let pb = ui::create_spinner(&format!("Loading info for {}", name)); // <-- CHANGED
+
+        if self.cask {
+            match get_cask_info(Arc::clone(&cache), name).await {
+                Ok(info) => {
+                    pb.finish_and_clear();
+                    print_cask_info(name, &info);
+                    return Ok(());
+                }
+                Err(e) => {
+                    pb.finish_and_clear(); // Ensure spinner is cleared on error
+                    return Err(e);
+                }
             }
-            Err(e) => {
-                pb.finish_and_clear(); // Ensure spinner is cleared on error
-                return Err(e);
+        } else {
+            match get_formula_info_raw(Arc::clone(&cache), name).await {
+                Ok(info) => {
+                    // Removed bottle check logic here as it was complex and potentially racy.
+                    // We'll try formula first, then cask if formula fails.
+                    pb.finish_and_clear(); // Clear spinner after successful fetch
+                    print_formula_info(name, &info);
+                    return Ok(());
+                }
+                Err(SapphireError::NotFound(_)) | Err(SapphireError::Generic(_)) => {
+                    // If formula lookup failed (not found or generic error), try cask.
+                    log::debug!("Formula '{}' info failed, trying cask.", name);
+                }
+                Err(e) => {
+                    pb.finish_and_clear(); // Ensure spinner is cleared on other errors
+                    return Err(e); // Propagate other errors (API, JSON, etc.)
+                }
             }
-        }
-    } else {
-        match get_formula_info_raw(Arc::clone(cache), name).await {
-            Ok(info) => {
-                // Removed bottle check logic here as it was complex and potentially racy.
-                // We'll try formula first, then cask if formula fails.
-                pb.finish_and_clear(); // Clear spinner after successful fetch
-                print_formula_info(name, &info);
-                return Ok(());
-            }
-            Err(SapphireError::NotFound(_)) | Err(SapphireError::Generic(_)) => {
-                // If formula lookup failed (not found or generic error), try cask.
-                log::debug!("Formula '{}' info failed, trying cask.", name);
-            }
-            Err(e) => {
-                pb.finish_and_clear(); // Ensure spinner is cleared on other errors
-                return Err(e); // Propagate other errors (API, JSON, etc.)
-            }
-        }
-        // --- Cask Fallback ---
-        match get_cask_info(Arc::clone(cache), name).await {
-            Ok(info) => {
-                pb.finish_and_clear();
-                print_cask_info(name, &info);
-                return Ok(());
-            }
-            Err(e) => {
-                pb.finish_and_clear(); // Clear spinner on cask error too
-                return Err(e); // Return the cask error if both formula and cask fail
+            // --- Cask Fallback ---
+            match get_cask_info(Arc::clone(&cache), name).await {
+                Ok(info) => {
+                    pb.finish_and_clear();
+                    print_cask_info(name, &info);
+                    return Ok(());
+                }
+                Err(e) => {
+                    pb.finish_and_clear(); // Clear spinner on cask error too
+                    return Err(e); // Return the cask error if both formula and cask fail
+                }
             }
         }
     }
 }
 
 /// Public function that retrieves formula information and returns the Formula model
-pub async fn get_formula_info(name: &str, _config: &Config, cache: &Arc<Cache>) -> Result<Formula> {
-    let raw_info = get_formula_info_raw(Arc::clone(cache), name).await?;
+pub async fn get_formula_info(name: &str, _config: &Config, cache: Arc<Cache>) -> Result<Formula> {
+    let raw_info = get_formula_info_raw(Arc::clone(&cache), name).await?;
     // Replace map_err closure with direct conversion since SapphireError implements
     // From<serde_json::Error>
     let formula: Formula = serde_json::from_value(raw_info).map_err(SapphireError::Json)?;

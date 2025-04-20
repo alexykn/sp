@@ -22,7 +22,7 @@ use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
 
 #[derive(Debug, Args)]
-pub struct InstallArgs {
+pub struct Install {
     #[arg(required = true)]
     names: Vec<String>,
     #[arg(long)]
@@ -36,56 +36,242 @@ pub struct InstallArgs {
     #[arg(long, default_value_t = 4)]
     max_concurrent_installs: usize,
 }
-
-pub async fn execute(args: &InstallArgs, cfg: &Config, cache: Arc<Cache>) -> Result<()> {
-    if args.cask {
-        return install_casks(
-            &args.names,
-            args.max_concurrent_installs,
-            cfg,
-            Arc::clone(&cache),
-        )
-        .await;
-    }
-    if args.skip_deps {
-        warn!("--skip-deps not fully supported; dependencies will still be processed.");
-    }
-
-    // Try installing as formulae first…
-    match install_formulae(args, cfg, Arc::clone(&cache)).await {
-        Ok(()) => {
-            // success as formula
-            Ok(())
+impl Install {
+    pub async fn run(&self, cfg: &Config, cache: Arc<Cache>) -> Result<()> {
+        if self.cask {
+            return install_casks(
+                &self.names,
+                self.max_concurrent_installs,
+                cfg,
+                Arc::clone(&cache),
+            )
+            .await;
         }
-        Err(e) => {
-            // Detect "formula not found" errors and fall back to cask install
-            let msg = e.to_string();
-            let any_not_found = args
-                .names
-                .iter()
-                .any(|name| msg.contains(&format!("Formula '{}' not found", name)));
+        if self.skip_deps {
+            warn!("--skip-deps not fully supported; dependencies will still be processed.");
+        }
 
-            if any_not_found {
-                info!(
+        // Try installing as formulae first…
+        match self.install_formulae(cfg, Arc::clone(&cache)).await {
+            Ok(()) => {
+                // success as formula
+                Ok(())
+            }
+            Err(e) => {
+                // Detect "formula not found" errors and fall back to cask install
+                let msg = e.to_string();
+                let any_not_found = self
+                    .names
+                    .iter()
+                    .any(|name| msg.contains(&format!("Formula '{}' not found", name)));
+
+                if any_not_found {
+                    info!(
                     "⚠️  No matching formulae found for {:?}; trying to install as casks instead…",
-                    args.names
+                    self.
+names
                 );
-                // retry as casks
-                return install_casks(
-                    &args.names,
-                    args.max_concurrent_installs,
-                    cfg,
-                    Arc::clone(&cache),
-                )
-                .await;
+                    // retry as casks
+                    return install_casks(
+                        &self.names,
+                        self.max_concurrent_installs,
+                        cfg,
+                        Arc::clone(&cache),
+                    )
+                    .await;
+                }
+
+                // otherwise propagate the original error
+                Err(e)
+            }
+        }
+    }
+
+    async fn install_formulae(&self, cfg: &Config, cache: Arc<Cache>) -> Result<()> {
+        info!("{}", "📦 Beginning bottle installation…".blue().bold());
+
+        // Phase 1: Dependency Resolution
+        let formulary = Formulary::new(cfg.clone());
+        let keg_registry = KegRegistry::new(cfg.clone());
+        let ctx = ResolutionContext {
+            formulary: &formulary,
+            keg_registry: &keg_registry,
+            sapphire_prefix: cfg.prefix(),
+            include_optional: self.include_optional,
+            include_test: false,
+            skip_recommended: self.skip_recommended,
+            force_build: false,
+        };
+        let mut resolver = DependencyResolver::new(ctx);
+        let graph = resolver.resolve_targets(&self.names)?;
+        if graph.install_plan.is_empty() {
+            info!("Everything already installed – nothing to do.");
+            return Ok(());
+        }
+
+        // Phase 2: Build Node Map
+        let mut nodes: HashMap<String, Node> = HashMap::new();
+        for dep in &graph.install_plan {
+            if dep.status == ResolutionStatus::Installed {
+                continue;
+            }
+            let formula_deps = dep.formula.dependencies()?;
+            nodes.insert(
+                dep.formula.name().to_string(),
+                Node {
+                    formula: dep.formula.clone(),
+                    deps_remaining: formula_deps
+                        .iter()
+                        .filter(|d| {
+                            nodes.contains_key(&d.name)
+                                && !d.tags.contains(DependencyTag::TEST)
+                                && !(d.tags.contains(DependencyTag::OPTIONAL)
+                                    && !self.include_optional)
+                                && !(d.tags.contains(DependencyTag::RECOMMENDED)
+                                    && self.skip_recommended)
+                        })
+                        .count(),
+                    dependents: vec![],
+                    state: InstallState::Pending,
+                },
+            );
+        }
+        for name in nodes.keys().cloned().collect::<Vec<_>>() {
+            let deps = nodes[&name].formula.dependencies()?;
+            for d in deps {
+                if nodes.contains_key(&d.name)
+                    && !d.tags.contains(DependencyTag::TEST)
+                    && !(d.tags.contains(DependencyTag::OPTIONAL) && !self.include_optional)
+                    && !(d.tags.contains(DependencyTag::RECOMMENDED) && self.skip_recommended)
+                {
+                    if let Some(dep_node) = nodes.get_mut(&d.name) {
+                        dep_node.dependents.push(name.clone());
+                    }
+                }
+            }
+        }
+        let mut queue: VecDeque<String> = nodes
+            .iter()
+            .filter(|(_, n)| n.deps_remaining == 0 && matches!(n.state, InstallState::Pending))
+            .map(|(n, _)| n.clone())
+            .collect();
+        for name in &queue {
+            if let Some(node) = nodes.get_mut(name) {
+                node.state = InstallState::Ready;
+            }
+        }
+
+        // Phase 3: Concurrent Work Queue
+        let sem = Arc::new(Semaphore::new(self.max_concurrent_installs));
+        let mut js: JoinSet<(String, Result<PathBuf>)> = JoinSet::new();
+        let client = Arc::new(Client::new());
+
+        while !nodes
+            .values()
+            .all(|n| matches!(n.state, InstallState::Ok(_) | InstallState::Failed(_)))
+        {
+            while let Some(name) = queue.pop_front() {
+                if let Some(node) = nodes.get(&name) {
+                    if !matches!(node.state, InstallState::Ready) {
+                        log::trace!(
+                            "Node {} not ready (state: {:?}), skipping spawn attempt.",
+                            name,
+                            node.state
+                        );
+                        continue;
+                    }
+                } else {
+                    error!("Node {} popped from queue but not found in map!", name);
+                    continue;
+                }
+
+                match sem.clone().acquire_owned().await {
+                    Ok(permit) => {
+                        let node = nodes.get_mut(&name).unwrap();
+                        node.state = InstallState::Running;
+                        let formula = node.formula.clone();
+                        let task_cfg = cfg.clone();
+                        let cli = client.clone();
+                        let cache_clone = Arc::clone(&cache);
+                        let name_clone = name.clone();
+
+                        js.spawn(async move {
+                            let res = install_formula_task(
+                                &name_clone,
+                                formula,
+                                task_cfg,
+                                cli,
+                                cache_clone,
+                            )
+                            .await;
+                            drop(permit);
+                            (name_clone, res)
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to acquire semaphore permit: {}", e);
+                        if let Some(node) = nodes.get_mut(&name) {
+                            node.state = InstallState::Failed(format!("Semaphore closed: {}", e));
+                        }
+                        return Err(SapphireError::Generic(format!(
+                            "Failed to acquire semaphore permit: {}",
+                            e
+                        )));
+                    }
+                }
             }
 
-            // otherwise propagate the original error
-            Err(e)
+            if js.is_empty() && queue.is_empty() {
+                if nodes
+                    .values()
+                    .all(|n| matches!(n.state, InstallState::Ok(_) | InstallState::Failed(_)))
+                {
+                    break;
+                } else {
+                    error!("Install loop stalled: No running tasks or queued items, but not all nodes are finished.");
+                    return Err(SapphireError::Generic(
+                        "Installation process stalled unexpectedly".to_string(),
+                    ));
+                }
+            }
+
+            if queue.is_empty() || js.len() >= self.max_concurrent_installs {
+                match js.join_next().await {
+                    Some(Ok((name, outcome))) => {
+                        process_task_outcome(&mut nodes, &mut queue, name, outcome)
+                    }
+                    Some(Err(e)) => error!("An installation task panicked: {}", e),
+                    None => (),
+                }
+            } else {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        // Final Check
+        let failures: Vec<_> = nodes
+            .iter()
+            .filter_map(|(n, node)| match &node.state {
+                InstallState::Failed(msg) => Some((n.clone(), msg.clone())),
+                _ => None,
+            })
+            .collect();
+
+        if failures.is_empty() {
+            info!("{}", "✅ All bottles installed".green().bold());
+            Ok(())
+        } else {
+            error!("Installation failed for:");
+            for (pkg, msg) in &failures {
+                error!("  ✖ {}: {}", pkg, msg);
+            }
+            Err(SapphireError::InstallError(format!(
+                "{} bottle(s) failed to install.",
+                failures.len()
+            )))
         }
     }
 }
-
 fn join_to_err(e: JoinError) -> SapphireError {
     SapphireError::Generic(format!("Task join error: {}", e))
 }
@@ -105,185 +291,6 @@ struct Node {
     deps_remaining: usize,
     dependents: Vec<String>,
     state: InstallState,
-}
-
-async fn install_formulae(args: &InstallArgs, cfg: &Config, cache: Arc<Cache>) -> Result<()> {
-    info!("{}", "📦 Beginning bottle installation…".blue().bold());
-
-    // Phase 1: Dependency Resolution
-    let formulary = Formulary::new(cfg.clone());
-    let keg_registry = KegRegistry::new(cfg.clone());
-    let ctx = ResolutionContext {
-        formulary: &formulary,
-        keg_registry: &keg_registry,
-        sapphire_prefix: cfg.prefix(),
-        include_optional: args.include_optional,
-        include_test: false,
-        skip_recommended: args.skip_recommended,
-        force_build: false,
-    };
-    let mut resolver = DependencyResolver::new(ctx);
-    let graph = resolver.resolve_targets(&args.names)?;
-    if graph.install_plan.is_empty() {
-        info!("Everything already installed – nothing to do.");
-        return Ok(());
-    }
-
-    // Phase 2: Build Node Map
-    let mut nodes: HashMap<String, Node> = HashMap::new();
-    for dep in &graph.install_plan {
-        if dep.status == ResolutionStatus::Installed {
-            continue;
-        }
-        let formula_deps = dep.formula.dependencies()?;
-        nodes.insert(
-            dep.formula.name().to_string(),
-            Node {
-                formula: dep.formula.clone(),
-                deps_remaining: formula_deps
-                    .iter()
-                    .filter(|d| {
-                        nodes.contains_key(&d.name)
-                            && !d.tags.contains(DependencyTag::TEST)
-                            && !(d.tags.contains(DependencyTag::OPTIONAL) && !args.include_optional)
-                            && !(d.tags.contains(DependencyTag::RECOMMENDED)
-                                && args.skip_recommended)
-                    })
-                    .count(),
-                dependents: vec![],
-                state: InstallState::Pending,
-            },
-        );
-    }
-    for name in nodes.keys().cloned().collect::<Vec<_>>() {
-        let deps = nodes[&name].formula.dependencies()?;
-        for d in deps {
-            if nodes.contains_key(&d.name)
-                && !d.tags.contains(DependencyTag::TEST)
-                && !(d.tags.contains(DependencyTag::OPTIONAL) && !args.include_optional)
-                && !(d.tags.contains(DependencyTag::RECOMMENDED) && args.skip_recommended)
-            {
-                if let Some(dep_node) = nodes.get_mut(&d.name) {
-                    dep_node.dependents.push(name.clone());
-                }
-            }
-        }
-    }
-    let mut queue: VecDeque<String> = nodes
-        .iter()
-        .filter(|(_, n)| n.deps_remaining == 0 && matches!(n.state, InstallState::Pending))
-        .map(|(n, _)| n.clone())
-        .collect();
-    for name in &queue {
-        if let Some(node) = nodes.get_mut(name) {
-            node.state = InstallState::Ready;
-        }
-    }
-
-    // Phase 3: Concurrent Work Queue
-    let sem = Arc::new(Semaphore::new(args.max_concurrent_installs));
-    let mut js: JoinSet<(String, Result<PathBuf>)> = JoinSet::new();
-    let client = Arc::new(Client::new());
-
-    while !nodes
-        .values()
-        .all(|n| matches!(n.state, InstallState::Ok(_) | InstallState::Failed(_)))
-    {
-        while let Some(name) = queue.pop_front() {
-            if let Some(node) = nodes.get(&name) {
-                if !matches!(node.state, InstallState::Ready) {
-                    log::trace!(
-                        "Node {} not ready (state: {:?}), skipping spawn attempt.",
-                        name,
-                        node.state
-                    );
-                    continue;
-                }
-            } else {
-                error!("Node {} popped from queue but not found in map!", name);
-                continue;
-            }
-
-            match sem.clone().acquire_owned().await {
-                Ok(permit) => {
-                    let node = nodes.get_mut(&name).unwrap();
-                    node.state = InstallState::Running;
-                    let formula = node.formula.clone();
-                    let task_cfg = cfg.clone();
-                    let cli = client.clone();
-                    let cache_clone = Arc::clone(&cache);
-                    let name_clone = name.clone();
-
-                    js.spawn(async move {
-                        let res =
-                            install_formula_task(&name_clone, formula, task_cfg, cli, cache_clone)
-                                .await;
-                        drop(permit);
-                        (name_clone, res)
-                    });
-                }
-                Err(e) => {
-                    error!("Failed to acquire semaphore permit: {}", e);
-                    if let Some(node) = nodes.get_mut(&name) {
-                        node.state = InstallState::Failed(format!("Semaphore closed: {}", e));
-                    }
-                    return Err(SapphireError::Generic(format!(
-                        "Failed to acquire semaphore permit: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        if js.is_empty() && queue.is_empty() {
-            if nodes
-                .values()
-                .all(|n| matches!(n.state, InstallState::Ok(_) | InstallState::Failed(_)))
-            {
-                break;
-            } else {
-                error!("Install loop stalled: No running tasks or queued items, but not all nodes are finished.");
-                return Err(SapphireError::Generic(
-                    "Installation process stalled unexpectedly".to_string(),
-                ));
-            }
-        }
-
-        if queue.is_empty() || js.len() >= args.max_concurrent_installs {
-            match js.join_next().await {
-                Some(Ok((name, outcome))) => {
-                    process_task_outcome(&mut nodes, &mut queue, name, outcome)
-                }
-                Some(Err(e)) => error!("An installation task panicked: {}", e),
-                None => (),
-            }
-        } else {
-            tokio::task::yield_now().await;
-        }
-    }
-
-    // Final Check
-    let failures: Vec<_> = nodes
-        .iter()
-        .filter_map(|(n, node)| match &node.state {
-            InstallState::Failed(msg) => Some((n.clone(), msg.clone())),
-            _ => None,
-        })
-        .collect();
-
-    if failures.is_empty() {
-        info!("{}", "✅ All bottles installed".green().bold());
-        Ok(())
-    } else {
-        error!("Installation failed for:");
-        for (pkg, msg) in &failures {
-            error!("  ✖ {}: {}", pkg, msg);
-        }
-        Err(SapphireError::InstallError(format!(
-            "{} bottle(s) failed to install.",
-            failures.len()
-        )))
-    }
 }
 
 fn process_task_outcome(
@@ -393,10 +400,10 @@ async fn install_casks(
         let permit = sem.clone().acquire_owned().await.map_err(|e| {
             SapphireError::Generic(format!("Failed to acquire semaphore for cask {token}: {e}"))
         })?;
-        let cache_clone = Arc::clone(&cache);
+        let cache = Arc::clone(&cache);
         let cfg_clone = cfg.clone();
         js.spawn(async move {
-            let res = install_cask_task(&token, &cache_clone, &cfg_clone).await;
+            let res = install_cask_task(&token, cache, &cfg_clone).await;
             drop(permit);
             (token, res)
         });
@@ -438,7 +445,7 @@ fn install_casks_boxed(
     async move { install_casks(&tokens, max_parallel, &cfg, cache).await }.boxed()
 }
 
-async fn install_cask_task(token: &str, cache: &Arc<Cache>, cfg: &Config) -> Result<()> {
+async fn install_cask_task(token: &str, cache: Arc<Cache>, cfg: &Config) -> Result<()> {
     info!("🔎 Fetching info for cask {}...", token);
     let cask: Cask = sapphire_core::fetch::api::get_cask(token).await?;
 
@@ -449,7 +456,7 @@ async fn install_cask_task(token: &str, cache: &Arc<Cache>, cfg: &Config) -> Res
                 "⚙️ Installing formula dependencies for cask {}: {:?}",
                 token, deps.formula
             );
-            let dep_args = InstallArgs {
+            let dep_args = Install {
                 names: deps.formula.clone(),
                 skip_deps: false,
                 cask: false,
@@ -457,7 +464,7 @@ async fn install_cask_task(token: &str, cache: &Arc<Cache>, cfg: &Config) -> Res
                 skip_recommended: false,
                 max_concurrent_installs: 4,
             };
-            install_formulae(&dep_args, cfg, Arc::clone(cache)).await?;
+            dep_args.install_formulae(cfg, Arc::clone(&cache)).await?;
         }
 
         // Cask‐to‐cask dependencies
@@ -467,7 +474,7 @@ async fn install_cask_task(token: &str, cache: &Arc<Cache>, cfg: &Config) -> Res
                 token, deps.cask
             );
             let casks_to_install = deps.cask.clone();
-            let cache_clone = Arc::clone(cache);
+            let cache_clone = Arc::clone(&cache);
             let cfg_clone = cfg.clone();
             tokio::spawn(install_casks_boxed(
                 casks_to_install,
