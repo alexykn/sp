@@ -1,5 +1,4 @@
-// src/build/formula/mod.rs
-
+// ===== sapphire-core/src/build/formula/mod.rs =====
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
@@ -24,7 +23,6 @@ pub async fn download_formula(
     if has_bottle_for_current_platform(formula) {
         bottle::download_bottle(formula, config, client).await
     } else {
-        // No bottle available; building from source is not supported
         Err(SapphireError::Generic(format!(
             "No bottle available for {} on this platform",
             formula.name()
@@ -58,7 +56,6 @@ fn get_current_platform() -> String {
         };
 
         debug!("Attempting to determine macOS version using /usr/bin/sw_vers -productVersion...");
-        // *** Use only -productVersion argument ***
         match Command::new("/usr/bin/sw_vers")
             .arg("-productVersion")
             .output()
@@ -67,7 +64,6 @@ fn get_current_platform() -> String {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 debug!("sw_vers status: {}", output.status);
-                // Log stdout/stderr if exit wasn't clean or stderr has content
                 if !output.status.success() || !stderr.trim().is_empty() {
                     debug!("sw_vers stdout:\n{}", stdout);
                     if !stderr.trim().is_empty() {
@@ -76,8 +72,7 @@ fn get_current_platform() -> String {
                 }
 
                 if output.status.success() {
-                    // *** Parse the single line output ***
-                    let version_str = stdout.trim(); // Get the single line
+                    let version_str = stdout.trim();
                     if !version_str.is_empty() {
                         debug!("Extracted version string: {}", version_str);
                         let os_name = match version_str.split('.').next() {
@@ -107,7 +102,6 @@ fn get_current_platform() -> String {
                             let platform_tag = if arch == "arm64" {
                                 format!("{}_{}", arch, os_name)
                             } else {
-                                // Use OS name only for Intel tags by convention
                                 os_name.to_string()
                             };
                             debug!("Determined platform tag: {}", platform_tag);
@@ -129,7 +123,6 @@ fn get_current_platform() -> String {
             }
         }
 
-        // Fallback Logic
         error!("!!! FAILED TO DETECT MACOS VERSION VIA SW_VERS !!!");
         warn!("Using UNRELIABLE fallback platform detection. Bottle selection may be incorrect.");
         if arch == "arm64" {
@@ -146,7 +139,7 @@ fn get_current_platform() -> String {
             "x86_64_linux".to_string()
         } else {
             "unknown".to_string()
-        } // Handle other linux arches if needed
+        }
     } else {
         warn!(
             "Could not determine platform tag for OS: {}",
@@ -158,7 +151,6 @@ fn get_current_platform() -> String {
 
 // --- extract_archive and helpers (unchanged) ---
 pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
     fs::create_dir_all(target_dir)?;
     let extension = archive_path
         .extension()
@@ -177,7 +169,6 @@ pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
     }
 }
 fn extract_tar(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
     let output = Command::new("tar")
         .arg("-xf")
         .arg(archive_path)
@@ -193,7 +184,6 @@ fn extract_tar(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 fn extract_tar_gz(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
     let output = Command::new("tar")
         .arg("-xzf")
         .arg(archive_path)
@@ -209,7 +199,6 @@ fn extract_tar_gz(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 fn extract_tar_bz2(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
     let output = Command::new("tar")
         .arg("-xjf")
         .arg(archive_path)
@@ -225,7 +214,6 @@ fn extract_tar_bz2(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 fn extract_tar_xz(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
     let output = Command::new("tar")
         .arg("-xJf")
         .arg(archive_path)
@@ -241,7 +229,6 @@ fn extract_tar_xz(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
     let output = Command::new("unzip")
         .arg("-qq")
         .arg("-o")
@@ -258,35 +245,28 @@ fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-// --- get_cellar_path (unchanged) ---
-pub fn get_cellar_path() -> PathBuf {
-    // (Implementation remains the same)
-    if std::env::consts::ARCH == "aarch64" {
-        PathBuf::from("/opt/homebrew/Cellar")
-    } else {
-        PathBuf::from("/usr/local/Cellar")
-    }
-}
+// REMOVED: get_cellar_path (now in Config)
 
-// --- get_formula_cellar_path (unchanged) ---
-pub fn get_formula_cellar_path(formula: &Formula) -> PathBuf {
-    // (Implementation remains the same)
-    let cellar = get_cellar_path();
-    let version_string = formula.version_str_full();
-    cellar.join(&formula.name).join(version_string)
+// --- get_formula_cellar_path uses Config ---
+// Parameter changed from formula: &Formula to formula_name: &str
+// Parameter changed from config: &Config to cellar_path: &Path for consistency where Config isn't fully available
+// If Config *is* available, call config.formula_cellar_dir(formula.name()) instead.
+// **Keeping original signature for now where Config might not be easily passed**
+pub fn get_formula_cellar_path(formula: &Formula, config: &Config) -> PathBuf {
+    // Use Config method
+    config.formula_cellar_dir(formula.name())
 }
 
 // --- write_receipt (unchanged) ---
 pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
-    // (Implementation remains the same)
-    let receipt_dir = install_dir.join("INSTALL_RECEIPT.json");
-    let receipt_file = File::create(&receipt_dir);
+    let receipt_path = install_dir.join("INSTALL_RECEIPT.json");
+    let receipt_file = File::create(&receipt_path);
     let mut receipt_file = match receipt_file {
         Ok(file) => file,
         Err(e) => {
             error!(
                 "Failed to create receipt file at {}: {}",
-                receipt_dir.display(),
+                receipt_path.display(),
                 e
             );
             return Err(SapphireError::Io(e));
@@ -305,7 +285,6 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
         }
     };
 
-    // Assuming chrono crate is added to Cargo.toml
     let timestamp = chrono::Utc::now().to_rfc3339();
 
     let receipt = serde_json::json!({

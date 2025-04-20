@@ -1,4 +1,4 @@
-// src/build/cask/mod.rs
+// ===== sapphire-core/src/build/cask/mod.rs =====
 // Main module for cask installation functionality
 
 pub mod app;
@@ -8,6 +8,7 @@ pub mod zip;
 
 use crate::model::cask::Cask;
 use crate::utils::cache::Cache;
+use crate::utils::config::Config; // Import Config
 use crate::utils::error::{Result, SapphireError};
 use reqwest::Url;
 use serde_json::json;
@@ -16,29 +17,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
-/// Get the Applications directory
-pub fn get_applications_dir() -> PathBuf {
-    // On macOS, applications are installed in /Applications
-    PathBuf::from("/Applications")
-}
+// REMOVED: get_applications_dir (now in Config)
+// REMOVED: get_caskroom_dir (now in Config)
 
-/// Get the Caskroom directory
-pub fn get_caskroom_dir() -> PathBuf {
-    // On macOS, Homebrew Caskroom is typically at /opt/homebrew/Caskroom
-    // or /usr/local/Caskroom
-    if Path::new("/opt/homebrew/Caskroom").exists() {
-        PathBuf::from("/opt/homebrew/Caskroom")
-    } else {
-        PathBuf::from("/usr/local/Caskroom")
-    }
-}
-
-/// Get installation path for a cask
-pub fn get_cask_path(cask: &Cask) -> PathBuf {
-    let caskroom = get_caskroom_dir();
+/// Get installation path for a cask's specific version
+pub fn get_cask_version_path(cask: &Cask, config: &Config) -> PathBuf {
     let version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
-
-    caskroom.join(&cask.token).join(&version)
+    // Use Config method
+    config.cask_version_path(&cask.token, &version)
 }
 
 /// Download a cask
@@ -70,9 +56,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     let cache_key = format!("cask-{}-{}", cask.token, file_name);
     let cache_path = cache.get_dir().join(&cache_key);
 
-    // Check if the file is already in the cache
     if cache_path.exists() {
-        // Optionally, add TTL check here using cache.is_cache_valid if needed
         println!("==> Using cached download at {}", cache_path.display());
         return Ok(cache_path);
     }
@@ -96,7 +80,6 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         .await
         .map_err(|e| SapphireError::Generic(format!("Failed to read download response: {}", e)))?;
 
-    // Ensure cache directory exists before writing
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -110,26 +93,27 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
 }
 
 /// Install a cask from a downloaded file
-pub fn install_cask(cask: &Cask, download_path: &Path) -> Result<()> {
+// Added Config parameter
+pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Result<()> {
     println!("==> Installing cask: {}", cask.token);
 
-    // Create the caskroom directory for this cask
-    let caskroom_path = get_cask_path(cask);
-    if !caskroom_path.exists() {
-        fs::create_dir_all(&caskroom_path)?;
+    // Use the function that takes Config
+    let cask_version_install_path = get_cask_version_path(cask, config);
+    if !cask_version_install_path.exists() {
+        fs::create_dir_all(&cask_version_install_path)?;
     }
 
-    // Determine the file type based on extension
     let extension = download_path
         .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_lowercase();
 
+    // Pass Config down to specific installers
     let result = match extension.as_str() {
-        "dmg" => dmg::install_from_dmg(cask, download_path, &caskroom_path),
-        "pkg" | "mpkg" => pkg::install_pkg_from_path(cask, download_path, &caskroom_path),
-        "zip" => zip::install_from_zip(cask, download_path, &caskroom_path),
+        "dmg" => dmg::install_from_dmg(cask, download_path, &cask_version_install_path, config),
+        "pkg" | "mpkg" => pkg::install_pkg_from_path(cask, download_path, &cask_version_install_path, config),
+        "zip" => zip::install_from_zip(cask, download_path, &cask_version_install_path, config),
         _ => Err(SapphireError::Generic(format!(
             "Unsupported file type: {}",
             extension
@@ -143,44 +127,12 @@ pub fn install_cask(cask: &Cask, download_path: &Path) -> Result<()> {
     result
 }
 
-/// Check if a cask has app artifacts
-pub fn has_app_artifact(cask: &Cask) -> bool {
-    // A cask has app artifacts if it has URLs ending with .app
-    // or explicitly defines app artifacts in its definition
-    if let Some(ref name) = cask.name {
-        if !name.is_empty() {
-            return true;
-        }
-    }
-
-    // Check URLs for app-like extensions
-    if let Some(ref urls) = cask.url {
-        for url in urls {
-            if url.ends_with(".app") || url.contains(".app/") {
-                return true;
-            }
-        }
-    }
-
-    // For simplicity, assume most casks have app artifacts unless
-    // they're clearly something else (like a pkg)
-    if let Some(ref urls) = cask.url {
-        for url in urls {
-            if url.ends_with(".pkg") || url.ends_with(".mpkg") {
-                return false;
-            }
-        }
-    }
-
-    true
-}
 
 /// Write a receipt file for the cask installation
-pub fn write_receipt(cask: &Cask, caskroom_path: &Path, artifacts: Vec<String>) -> Result<()> {
-    let receipt_path = caskroom_path.join("receipt.json");
+// Parameter `caskroom_path` renamed to `cask_version_install_path` for clarity
+pub fn write_receipt(cask: &Cask, cask_version_install_path: &Path, artifacts: Vec<String>) -> Result<()> {
+    let receipt_path = cask_version_install_path.join("INSTALL_RECEIPT.json"); // Use consistent name
 
-    // Create receipt data
-    // Map SystemTimeError explicitly
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {}", e)))?
@@ -190,10 +142,10 @@ pub fn write_receipt(cask: &Cask, caskroom_path: &Path, artifacts: Vec<String>) 
         "token": cask.token,
         "version": cask.version.as_ref().unwrap_or(&"latest".to_string()),
         "installed_at": timestamp,
-        "artifacts": artifacts
+        "artifacts": artifacts // Renamed field for consistency with manifest concept
     });
 
-    let receipt_file = fs::File::create(receipt_path)?;
+    let receipt_file = fs::File::create(&receipt_path)?;
     serde_json::to_writer_pretty(receipt_file, &receipt_data)?;
 
     Ok(())

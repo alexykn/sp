@@ -1,10 +1,9 @@
-// Merged config module: combines logic from sapphire-core/src/config.rs and sapphire-core/src/utils/config.rs
-
-use crate::utils::cache; // Keep cache import if needed elsewhere
+// ===== sapphire-core/src/utils/config.rs =====
+use crate::utils::cache;
 use crate::utils::error::Result;
 use log::debug;
 use std::env;
-use std::path::PathBuf; // Use log crate
+use std::path::{Path, PathBuf}; // Added Path import
 
 /// Default installation prefixes
 const DEFAULT_LINUX_PREFIX: &str = "/home/linuxbrew/.linuxbrew";
@@ -47,8 +46,6 @@ pub struct Config {
     pub cache_dir: PathBuf,
     /// API base URL for Homebrew (formulae.brew.sh)
     pub api_base_url: String,
-
-    // --- Added Authentication Fields ---
     /// Custom OCI registry domain (from HOMEBREW_ARTIFACT_DOMAIN)
     pub artifact_domain: Option<String>,
     /// Explicit OCI registry bearer token (from HOMEBREW_DOCKER_REGISTRY_TOKEN)
@@ -57,9 +54,6 @@ pub struct Config {
     pub docker_registry_basic_auth: Option<String>,
     /// GitHub API token (from HOMEBREW_GITHUB_API_TOKEN)
     pub github_api_token: Option<String>,
-    // --- End Added Fields ---
-
-    // Add other config fields as needed
 }
 
 impl Config {
@@ -68,12 +62,10 @@ impl Config {
         debug!("Loading Sapphire configuration...");
         let prefix = determine_prefix();
         let cellar = prefix.join("Cellar");
-        // Consider making taps dir configurable or relative to prefix consistently
-        let taps_parent_dir = prefix.join("Library/Taps"); // More standard location?
+        let taps_dir = prefix.join("Library/Taps"); // Use prefix-relative taps dir
         let cache_dir = cache::get_cache_dir()?; // Uses dirs crate internally
         let api_base_url = "https://formulae.brew.sh/api".to_string();
 
-        // Load authentication environment variables
         let artifact_domain = env::var("HOMEBREW_ARTIFACT_DOMAIN").ok();
         let docker_registry_token = env::var("HOMEBREW_DOCKER_REGISTRY_TOKEN").ok();
         let docker_registry_basic_auth = env::var("HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN").ok();
@@ -96,7 +88,7 @@ impl Config {
         Ok(Self {
             prefix,
             cellar,
-            taps_dir: taps_parent_dir,
+            taps_dir,
             cache_dir,
             api_base_url,
             artifact_domain,
@@ -106,6 +98,74 @@ impl Config {
         })
     }
 
+    // --- Start: New Path Methods ---
+
+    /// Returns the installation prefix path.
+    pub fn prefix(&self) -> &Path {
+        &self.prefix
+    }
+
+    /// Returns the Cellar path (where versioned formulas are installed).
+    pub fn cellar_path(&self) -> &Path {
+        &self.cellar
+    }
+
+    /// Returns the Caskroom path (where cask metadata/versions are stored).
+    pub fn caskroom_dir(&self) -> PathBuf {
+        // Caskroom is usually directly under the prefix
+        self.prefix.join("Caskroom")
+    }
+
+    /// Returns the 'opt' directory path (where links to active formula versions reside).
+    pub fn opt_dir(&self) -> PathBuf {
+        self.prefix.join("opt")
+    }
+
+    /// Returns the main binary directory path (where links/wrappers are placed).
+    pub fn bin_dir(&self) -> PathBuf {
+        self.prefix.join("bin")
+    }
+
+    /// Returns the standard Applications directory path (macOS specific).
+    pub fn applications_dir(&self) -> PathBuf {
+        // Currently macOS specific
+        if cfg!(target_os = "macos") {
+            PathBuf::from("/Applications")
+        } else {
+            // Provide a sensible default or error for other OS?
+            self.prefix.join("Applications") // Or maybe relative to prefix?
+        }
+    }
+
+    /// Returns the path for a specific formula's directory within the Cellar.
+    /// Does not include the version.
+    pub fn formula_cellar_dir(&self, formula_name: &str) -> PathBuf {
+        self.cellar_path().join(formula_name)
+    }
+
+    /// Returns the path for a specific formula's versioned keg directory.
+    pub fn formula_keg_path(&self, formula_name: &str, version_str: &str) -> PathBuf {
+        self.formula_cellar_dir(formula_name).join(version_str)
+    }
+
+     /// Returns the path for a specific formula's opt link.
+     pub fn formula_opt_link_path(&self, formula_name: &str) -> PathBuf {
+        self.opt_dir().join(formula_name)
+    }
+
+    /// Returns the path for a specific cask's directory within the Caskroom.
+    /// Does not include the version.
+    pub fn cask_dir(&self, cask_token: &str) -> PathBuf {
+        self.caskroom_dir().join(cask_token)
+    }
+
+     /// Returns the path for a specific cask's versioned directory.
+     pub fn cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
+        self.cask_dir(cask_token).join(version_str)
+    }
+
+    // --- End: New Path Methods ---
+
     /// Gets the path to a specific tap repository.
     /// name should be in "user/repo" format (e.g., "homebrew/core").
     pub fn get_tap_path(&self, name: &str) -> Option<PathBuf> {
@@ -113,8 +173,7 @@ impl Config {
         if parts.len() == 2 {
             // Construct path like /prefix/Library/Taps/user/homebrew-repo
             Some(
-                self.prefix
-                    .join("Library/Taps")
+                self.taps_dir // Use the taps_dir field
                     .join(parts[0])
                     .join(format!("homebrew-{}", parts[1])),
             )
@@ -128,7 +187,6 @@ impl Config {
     /// Note: Homebrew API doesn't rely on local taps as much now.
     pub fn get_formula_path_from_tap(&self, tap_name: &str, formula_name: &str) -> Option<PathBuf> {
         self.get_tap_path(tap_name).and_then(|tap_path| {
-            // Check for both .rb (legacy) and .json (API cache mimic)
             let json_path = tap_path
                 .join("Formula")
                 .join(format!("{}.json", formula_name));
@@ -141,7 +199,6 @@ impl Config {
             if rb_path.exists() {
                 return Some(rb_path);
             }
-            // Add check for Aliases if needed
             None
         })
     }

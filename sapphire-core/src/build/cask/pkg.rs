@@ -1,104 +1,96 @@
-// src/build/cask/pkg.rs
-// Contains logic for installing .pkg packages from casks
-
+// ===== sapphire-core/src/build/cask/pkg.rs =====
 use crate::model::cask::Cask;
+use crate::utils::config::Config; // Import Config
 use crate::utils::error::{Result, SapphireError};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Install a pkg from a mounted DMG
-pub fn install_pkg_from_dmg(cask: &Cask, mount_point: &Path, caskroom_path: &Path) -> Result<()> {
-    // Find the .pkg file in the DMG
+// Added Config parameter
+pub fn install_pkg_from_dmg(
+    cask: &Cask,
+    mount_point: &Path,
+    cask_version_install_path: &Path,
+    config: &Config, // Added config
+) -> Result<()> {
     let pkg_path = find_pkg_in_directory(mount_point)?;
-
-    // Install the pkg
-    install_pkg(&pkg_path, cask, caskroom_path)
+    // Pass Config down
+    install_pkg(&pkg_path, cask, cask_version_install_path, config)
 }
 
 /// Install a pkg from an extracted ZIP
-pub fn install_pkg_from_zip(cask: &Cask, extract_dir: &Path, caskroom_path: &Path) -> Result<()> {
-    // Find the .pkg file in the extracted directory
+// Added Config parameter
+pub fn install_pkg_from_zip(
+    cask: &Cask,
+    extract_dir: &Path,
+    cask_version_install_path: &Path,
+    config: &Config, // Added config
+) -> Result<()> {
     let pkg_path = find_pkg_in_directory(extract_dir)?;
-
-    // Install the pkg
-    install_pkg(&pkg_path, cask, caskroom_path)
+    // Pass Config down
+    install_pkg(&pkg_path, cask, cask_version_install_path, config)
 }
 
 /// Install a pkg directly from a file path
-pub fn install_pkg_from_path(cask: &Cask, pkg_path: &Path, caskroom_path: &Path) -> Result<()> {
-    install_pkg(pkg_path, cask, caskroom_path)
+// Added Config parameter
+pub fn install_pkg_from_path(
+    cask: &Cask,
+    pkg_path: &Path,
+    cask_version_install_path: &Path,
+    config: &Config, // Added config
+) -> Result<()> {
+    // Pass Config down
+    install_pkg(pkg_path, cask, cask_version_install_path, config)
 }
 
-/// Find a pkg file in a directory
+
+// ... (find_pkg_in_directory remains unchanged) ...
 fn find_pkg_in_directory(dir: &Path) -> Result<PathBuf> {
     let mut pkg_paths = Vec::new();
-
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => {
-            return Err(SapphireError::Generic(format!(
-                "Failed to read directory {}: {}",
-                dir.display(),
-                e
-            )))
-        }
+        Err(e) => { return Err(SapphireError::Generic(format!("Failed to read directory {}: {}", dir.display(), e))) }
     };
-
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(e) => {
-                return Err(SapphireError::Generic(format!(
-                    "Failed to read directory entry: {}",
-                    e
-                )))
-            }
+            Err(e) => { return Err(SapphireError::Generic(format!("Failed to read directory entry: {}", e))) }
         };
-
         let path = entry.path();
-
         if path.is_file() {
             if let Some(extension) = path.extension() {
-                if extension == "pkg" || extension == "mpkg" {
-                    pkg_paths.push(path);
-                }
+                if extension == "pkg" || extension == "mpkg" { pkg_paths.push(path); }
             }
         } else if path.is_dir() {
-            // Recursively search subdirectories
-            if let Ok(sub_pkg) = find_pkg_in_directory(&path) {
-                pkg_paths.push(sub_pkg);
-            }
+            if let Ok(sub_pkg) = find_pkg_in_directory(&path) { pkg_paths.push(sub_pkg); }
         }
     }
-
     if pkg_paths.is_empty() {
-        return Err(SapphireError::Generic(format!(
-            "No .pkg files found in {}",
-            dir.display()
-        )));
+        return Err(SapphireError::Generic(format!("No .pkg files found in {}", dir.display())));
     }
-
-    // Return the first pkg found
     Ok(pkg_paths[0].clone())
 }
 
 /// Install a pkg file using the installer tool
-fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()> {
+// Added Config parameter (though not directly used in this func, passed for consistency)
+fn install_pkg(
+    pkg_path: &Path,
+    cask: &Cask,
+    cask_version_install_path: &Path,
+    _config: &Config, // Added config (unused for now)
+) -> Result<()> {
     println!("==> Installing pkg file: {}", pkg_path.display());
 
-    // Create a copy of the pkg in the caskroom for reference
     let pkg_name = pkg_path
         .file_name()
         .ok_or_else(|| SapphireError::Generic("Invalid pkg path".to_string()))?;
+    // Use consistent parameter name
+    let caskroom_pkg_path = cask_version_install_path.join(pkg_name);
 
-    let caskroom_pkg_path = caskroom_path.join(pkg_name);
-
-    // Copy the pkg to caskroom for reference
     println!("==> Copying pkg to caskroom for reference");
     fs::copy(pkg_path, &caskroom_pkg_path)?;
 
-    // Use installer to install the pkg
     println!("==> Running installer (this may require sudo)");
     let output = Command::new("sudo")
         .arg("installer")
@@ -107,7 +99,6 @@ fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()>
         .arg("-target")
         .arg("/")
         .output()?;
-
     if !output.status.success() {
         return Err(SapphireError::Generic(format!(
             "Package installation failed: {}",
@@ -115,13 +106,10 @@ fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()>
         )));
     }
 
-    // Prepare artifacts for the manifest
     let mut artifacts_to_record = vec![
-        // Record the path to the copied pkg in the caskroom for removal
         caskroom_pkg_path.to_string_lossy().to_string(),
     ];
 
-    // Check for pkgutil ID in uninstall stanza
     if let Some(uninstall_stanzas) = &cask.uninstall {
         if let Some(pkgutil_id_value) = uninstall_stanzas.get("pkgutil") {
             if let Some(pkgutil_id) = pkgutil_id_value.as_str() {
@@ -129,37 +117,12 @@ fn install_pkg(pkg_path: &Path, cask: &Cask, caskroom_path: &Path) -> Result<()>
                 println!("Found pkgutil ID for manifest: {}", pkgutil_id);
             }
         }
+        // Add handling for other uninstall types (launchctl, script, etc.) if needed
     }
 
-    // Create receipt file (manifest) with installation info
-    super::write_receipt(cask, caskroom_path, artifacts_to_record)?;
+    // Use consistent parameter name
+    super::write_receipt(cask, cask_version_install_path, artifacts_to_record)?;
 
     println!("==> Successfully installed pkg");
-
     Ok(())
-}
-
-/// Check if a cask has pkg artifacts
-pub fn has_pkg_artifact(cask: &Cask) -> bool {
-    // A cask has pkg artifacts if it has any URLs ending with .pkg
-    // or if it explicitly defines pkg artifacts in its definition
-    if let Some(ref urls) = cask.url {
-        for url in urls {
-            if url.contains(".pkg") {
-                return true;
-            }
-        }
-    }
-
-    // For simplicity, assume any cask that doesn't have .app artifacts
-    // and is downloaded as a .pkg file has pkg artifacts
-    if let Some(ref urls) = cask.url {
-        for url in urls {
-            if url.ends_with(".pkg") {
-                return true;
-            }
-        }
-    }
-
-    false
 }
