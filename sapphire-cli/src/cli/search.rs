@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use clap::Args;
 use colored::Colorize;
 use prettytable::{format, Table};
 use sapphire_core::fetch::api;
@@ -14,6 +15,20 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui;
 
+#[derive(Args, Debug)]
+pub struct Search {
+    /// The search term to look for
+    pub query: String,
+
+    /// Search only formulae
+    #[arg(long, conflicts_with = "cask")]
+    pub formula: bool,
+
+    /// Search only casks
+    #[arg(long, conflicts_with = "formula")]
+    pub cask: bool,
+}
+
 /// Represents the type of package to search for
 pub enum SearchType {
     All,
@@ -21,12 +36,29 @@ pub enum SearchType {
     Cask,
 }
 
+impl Search {
+    /// Runs the search command
+    pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
+        // Determine search type based on flags
+        let search_type = if self.formula {
+            SearchType::Formula
+        } else if self.cask {
+            SearchType::Cask
+        } else {
+            SearchType::All
+        };
+
+        // Run the search with the determined type
+        run_search(&self.query, search_type, config, cache).await
+    }
+}
+
 /// Searches for packages matching the query
 pub async fn run_search(
     query: &str,
     search_type: SearchType,
     _config: &Config, // kept for potential future needs
-    cache: &Arc<Cache>,
+    cache: Arc<Cache>,
 ) -> Result<()> {
     log::debug!("Searching for packages matching: {}", query);
 
@@ -41,7 +73,7 @@ pub async fn run_search(
 
     // Search formulas if needed
     if matches!(search_type, SearchType::All | SearchType::Formula) {
-        match search_formulas(Arc::clone(cache), query).await {
+        match search_formulas(Arc::clone(&cache), query).await {
             Ok(matches) => formula_matches = matches,
             Err(e) => {
                 log::error!("Error searching formulas: {}", e);
@@ -52,7 +84,7 @@ pub async fn run_search(
 
     // Search casks if needed
     if matches!(search_type, SearchType::All | SearchType::Cask) {
-        match search_casks(Arc::clone(cache), query).await {
+        match search_casks(Arc::clone(&cache), query).await {
             Ok(matches) => cask_matches = matches,
             Err(e) => {
                 log::error!("Error searching casks: {}", e);

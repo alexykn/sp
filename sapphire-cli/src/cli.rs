@@ -1,7 +1,16 @@
 //! Defines the command-line argument structure using clap.
-use clap::{ArgAction, Parser, Subcommand};
+use std::sync::Arc;
 
-use crate::cli::install::InstallArgs;
+use clap::{ArgAction, Parser, Subcommand};
+use sapphire_core::utils::error::Result;
+use sapphire_core::utils::Cache;
+use sapphire_core::Config;
+
+use self::info::Info;
+use self::install::Install;
+use self::search::Search;
+use self::uninstall::Uninstall;
+use self::update::Update;
 
 pub mod info;
 pub mod install;
@@ -18,45 +27,35 @@ pub struct CliArgs {
     pub verbose: u8,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Command,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Commands {
+pub enum Command {
     /// Search for available formulas and casks
-    Search {
-        /// The search term to look for
-        query: String,
-
-        /// Search only formulae
-        #[arg(long, conflicts_with = "cask")]
-        formula: bool,
-
-        /// Search only casks
-        #[arg(long, conflicts_with = "formula")]
-        cask: bool,
-    },
+    Search(Search),
 
     /// Display information about a formula or cask
-    Info {
-        /// Name of the formula or cask
-        name: String,
-
-        /// Show information for a cask, not a formula
-        #[arg(long)]
-        cask: bool,
-    },
+    Info(Info),
 
     /// Fetch the latest package list from the API
-    Update,
+    Update(Update),
 
     /// Install a formula or cask
-    Install(InstallArgs),
+    Install(Install),
 
     /// Uninstall one or more formulas or casks
-    Uninstall {
-        /// The names of the formulas or casks to uninstall
-        #[arg(required = true)] // Ensure at least one name is given
-        names: Vec<String>,
-    },
+    Uninstall(Uninstall),
+}
+
+impl Command {
+    pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
+        match self {
+            Command::Search(command) => command.run(config, cache).await,
+            Command::Info(command) => command.run(config, cache).await,
+            Command::Update(command) => command.run(config, cache).await,
+            Command::Install(command) => command.run(config, cache).await,
+            Command::Uninstall(command) => command.run(config, cache).await,
+        }
+    }
 }

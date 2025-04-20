@@ -506,8 +506,8 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                             config,
                         ),
                         // Stanzas processed at install time but don't move files from stage
-                        "zap" => artifacts::zap::install_zap(cask, config), /* Zap doesn't use
-                                                                              * stage_path */
+                        "zap" => artifacts::zap::install_zap(cask, config), /* Zap doesn't use */
+                        // stage_path
                         "preflight" => {
                             artifacts::preflight::run_preflight(cask, stage_path, config)
                         } // Uses stage_path
