@@ -7,10 +7,10 @@ use std::io::{Read, Write}; // Added Write for atomic write
 use std::os::unix::fs::{symlink, PermissionsExt}; // Combined unix imports
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, error, warn};
 use reqwest::Client;
 use semver; // For find_brewed_perl
 use tempfile::NamedTempFile;
+use tracing::{debug, error, warn};
 use walkdir::WalkDir;
 
 use super::macho; // Assuming macho module exists within super (build::formula)

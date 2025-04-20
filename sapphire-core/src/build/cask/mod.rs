@@ -10,11 +10,11 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 // Add infer crate for file type detection
 use infer;
-use tracing::{debug, error, info, warn}; // For logging
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tempfile::TempDir; // For staging directory
+use tracing::{debug, error, info, warn}; // For logging
 
 use crate::build::extract; // To use extract_archive for ZIP/TAR
 use crate::model::cask::{Cask, UrlField};

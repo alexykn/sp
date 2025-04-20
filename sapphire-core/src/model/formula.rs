@@ -5,10 +5,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, error, warn};
 use semver::Version;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use tracing::{debug, error, warn};
 
 use crate::dependency::{Dependency, DependencyTag, Requirement};
 use crate::utils::error::Result; // <-- Import only Result // Use log crate imports

@@ -12,8 +12,7 @@ use sapphire_core::model::cask::Cask;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
-use serde_json;
-use walkdir;
+use {serde_json, walkdir};
 
 use crate::cli::info;
 use crate::ui;
@@ -364,8 +363,8 @@ fn process_artifact_uninstall(artifact: &InstalledArtifact) -> bool {
             true // Not an error to ignore this type
         } /* Add cases for other artifact types here
            * _ => {
-           *     tracing::warn!("Uninstall not yet implemented for artifact type: {:?}", artifact);
-           *     false // Consider unknown types as failure for now
+           *     tracing::warn!("Uninstall not yet implemented for artifact type: {:?}",
+           * artifact);     false // Consider unknown types as failure for now
            * } */
     }
 }

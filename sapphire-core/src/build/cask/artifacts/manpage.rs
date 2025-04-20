@@ -4,8 +4,8 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use tracing::{info, warn};
 use regex::Regex;
+use tracing::{info, warn};
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;

@@ -1,9 +1,9 @@
 // **File:** sapphire-core/src/fetch/api.rs
 
-use tracing::{debug, error, warn};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT}; // Import headers
 use reqwest::Client;
 use serde_json::Value;
+use tracing::{debug, error, warn};
 
 //use serde::de::DeserializeOwned; // Import DeserializeOwned - might be used later
 use crate::model::cask::{Cask, CaskList};

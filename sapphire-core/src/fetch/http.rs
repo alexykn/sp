@@ -5,12 +5,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tracing::{error, warn};
 use reqwest::header::{HeaderMap, ACCEPT, USER_AGENT};
 use reqwest::{Client, StatusCode}; // Use async Client
 use sha2::{Digest, Sha256};
 use tokio::fs::File as TokioFile; // Use tokio's async File
 use tokio::io::AsyncWriteExt;
+use tracing::{error, warn};
 
 use crate::model::formula::ResourceSpec;
 use crate::utils::config::Config;

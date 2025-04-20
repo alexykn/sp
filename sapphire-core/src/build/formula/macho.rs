@@ -9,7 +9,6 @@ use std::io::Write; // Keep for write_patched_buffer
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio}; // Keep for codesign
 
-use tracing::{debug, error, warn};
 // --- Imports needed for Mach-O patching (macOS only) ---
 #[cfg(target_os = "macos")]
 use object::{
@@ -28,6 +27,7 @@ use object::{
     FileKind,      // For checking FAT/single arch
 };
 use tempfile::NamedTempFile; // Keep for write_patched_buffer
+use tracing::{debug, error, warn};
 
 use crate::utils::error::Result; // Keep top-level Result
 #[cfg(target_os = "macos")]

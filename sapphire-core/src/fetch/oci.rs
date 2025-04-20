@@ -6,12 +6,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use futures::StreamExt;
-use tracing::{debug, error, warn};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, warn};
 use url::Url;
 
 use crate::utils::config::Config;
