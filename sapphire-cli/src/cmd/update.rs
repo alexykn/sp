@@ -1,6 +1,6 @@
 // src/cmd/update.rs
 // Contains the logic for the `update` command.
-
+use std::fs;
 use sapphire_core::fetch::api;
 // Removed unused colored import
 use indicatif::{ProgressBar, ProgressStyle};
@@ -10,11 +10,9 @@ use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
 use std::sync::Arc; // <-- ADDED
 
-/// Updates the local cache of formulas and casks.
-/// This downloads the current lists from the Homebrew API.
+// Updated function signature (accepts Config and Cache)
 pub async fn run_update(config: &Config, cache: &Arc<Cache>) -> Result<()> {
-    log::debug!("Updating formula and cask lists...");
-    // Spinner for update
+    log::debug!("Running manual update..."); // Log clearly it's the manual one
     let pb = ProgressBar::new_spinner();
     pb.set_style(ProgressStyle::with_template("{spinner:.yellow} {msg}").unwrap());
     pb.set_message("Updating package lists");
@@ -30,7 +28,10 @@ pub async fn run_update(config: &Config, cache: &Arc<Cache>) -> Result<()> {
             pb.set_message("Cached formulas data");
         }
         Err(e) => {
-            log::error!("Failed to fetch formulas from API: {}", e);
+            let err_msg = format!("Failed to fetch/store formulas from API: {}", e);
+            log::error!("{}", err_msg);
+            pb.finish_and_clear(); // Clear spinner on error
+                                   // Convert error if needed before returning
             return Err(e.into());
         }
     }
@@ -43,10 +44,34 @@ pub async fn run_update(config: &Config, cache: &Arc<Cache>) -> Result<()> {
             pb.set_message("Cached casks data");
         }
         Err(e) => {
-            log::error!("Failed to fetch casks from API: {}", e);
+            let err_msg = format!("Failed to fetch/store casks from API: {}", e);
+            log::error!("{}", err_msg);
+            pb.finish_and_clear(); // Clear spinner on error
+                                   // Convert error if needed before returning
             return Err(e.into());
         }
     }
+
+    // *** Add timestamp update logic here ***
+    let timestamp_file = config.cache_dir.join(".sapphire_last_update_check");
+    log::debug!(
+        "Manual update successful. Updating timestamp file: {}",
+        timestamp_file.display()
+    );
+    match fs::File::create(&timestamp_file) {
+        Ok(_) => {
+            log::debug!("Updated timestamp file successfully.");
+        }
+        Err(e) => {
+            // Log a warning but don't fail the whole update command if timestamp creation fails
+            log::warn!(
+                "Failed to create or update timestamp file '{}': {}",
+                timestamp_file.display(),
+                e
+            );
+        }
+    }
+    // *** End of added logic ***
 
     pb.finish_with_message("Update completed successfully!");
     Ok(())
