@@ -100,7 +100,7 @@ Sapphire lives and grows by your feedback and code! We’re particularly looking
 - Test coverage for core and cask modules  
 - CLI usability improvements
 
-Feel free to open issues or PRs. Every contribution helps tame this alpha beast!
+Feel free to open issues or PRs. Every contribution helps!
 
 ---
 
