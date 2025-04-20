@@ -106,6 +106,7 @@ Sapphire lives and grows by your feedback and code! We’re particularly looking
 - Bug reports and reproducible cases  
 - Test coverage for core and cask modules  
 - CLI usability improvements
+- See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 Feel free to open issues or PRs. Every contribution helps!
 
