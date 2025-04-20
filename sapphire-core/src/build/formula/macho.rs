@@ -419,7 +419,7 @@ fn write_patched_buffer(original_path: &Path, buffer: &[u8]) -> Result<()> {
         ))
     })?;
     // Ensure the directory exists
-    fs::create_dir_all(dir).map_err(|e| SapphireError::Io(e))?;
+    fs::create_dir_all(dir).map_err(SapphireError::Io)?;
 
     // Create a named temporary file in the same directory to facilitate atomic rename
     let mut temp_file = NamedTempFile::new_in(dir)?;

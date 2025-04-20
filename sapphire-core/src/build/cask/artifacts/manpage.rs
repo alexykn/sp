@@ -4,6 +4,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
+use once_cell::sync::Lazy; // Import Lazy
 use regex::Regex;
 use tracing::{info, warn};
 
@@ -12,13 +13,17 @@ use crate::model::cask::Cask;
 use crate::utils::config::Config;
 use crate::utils::error::Result;
 
+// --- Moved Regex Creation Outside ---
+static MANPAGE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap());
+
 /// Install any `manpage` stanzas from the Cask definition.
 /// Mirrors Homebrew’s `Cask::Artifact::Manpage < Symlinked` behavior
 /// :contentReference[oaicite:3]{index=3}.
 pub fn install_manpage(
     cask: &Cask,
     stage_path: &Path,
-    _cask_version_install_path: &Path,
+    _cask_version_install_path: &Path, // Not needed for symlinking manpages
     config: &Config,
 ) -> Result<Vec<InstalledArtifact>> {
     let mut installed = Vec::new();
@@ -28,20 +33,19 @@ pub fn install_manpage(
         for art in artifacts_def {
             if let Some(obj) = art.as_object() {
                 if let Some(entries) = obj.get("manpage").and_then(|v| v.as_array()) {
-                    // regex to extract section number or letter from filename
-                    // :contentReference[oaicite:5]{index=5}
-                    let re = Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap();
-
                     for entry in entries {
                         if let Some(man_file) = entry.as_str() {
                             let src = stage_path.join(man_file);
                             if !src.exists() {
-                                warn!("Manpage '{}' not found in staging area, skipping", man_file);
+                                warn!(
+                                    "Manpage '{}' not found in staging area, skipping",
+                                    man_file
+                                );
                                 continue;
                             }
 
-                            // Determine the section ("1", "5", "n", "l", etc.)
-                            let section = if let Some(caps) = re.captures(man_file) {
+                            // Use the static regex
+                            let section = if let Some(caps) = MANPAGE_RE.captures(man_file) {
                                 caps.get(1).unwrap().as_str()
                             } else {
                                 warn!(
@@ -57,7 +61,9 @@ pub fn install_manpage(
                             fs::create_dir_all(&man_dir)?;
 
                             // Determine the target path
-                            let file_name = Path::new(man_file).file_name().unwrap();
+                            let file_name = Path::new(man_file)
+                                .file_name()
+                                .ok_or_else(|| crate::utils::error::SapphireError::Generic(format!("Invalid manpage filename: {}", man_file)))?; // Handle potential None
                             let dest = man_dir.join(file_name);
 
                             // Remove any existing file or symlink
@@ -77,7 +83,8 @@ pub fn install_manpage(
                             });
                         }
                     }
-                    break; // only one "manpage" stanza per Cask
+                    // Assume only one "manpage" stanza per Cask based on Homebrew structure
+                    break;
                 }
             }
         }

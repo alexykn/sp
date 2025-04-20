@@ -356,7 +356,7 @@ impl<'a> DependencyResolver<'a> {
         Ok(())
     }
 
-    /// Performs topological sort on the resolved dependencies.
+    // Inside impl DependencyResolver
     fn topological_sort(&self) -> Result<Vec<ResolvedDependency>> {
         debug!("Starting topological sort...");
         let mut in_degree: HashMap<String, usize> = HashMap::new();
@@ -368,7 +368,7 @@ impl<'a> DependencyResolver<'a> {
         for (name, resolved_dep) in &self.resolved {
             if resolved_dep.status != ResolutionStatus::SkippedOptional {
                 in_degree.entry(name.clone()).or_insert(0);
-                adj.entry(name.clone()).or_insert_with(HashSet::new);
+                adj.entry(name.clone()).or_default(); // Use or_default for HashSet
             }
         }
 
@@ -378,10 +378,11 @@ impl<'a> DependencyResolver<'a> {
                 match resolved_dep.formula.dependencies() {
                     Ok(dependencies) => {
                         for dep in dependencies {
+                            // Use is_some_and suggested by other warning
                             if self
                                 .resolved
                                 .get(&dep.name)
-                                .map_or(false, |rd| rd.status != ResolutionStatus::SkippedOptional)
+                                .is_some_and(|rd| rd.status != ResolutionStatus::SkippedOptional)
                                 && self.should_consider_dependency(&dep)
                             {
                                 // Add edge from dependency `dep.name` to current formula `name`
@@ -411,13 +412,13 @@ impl<'a> DependencyResolver<'a> {
 
         // Initialize queue with nodes having in-degree 0
         for (name, degree) in &in_degree {
-            if *degree == 0 {
-                if self.resolved.contains_key(name) {
-                    // Ensure it exists
-                    debug!("Adding node with in-degree 0 to queue: {}", name);
-                    queue.push_back(name.clone());
-                }
+            // --- Collapsed If ---
+            if *degree == 0 && self.resolved.contains_key(name) {
+                // Ensure it exists
+                debug!("Adding node with in-degree 0 to queue: {}", name);
+                queue.push_back(name.clone());
             }
+            // --- End Collapsed If ---
         }
 
         debug!("Initial queue: {:?}", queue);
@@ -443,7 +444,7 @@ impl<'a> DependencyResolver<'a> {
                 debug!("Neighbors of {}: {:?}", u_name, neighbors);
                 for v_name in neighbors {
                     if let Some(degree) = in_degree.get_mut(v_name) {
-                        *degree -= 1;
+                        *degree = degree.saturating_sub(1); // Use saturating_sub
                         debug!("Decremented in-degree of {} to {}", v_name, *degree);
                         if *degree == 0 {
                             debug!("Adding neighbor {} to queue", v_name);
@@ -509,8 +510,4 @@ impl<'a> DependencyResolver<'a> {
         true
     }
 
-    // Removed unused get_resolved_map method
-    // pub(crate) fn get_resolved_map(&self) -> &HashMap<String, ResolvedDependency> {
-    //     &self.resolved
-    // }
 }

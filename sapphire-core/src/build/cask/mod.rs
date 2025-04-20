@@ -93,13 +93,11 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     // Construct a filename, even if the URL has none
     let file_name = parsed
         .path_segments()
-        .and_then(|segments| segments.last())
-        .filter(|s| !s.is_empty()) // Ensure last segment isn't empty
-        .map(|s| s.to_string()) // Convert to String
+        .and_then(|mut segments| segments.next_back()) // Use next_back()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            // Fallback: use token + a generic part if no path segment exists
             warn!("URL has no filename component, using fallback name for cache based on token.");
-            // Sanitize token for filename use if necessary
             format!("cask-{}-download.tmp", cask.token.replace('/', "_"))
         });
 
@@ -119,7 +117,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         .get(parsed.clone())
         .send()
         .await
-        .map_err(|e| SapphireError::Http(e))?; // Use specific error type
+        .map_err(SapphireError::Http)?;
 
     if !response.status().is_success() {
         return Err(SapphireError::DownloadError(
@@ -130,7 +128,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         ));
     }
 
-    let bytes = response.bytes().await.map_err(|e| SapphireError::Http(e))?;
+    let bytes = response.bytes().await.map_err(SapphireError::Http)?;
 
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;

@@ -43,6 +43,7 @@ tar = "0.4.44"
 zip = "2.6.1"
 rand = "0.9.1"
 infer = "0.19.0"
+once_cell = "1.21.3"
 
 # Added from check errors
 chrono = { version = "0.4.40", features = ["serde"] } # Added serde feature for potential use

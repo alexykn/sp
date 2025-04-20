@@ -1,8 +1,7 @@
 // ===== sapphire-core/src/build/cask/artifacts/zap.rs =====
 
 use std::fs;
-use std::path::PathBuf;
-// Import Stdio for output redirection
+use std::path::{Path, PathBuf}; // Import Path
 use std::process::{Command, Stdio};
 
 use tracing::{debug, warn};
@@ -30,26 +29,22 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     "trash" => {
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
-                                                let target = expand_tilde(item, &home);
+                                                let target = expand_tilde(item, &home); // Pass &Path
                                                 debug!("Trashing {}...", target.display());
-                                                // Redirect stdout and stderr to null
                                                 let _ = Command::new("trash")
                                                     .arg(&target)
-                                                    .stdout(Stdio::null()) // <--- Added
-                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .stdout(Stdio::null())
+                                                    .stderr(Stdio::null())
                                                     .status();
                                             }
                                         }
                                     }
                                     "delete" => {
-                                        // fs::remove_file doesn't print to stdout/stderr,
-                                        // errors are handled via Result. No change needed here.
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
-                                                let target = expand_tilde(item, &home);
+                                                let target = expand_tilde(item, &home); // Pass &Path
                                                 debug!("Deleting file {}...", target.display());
                                                 if let Err(e) = fs::remove_file(&target) {
-                                                    // Log error only if it's NOT file not found
                                                     if e.kind() != std::io::ErrorKind::NotFound {
                                                         warn!(
                                                             "Failed to delete {}: {}",
@@ -62,16 +57,14 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                         }
                                     }
                                     "rmdir" => {
-                                        // fs::remove_dir_all doesn't print to stdout/stderr.
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
-                                                let target = expand_tilde(item, &home);
+                                                let target = expand_tilde(item, &home); // Pass &Path
                                                 debug!(
                                                     "Removing directory {}...",
                                                     target.display()
                                                 );
                                                 if let Err(e) = fs::remove_dir_all(&target) {
-                                                    // Log error only if it's NOT file not found
                                                     if e.kind() != std::io::ErrorKind::NotFound {
                                                         warn!(
                                                             "Failed to rmdir {}: {}",
@@ -87,12 +80,11 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 debug!("Forgetting pkgutil receipt {}...", item);
-                                                // Redirect stdout and stderr to null
                                                 let _ = Command::new("pkgutil")
                                                     .arg("--forget")
                                                     .arg(item)
-                                                    .stdout(Stdio::null()) // <--- Added
-                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .stdout(Stdio::null())
+                                                    .stderr(Stdio::null())
                                                     .status();
                                                 artifacts.push(InstalledArtifact::PkgUtilReceipt {
                                                     id: item.to_string(),
@@ -103,21 +95,18 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     "launchctl" => {
                                         if let Some(arr) = val.as_array() {
                                             for label in arr.iter().filter_map(|v| v.as_str()) {
-                                                let plist = home
+                                                let plist = home // Use expanded home
                                                     .join("Library/LaunchAgents")
                                                     .join(format!("{}.plist", label));
                                                 debug!(
                                                     "Unloading launchctl {}...",
                                                     plist.display()
                                                 );
-                                                // Redirect stdout and stderr to null
                                                 let _ = Command::new("launchctl")
                                                     .arg("unload")
-                                                    // Consider adding -w for persistent unload if
-                                                    // needed
                                                     .arg(&plist)
-                                                    .stdout(Stdio::null()) // <--- Added
-                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .stdout(Stdio::null())
+                                                    .stderr(Stdio::null())
                                                     .status();
                                                 artifacts.push(InstalledArtifact::Launchd {
                                                     label: label.to_string(),
@@ -129,28 +118,23 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     "script" => {
                                         if let Some(cmd) = val.as_str() {
                                             debug!("Running zap script: {}...", cmd);
-                                            // Redirect stdout and stderr to null
                                             let _ = Command::new("sh")
                                                 .arg("-c")
                                                 .arg(cmd)
-                                                .stdout(Stdio::null()) // <--- Added
-                                                .stderr(Stdio::null()) // <--- Added
+                                                .stdout(Stdio::null())
+                                                .stderr(Stdio::null())
                                                 .status();
                                         }
                                     }
                                     "signal" => {
-                                        // Signals often target processes directly, less likely to
-                                        // have stdout/stderr,
-                                        // but redirecting won't hurt.
                                         if let Some(arr) = val.as_array() {
                                             for cmd in arr.iter().filter_map(|v| v.as_str()) {
                                                 debug!("Running signal command: {}...", cmd);
-                                                // Redirect stdout and stderr to null
                                                 let _ = Command::new("sh")
                                                     .arg("-c")
                                                     .arg(cmd)
-                                                    .stdout(Stdio::null()) // <--- Added
-                                                    .stderr(Stdio::null()) // <--- Added
+                                                    .stdout(Stdio::null())
+                                                    .stderr(Stdio::null())
                                                     .status();
                                             }
                                         }
@@ -160,6 +144,8 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                             }
                         }
                     }
+                    // Only process the first "zap" stanza found
+                    break;
                 }
             }
         }
@@ -169,7 +155,7 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
 }
 
 /// Expand a path that may start with '~' to the user's home directory
-fn expand_tilde(path: &str, home: &PathBuf) -> PathBuf {
+fn expand_tilde(path: &str, home: &Path) -> PathBuf { // Changed to &Path
     if let Some(stripped) = path.strip_prefix("~/") {
         home.join(stripped)
     } else {

@@ -59,7 +59,7 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT_STRING)
         .build()
-        .map_err(|e| SapphireError::Http(e))?;
+        .map_err(SapphireError::Http)?;
 
     let response = client.get(&url).send().await.map_err(|e| {
         error!("HTTP request failed for {}: {}", url, e);
@@ -82,10 +82,7 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
         )));
     }
 
-    let body = response.text().await.map_err(|e| {
-        error!("Failed to read response body from {}: {}", url, e);
-        SapphireError::Http(e)
-    })?;
+    let body = response.text().await.map_err(SapphireError::Http)?;
 
     if body.trim().is_empty() {
         error!("Response body for {} was empty.", url);
@@ -114,8 +111,7 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
     let direct_fetch_result = fetch_raw_formulae_json(&format!("formula/{}.json", name)).await;
 
     if let Ok(body) = direct_fetch_result {
-        let formula: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| SapphireError::Json(e))?;
+        let formula: serde_json::Value = serde_json::from_str(&body).map_err(SapphireError::Json)?;
         return Ok(formula);
     } else {
         // Fallback might be less useful if the single endpoint fails, but keep for now
@@ -146,8 +142,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
     let direct_fetch_result = fetch_raw_formulae_json(&format!("cask/{}.json", token)).await;
 
     if let Ok(body) = direct_fetch_result {
-        let cask: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| SapphireError::Json(e))?;
+        let cask: serde_json::Value = serde_json::from_str(&body).map_err(SapphireError::Json)?;
         return Ok(cask);
     } else {
         warn!(

@@ -23,10 +23,9 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// Creates a new Cache instance with the specified cache directory
     pub fn new(cache_dir: &Path) -> Result<Self> {
         if !cache_dir.exists() {
-            fs::create_dir_all(cache_dir).map_err(|e| SapphireError::Io(e))?;
+            fs::create_dir_all(cache_dir).map_err(SapphireError::Io)?; // Replaced closure
         }
 
         Ok(Self {
@@ -43,7 +42,7 @@ impl Cache {
     pub fn store_raw(&self, filename: &str, data: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
         tracing::debug!("Saving raw data to cache file: {:?}", path);
-        fs::write(&path, data).map_err(|e| SapphireError::Io(e))?;
+        fs::write(&path, data).map_err(SapphireError::Io)?;
         Ok(())
     }
 
@@ -51,15 +50,15 @@ impl Cache {
     pub fn load_raw(&self, filename: &str) -> Result<String> {
         let path = self.cache_dir.join(filename);
         tracing::debug!("Loading raw data from cache file: {:?}", path);
-
+    
         if !path.exists() {
             return Err(SapphireError::Cache(format!(
                 "Cache file {} does not exist",
                 filename
             )));
         }
-
-        fs::read_to_string(&path).map_err(|e| SapphireError::Io(e))
+    
+        fs::read_to_string(&path).map_err(SapphireError::Io)
     }
 
     /// Checks if a cache file exists and is valid (within TTL)
@@ -90,8 +89,8 @@ impl Cache {
     /// Clears all cache files
     pub fn clear_all(&self) -> Result<()> {
         if self.cache_dir.exists() {
-            fs::remove_dir_all(&self.cache_dir).map_err(|e| SapphireError::Io(e))?;
-            fs::create_dir_all(&self.cache_dir).map_err(|e| SapphireError::Io(e))?;
+            fs::remove_dir_all(&self.cache_dir).map_err(SapphireError::Io)?;
+            fs::create_dir_all(&self.cache_dir).map_err(SapphireError::Io)?;
         }
         Ok(())
     }

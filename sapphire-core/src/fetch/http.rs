@@ -31,7 +31,7 @@ pub async fn fetch_formula_source_or_bottle(
 ) -> Result<PathBuf> {
     let filename = url
         .split('/')
-        .last()
+        .next_back() // Use next_back()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("{}-download", formula_name));
     let cache_path = config.cache_dir.join(&filename);
@@ -136,7 +136,7 @@ pub async fn fetch_resource(
     let url_filename = resource
         .url
         .split('/')
-        .last()
+        .next_back() // Use next_back()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("{}-download", resource.name));
     let cache_filename = format!("{}-{}", resource.name, url_filename);
