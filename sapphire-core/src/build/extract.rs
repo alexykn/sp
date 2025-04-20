@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
 

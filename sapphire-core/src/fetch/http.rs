@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use log::{error, warn};
+use tracing::{error, warn};
 use reqwest::header::{HeaderMap, ACCEPT, USER_AGENT};
 use reqwest::{Client, StatusCode}; // Use async Client
 use sha2::{Digest, Sha256};
@@ -36,22 +36,22 @@ pub async fn fetch_formula_source_or_bottle(
         .unwrap_or_else(|| format!("{}-download", formula_name));
     let cache_path = config.cache_dir.join(&filename);
 
-    log::debug!(
+    tracing::debug!(
         "Preparing to fetch main resource for '{}' from URL: {}",
         formula_name,
         url
     );
-    log::debug!("Target cache path: {}", cache_path.display());
-    log::debug!("Expected SHA256: {}", sha256_expected);
+    tracing::debug!("Target cache path: {}", cache_path.display());
+    tracing::debug!("Expected SHA256: {}", sha256_expected);
 
     // Check cache first (blocking IO is okay for quick checks)
     if cache_path.is_file() {
-        log::debug!("File exists in cache: {}", cache_path.display());
+        tracing::debug!("File exists in cache: {}", cache_path.display());
         if !sha256_expected.is_empty() {
             match verify_checksum(&cache_path, sha256_expected) {
                 // Checksum verification is sync
                 Ok(_) => {
-                    log::debug!("Using valid cached file: {}", cache_path.display());
+                    tracing::debug!("Using valid cached file: {}", cache_path.display());
                     return Ok(cache_path);
                 }
                 Err(e) => {
@@ -70,14 +70,14 @@ pub async fn fetch_formula_source_or_bottle(
                 }
             }
         } else {
-            log::debug!(
+            tracing::debug!(
                 "Using cached file (no checksum provided): {}",
                 cache_path.display()
             );
             return Ok(cache_path);
         }
     } else {
-        log::debug!("File not found in cache.");
+        tracing::debug!("File not found in cache.");
     }
 
     // Create cache dir (sync is fine)
@@ -95,11 +95,11 @@ pub async fn fetch_formula_source_or_bottle(
     let mut last_error: Option<SapphireError> = None;
 
     for current_url in urls_to_try {
-        log::debug!("Attempting download from: {}", current_url);
+        tracing::debug!("Attempting download from: {}", current_url);
         match download_and_verify(&client, current_url, &cache_path, sha256_expected).await {
             // Await async download
             Ok(path) => {
-                log::debug!("Successfully downloaded and verified: {}", path.display());
+                tracing::debug!("Successfully downloaded and verified: {}", path.display());
                 return Ok(path);
             }
             Err(e) => {
@@ -142,22 +142,22 @@ pub async fn fetch_resource(
     let cache_filename = format!("{}-{}", resource.name, url_filename);
     let cache_path = resource_cache_dir.join(&cache_filename);
 
-    log::debug!(
+    tracing::debug!(
         "Preparing to fetch resource '{}' for formula '{}' from URL: {}",
         resource.name,
         formula_name,
         resource.url
     );
-    log::debug!("Target resource cache path: {}", cache_path.display());
-    log::debug!("Expected SHA256: {}", resource.sha256);
+    tracing::debug!("Target resource cache path: {}", cache_path.display());
+    tracing::debug!("Expected SHA256: {}", resource.sha256);
 
     // Check resource cache (sync is fine)
     if cache_path.is_file() {
-        log::debug!("Resource exists in cache: {}", cache_path.display());
+        tracing::debug!("Resource exists in cache: {}", cache_path.display());
         match verify_checksum(&cache_path, &resource.sha256) {
             // Checksum is sync
             Ok(_) => {
-                log::debug!("Using cached resource: {}", cache_path.display());
+                tracing::debug!("Using cached resource: {}", cache_path.display());
                 return Ok(cache_path);
             }
             Err(e) => {
@@ -176,14 +176,14 @@ pub async fn fetch_resource(
             }
         }
     } else {
-        log::debug!("Resource not found in cache.");
+        tracing::debug!("Resource not found in cache.");
     }
 
     let client = build_http_client()?;
     match download_and_verify(&client, &resource.url, &cache_path, &resource.sha256).await {
         // Await async download
         Ok(path) => {
-            log::debug!(
+            tracing::debug!(
                 "Successfully downloaded and verified resource: {}",
                 path.display()
             );
@@ -229,10 +229,10 @@ async fn download_and_verify(
         final_path.file_name().unwrap_or_default().to_string_lossy()
     );
     let temp_path = final_path.with_file_name(temp_filename);
-    log::debug!("Downloading to temporary path: {}", temp_path.display());
+    tracing::debug!("Downloading to temporary path: {}", temp_path.display());
     if temp_path.exists() {
         if let Err(e) = fs::remove_file(&temp_path) {
-            log::warn!(
+            tracing::warn!(
                 "Could not remove existing temporary file {}: {}",
                 temp_path.display(),
                 e
@@ -246,14 +246,14 @@ async fn download_and_verify(
         .await // Await send
         .map_err(|e| SapphireError::HttpError(format!("HTTP request failed for {}: {}", url, e)))?;
     let status = response.status();
-    log::debug!("Received HTTP status: {} for {}", status, url);
+    tracing::debug!("Received HTTP status: {} for {}", status, url);
 
     if !status.is_success() {
         let body_text = response
             .text()
             .await
             .unwrap_or_else(|_| "Failed to read response body".to_string()); // Await text
-        log::error!("HTTP error {} for URL {}: {}", status, url, body_text);
+        tracing::error!("HTTP error {} for URL {}: {}", status, url, body_text);
         return match status {
             StatusCode::NOT_FOUND => Err(SapphireError::DownloadError(
                 final_path
@@ -303,17 +303,17 @@ async fn download_and_verify(
             ))
         })?;
     drop(temp_file); // Close file
-    log::debug!("Finished writing download stream to temp file.");
+    tracing::debug!("Finished writing download stream to temp file.");
 
     // Checksum verification is synchronous (CPU bound)
     if !sha256_expected.is_empty() {
         verify_checksum(&temp_path, sha256_expected)?;
-        log::debug!(
+        tracing::debug!(
             "Checksum verified for temporary file: {}",
             temp_path.display()
         );
     } else {
-        log::warn!(
+        tracing::warn!(
             "Skipping checksum verification for {} - none provided.",
             temp_path.display()
         );
@@ -328,7 +328,7 @@ async fn download_and_verify(
             e
         ))
     })?;
-    log::debug!(
+    tracing::debug!(
         "Moved verified file to final location: {}",
         final_path.display()
     );
@@ -337,7 +337,7 @@ async fn download_and_verify(
 
 // verify_checksum remains synchronous
 pub fn verify_checksum(file_path: &Path, expected_sha256: &str) -> Result<()> {
-    log::debug!("Verifying checksum for: {}", file_path.display());
+    tracing::debug!("Verifying checksum for: {}", file_path.display());
     let mut file = match fs::File::open(file_path) {
         Ok(f) => f,
         Err(e) => {
@@ -361,12 +361,12 @@ pub fn verify_checksum(file_path: &Path, expected_sha256: &str) -> Result<()> {
     };
     let hash_bytes = hasher.finalize();
     let actual_sha256 = hex::encode(hash_bytes);
-    log::debug!(
+    tracing::debug!(
         "Calculated SHA256: {} ({} bytes read)",
         actual_sha256,
         bytes_copied
     );
-    log::debug!("Expected SHA256:   {}", expected_sha256);
+    tracing::debug!("Expected SHA256:   {}", expected_sha256);
     if actual_sha256.eq_ignore_ascii_case(expected_sha256) {
         Ok(())
     } else {

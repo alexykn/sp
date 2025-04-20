@@ -10,7 +10,7 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 // Add infer crate for file type detection
 use infer;
-use log::{debug, error, info, warn}; // For logging
+use tracing::{debug, error, info, warn}; // For logging
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

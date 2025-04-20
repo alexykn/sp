@@ -13,20 +13,29 @@ mod cli;
 mod ui;
 
 use cli::{CliArgs, Command};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse command line arguments using the Cli struct
     let cli_args = CliArgs::parse();
 
     // Initialize logger based on verbosity (default to info)
-    let log_level = match cli_args.verbose {
-        0 => "info",
-        1 => "debug",
-        _ => "trace",
+    let level_filter = match cli_args.verbose {
+        0 => LevelFilter::INFO,
+        1 => LevelFilter::DEBUG,
+        _ => LevelFilter::TRACE,
     };
-    env_logger::Builder::from_env(env_logger::Env::default().filter_or("SAPPHIRE_LOG", log_level))
-        .format_timestamp(None)
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(level_filter.into())
+        .with_env_var("SAPPHIRE_LOG")
+        .from_env_lossy();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(true)
+        .without_time()
         .init();
 
     // Initialize config *before* auto-update check
@@ -50,10 +59,10 @@ async fn main() -> Result<()> {
     if needs_update_check {
         if let Err(e) = check_and_run_auto_update(&config, Arc::clone(&cache)).await {
             // Log the error from the check itself, but don't exit
-            log::error!("Error during auto-update check: {}", e);
+            tracing::error!("Error during auto-update check: {}", e);
         }
     } else {
-        log::debug!(
+        tracing::debug!(
             "Skipping auto-update check for command: {:?}",
             cli_args.command
         );
@@ -71,7 +80,7 @@ async fn main() -> Result<()> {
 async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> SapphireResult<()> {
     // 1. Check if auto-update is disabled
     if env::var("SAPPHIRE_NO_AUTO_UPDATE").map_or(false, |v| v == "1") {
-        log::debug!("Auto-update disabled via SAPPHIRE_NO_AUTO_UPDATE=1.");
+        tracing::debug!("Auto-update disabled via SAPPHIRE_NO_AUTO_UPDATE=1.");
         return Ok(());
     }
 
@@ -82,27 +91,27 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> Sapphi
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(default_interval_secs);
     let update_interval = Duration::from_secs(update_interval_secs);
-    log::debug!("Auto-update interval: {:?}", update_interval);
+    tracing::debug!("Auto-update interval: {:?}", update_interval);
 
     // 3. Check timestamp file
     let timestamp_file = config.cache_dir.join(".sapphire_last_update_check");
-    log::debug!("Checking timestamp file: {}", timestamp_file.display());
+    tracing::debug!("Checking timestamp file: {}", timestamp_file.display());
 
     let mut needs_update = true; // Assume update needed unless file is recent
     if let Ok(metadata) = fs::metadata(&timestamp_file) {
         if let Ok(modified_time) = metadata.modified() {
             match SystemTime::now().duration_since(modified_time) {
                 Ok(age) => {
-                    log::debug!("Time since last update check: {:?}", age);
+                    tracing::debug!("Time since last update check: {:?}", age);
                     if age < update_interval {
                         needs_update = false;
-                        log::debug!("Auto-update interval not yet passed.");
+                        tracing::debug!("Auto-update interval not yet passed.");
                     } else {
-                        log::debug!("Auto-update interval passed.");
+                        tracing::debug!("Auto-update interval passed.");
                     }
                 }
                 Err(e) => {
-                    log::warn!(
+                    tracing::warn!(
                         "Could not get duration since last update check (system time error?): {}",
                         e
                     );
@@ -110,14 +119,14 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> Sapphi
                 }
             }
         } else {
-            log::warn!(
+            tracing::warn!(
                 "Could not read modification time for timestamp file: {}",
                 timestamp_file.display()
             );
             // Proceed with update if we can't read time
         }
     } else {
-        log::debug!("Timestamp file not found or not accessible.");
+        tracing::debug!("Timestamp file not found or not accessible.");
         // Proceed with update if file doesn't exist
     }
 
@@ -132,10 +141,10 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> Sapphi
                 // 5. Update timestamp file on success
                 match fs::File::create(&timestamp_file) {
                     Ok(_) => {
-                        log::debug!("Updated timestamp file: {}", timestamp_file.display());
+                        tracing::debug!("Updated timestamp file: {}", timestamp_file.display());
                     }
                     Err(e) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to create or update timestamp file '{}': {}",
                             timestamp_file.display(),
                             e
@@ -146,11 +155,11 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> Sapphi
             }
             Err(e) => {
                 // Log error but don't prevent the main command from running
-                log::error!("Auto-update failed: {}", e);
+                tracing::error!("Auto-update failed: {}", e);
             }
         }
     } else {
-        log::debug!("Skipping auto-update.");
+        tracing::debug!("Skipping auto-update.");
     }
 
     Ok(())

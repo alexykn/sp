@@ -1,6 +1,6 @@
 // **File:** sapphire-core/src/fetch/api.rs
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT}; // Import headers
 use reqwest::Client;
 use serde_json::Value;
@@ -333,19 +333,19 @@ pub async fn get_cask(name: &str) -> Result<Cask> {
                     eprintln!("{}", json_str);
                     eprintln!("--- End of JSON ---");
                     // Also log it for persistence
-                    log::error!("Problematic JSON for cask '{}':\n{}", name, json_str);
+                    tracing::error!("Problematic JSON for cask '{}':\n{}", name, json_str);
                 }
                 Err(fmt_err) => {
                     // Fallback if pretty-printing fails (less likely)
                     eprintln!("\n--- Problematic JSON (raw debug) for cask '{}' ---", name);
                     eprintln!("{:?}", raw_json); // Print debug format
                     eprintln!("--- End of JSON ---");
-                    log::error!(
+                    tracing::error!(
                         "Could not pretty-print problematic JSON for cask {}: {}",
                         name,
                         fmt_err
                     );
-                    log::error!("Raw problematic value: {:?}", raw_json);
+                    tracing::error!("Raw problematic value: {:?}", raw_json);
                 }
             }
             // Important: Return the original deserialization error

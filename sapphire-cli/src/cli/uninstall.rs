@@ -12,7 +12,8 @@ use sapphire_core::model::cask::Cask;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
-use {log, serde_json, walkdir};
+use serde_json;
+use walkdir;
 
 use crate::cli::info;
 use crate::ui;
@@ -39,12 +40,12 @@ impl Uninstall {
             if is_formula {
                 // --- Formula Uninstall Logic (largely unchanged, uses existing manifest) ---
                 let formula = formula_result.unwrap(); // Safe unwrap due to is_ok() check
-                log::debug!("Attempting to uninstall formula: {}", name);
+                tracing::debug!("Attempting to uninstall formula: {}", name);
                 let cellar_path =
                     config.formula_keg_path(formula.name(), &formula.version_str_full());
 
                 if !cellar_path.exists() {
-                    log::warn!(
+                    tracing::warn!(
                         "Formula '{}' info found but keg missing: {}. Attempting cleanup.",
                         name,
                         cellar_path.display()
@@ -55,7 +56,7 @@ impl Uninstall {
                             name
                         )),
                         Err(e) => {
-                            log::error!(
+                            tracing::error!(
                                 "Failed to unlink artifacts for missing keg {}: {}",
                                 formula.name(),
                                 e
@@ -77,9 +78,11 @@ impl Uninstall {
                 let (file_count, size_bytes) = count_files_and_size(&cellar_path).unwrap_or((0, 0));
                 let mut unlink_error: Option<SapphireError> = None;
                 match build::formula::link::unlink_formula_artifacts(&formula, config) {
-                    Ok(_) => log::debug!("Successfully unlinked artifacts for {}", formula.name()),
+                    Ok(_) => {
+                        tracing::debug!("Successfully unlinked artifacts for {}", formula.name())
+                    }
                     Err(e) => {
-                        log::error!(
+                        tracing::error!(
                             "Failed to unlink artifacts for {}: {}. Proceeding with keg removal.",
                             formula.name(),
                             e
@@ -88,13 +91,13 @@ impl Uninstall {
                     }
                 }
 
-                log::debug!("Removing formula keg directory: {}", cellar_path.display());
+                tracing::debug!("Removing formula keg directory: {}", cellar_path.display());
                 if let Err(e) = fs::remove_dir_all(&cellar_path) {
                     let removal_error = SapphireError::Io(std::io::Error::new(
                         e.kind(),
                         format!("Failed remove keg {}: {}", cellar_path.display(), e),
                     ));
-                    log::error!("{}", removal_error);
+                    tracing::error!("{}", removal_error);
                     errors.push((name.to_string(), removal_error));
                     pb.finish_and_clear();
                     continue;
@@ -121,18 +124,18 @@ impl Uninstall {
                     let cask: Cask = match serde_json::from_value(cask_json) {
                         Ok(c) => c,
                         Err(e) => {
-                            log::error!("Failed to parse cask JSON for {}: {}", name, e);
+                            tracing::error!("Failed to parse cask JSON for {}: {}", name, e);
                             errors.push((name.to_string(), SapphireError::Json(e)));
                             pb.finish_and_clear();
                             continue;
                         }
                     };
-                    log::debug!("Attempting to uninstall cask: {}", name);
+                    tracing::debug!("Attempting to uninstall cask: {}", name);
 
                     let installed_version = match cask.installed_version(config) {
                         Some(v) => v,
                         None => {
-                            log::info!("Cask '{}' is not installed.", name);
+                            tracing::info!("Cask '{}' is not installed.", name);
                             // Avoid double "not found" if formula also wasn't found.
                             if errors
                                 .iter()
@@ -155,7 +158,7 @@ impl Uninstall {
                         config.cask_version_path(&cask.token, &installed_version);
 
                     if !cask_version_path.exists() {
-                        log::error!(
+                        tracing::error!(
                             "Cask '{}' version '{}' inconsistent: Dir missing: {}",
                             name,
                             installed_version,
@@ -180,7 +183,7 @@ impl Uninstall {
                     let mut artifact_removal_errors = 0;
 
                     if manifest_path.is_file() {
-                        log::debug!("Processing manifest: {}", manifest_path.display());
+                        tracing::debug!("Processing manifest: {}", manifest_path.display());
                         match fs::read_to_string(&manifest_path) {
                             Ok(manifest_str) => {
                                 match serde_json::from_str::<CaskInstallManifest>(&manifest_str) {
@@ -193,7 +196,7 @@ impl Uninstall {
                                         }
                                     }
                                     Err(e) => {
-                                        log::warn!("Failed to parse cask manifest {}: {}. Falling back to directory removal only.", manifest_path.display(), e);
+                                        tracing::warn!("Failed to parse cask manifest {}: {}. Falling back to directory removal only.", manifest_path.display(), e);
                                         errors.push((
                                             name.to_string(),
                                             SapphireError::Generic(format!(
@@ -208,7 +211,7 @@ impl Uninstall {
                                 }
                             }
                             Err(e) => {
-                                log::warn!("Failed to read cask manifest {}: {}. Falling back to directory removal only.", manifest_path.display(), e);
+                                tracing::warn!("Failed to read cask manifest {}: {}. Falling back to directory removal only.", manifest_path.display(), e);
                                 errors.push((
                                     name.to_string(),
                                     SapphireError::Generic(format!(
@@ -222,18 +225,18 @@ impl Uninstall {
                             }
                         }
                     } else {
-                        log::warn!("No CASK_INSTALL_MANIFEST.json found for cask {}. Uninstalling Caskroom directory only.", name);
+                        tracing::warn!("No CASK_INSTALL_MANIFEST.json found for cask {}. Uninstalling Caskroom directory only.", name);
                         // This is not necessarily an error, just a limitation. Don't increment
                         // artifact_removal_errors here.
                     }
 
                     // --- Remove Caskroom Version Directory ---
-                    log::debug!(
+                    tracing::debug!(
                         "Removing cask version directory: {}",
                         cask_version_path.display()
                     );
                     if let Err(e) = fs::remove_dir_all(&cask_version_path) {
-                        log::error!(
+                        tracing::error!(
                             "Failed to remove cask version directory {}: {}",
                             cask_version_path.display(),
                             e
@@ -264,7 +267,7 @@ impl Uninstall {
                             format_size(size_bytes)
                         ));
                     } else {
-                        log::warn!(
+                        tracing::warn!(
                             "Uninstalled {} but encountered {} artifact removal errors.",
                             cask_version_path.display(),
                             artifact_removal_errors
@@ -284,7 +287,7 @@ impl Uninstall {
                     continue; // Successfully uninstalled cask (or attempted to)
                 }
                 Err(SapphireError::NotFound(_)) => {
-                    log::error!("Formula or Cask '{}' not found.", name);
+                    tracing::error!("Formula or Cask '{}' not found.", name);
                     // Avoid double "not found" errors
                     if errors
                         .iter()
@@ -302,7 +305,7 @@ impl Uninstall {
                     continue;
                 }
                 Err(e) => {
-                    log::error!("Error getting cask info for '{}': {}", name, e);
+                    tracing::error!("Error getting cask info for '{}': {}", name, e);
                     errors.push((name.to_string(), e));
                     pb.finish_and_clear();
                     continue;
@@ -342,7 +345,7 @@ impl Uninstall {
 /// Helper function to process the uninstallation of a single artifact from the manifest.
 /// Returns true on success, false on failure.
 fn process_artifact_uninstall(artifact: &InstalledArtifact) -> bool {
-    log::debug!("Uninstalling artifact: {:?}", artifact);
+    tracing::debug!("Uninstalling artifact: {:?}", artifact);
     match artifact {
         InstalledArtifact::App { path } => {
             remove_filesystem_artifact(path, true) // Use sudo for /Applications
@@ -357,11 +360,11 @@ fn process_artifact_uninstall(artifact: &InstalledArtifact) -> bool {
             unload_and_remove_launchd(label, path.as_deref())
         }
         InstalledArtifact::CaskroomReference { .. } => {
-            log::debug!("Ignoring CaskroomReference artifact during uninstall.");
+            tracing::debug!("Ignoring CaskroomReference artifact during uninstall.");
             true // Not an error to ignore this type
         } /* Add cases for other artifact types here
            * _ => {
-           *     log::warn!("Uninstall not yet implemented for artifact type: {:?}", artifact);
+           *     tracing::warn!("Uninstall not yet implemented for artifact type: {:?}", artifact);
            *     false // Consider unknown types as failure for now
            * } */
     }
@@ -372,7 +375,7 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
     match path.symlink_metadata() {
         Ok(metadata) => {
             let is_dir = metadata.is_dir();
-            log::debug!(
+            tracing::debug!(
                 "Removing {} at: {}",
                 if is_dir { "directory" } else { "file/symlink" },
                 path.display()
@@ -388,15 +391,15 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
                     && (e.kind() == std::io::ErrorKind::PermissionDenied
                         || e.kind() == std::io::ErrorKind::DirectoryNotEmpty)
                 {
-                    log::warn!("Direct removal failed ({}). Trying with sudo rm -rf...", e);
+                    tracing::warn!("Direct removal failed ({}). Trying with sudo rm -rf...", e);
                     let output = Command::new("sudo").arg("rm").arg("-rf").arg(path).output();
                     match output {
                         Ok(out) if out.status.success() => {
-                            log::info!("Successfully removed {} with sudo.", path.display());
+                            tracing::info!("Successfully removed {} with sudo.", path.display());
                             true
                         }
                         Ok(out) => {
-                            log::error!(
+                            tracing::error!(
                                 "Failed to remove {} with sudo: {}",
                                 path.display(),
                                 String::from_utf8_lossy(&out.stderr)
@@ -404,7 +407,7 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
                             false
                         }
                         Err(sudo_err) => {
-                            log::error!(
+                            tracing::error!(
                                 "Error executing sudo rm for {}: {}",
                                 path.display(),
                                 sudo_err
@@ -413,20 +416,20 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
                         }
                     }
                 } else {
-                    log::error!("Failed to remove artifact {}: {}", path.display(), e);
+                    tracing::error!("Failed to remove artifact {}: {}", path.display(), e);
                     false
                 }
             } else {
-                log::debug!("Successfully removed artifact: {}", path.display());
+                tracing::debug!("Successfully removed artifact: {}", path.display());
                 true
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            log::debug!("Artifact not found (already removed?): {}", path.display());
+            tracing::debug!("Artifact not found (already removed?): {}", path.display());
             true // Not finding it is success in uninstall context
         }
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "Failed to get metadata for artifact {}: {}",
                 path.display(),
                 e
@@ -438,7 +441,7 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
 
 /// Helper to forget a pkgutil receipt using sudo.
 fn forget_pkgutil_receipt(id: &str) -> bool {
-    log::info!("Forgetting package receipt (requires sudo): {}", id);
+    tracing::info!("Forgetting package receipt (requires sudo): {}", id);
     let output = Command::new("sudo")
         .arg("pkgutil")
         .arg("--forget")
@@ -447,22 +450,22 @@ fn forget_pkgutil_receipt(id: &str) -> bool {
     match output {
         Ok(out) => {
             if out.status.success() {
-                log::debug!("Successfully forgot package receipt {}", id);
+                tracing::debug!("Successfully forgot package receipt {}", id);
                 true
             } else {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 // Don't log error if it's "No receipt found", that's okay.
                 if !stderr.contains("No receipt for") {
-                    log::error!("Failed to forget package receipt {}: {}", id, stderr);
+                    tracing::error!("Failed to forget package receipt {}: {}", id, stderr);
                 } else {
-                    log::debug!("Package receipt {} already forgotten or never existed.", id);
+                    tracing::debug!("Package receipt {} already forgotten or never existed.", id);
                 }
                 // Even if not found, consider it "success" in uninstall context
                 true
             }
         }
         Err(e) => {
-            log::error!("Failed to execute sudo pkgutil --forget {}: {}", id, e);
+            tracing::error!("Failed to execute sudo pkgutil --forget {}: {}", id, e);
             false
         }
     }
@@ -470,7 +473,7 @@ fn forget_pkgutil_receipt(id: &str) -> bool {
 
 /// Helper to unload and optionally remove launchd plists.
 fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
-    log::info!("Unloading launchd agent/daemon (requires sudo): {}", label);
+    tracing::info!("Unloading launchd agent/daemon (requires sudo): {}", label);
     let mut success = true;
 
     // Attempt to unload first
@@ -486,17 +489,17 @@ fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 // Ignore "Could not find specified service" errors during unload
                 if !stderr.contains("Could not find") && !stderr.contains("service not loaded") {
-                    log::warn!("Failed to unload launchd item {}: {}", label, stderr);
+                    tracing::warn!("Failed to unload launchd item {}: {}", label, stderr);
                     success = false; // Mark as partial failure if unload fails unexpectedly
                 } else {
-                    log::debug!("Launchd item {} already unloaded or not found.", label);
+                    tracing::debug!("Launchd item {} already unloaded or not found.", label);
                 }
             } else {
-                log::debug!("Successfully unloaded launchd item {}.", label);
+                tracing::debug!("Successfully unloaded launchd item {}.", label);
             }
         }
         Err(e) => {
-            log::error!(
+            tracing::error!(
                 "Failed to execute sudo launchctl unload for {}: {}",
                 label,
                 e
@@ -507,13 +510,13 @@ fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
 
     // Remove the plist file if path is provided
     if let Some(plist_path) = path {
-        log::debug!(
+        tracing::debug!(
             "Attempting removal of launchd plist: {}",
             plist_path.display()
         );
         // Use the helper, assuming plist might need sudo depending on location
         if !remove_filesystem_artifact(plist_path, true) {
-            log::warn!(
+            tracing::warn!(
                 "Failed to remove launchd plist file: {}",
                 plist_path.display()
             );
@@ -533,25 +536,25 @@ fn cleanup_parent_cask_dir(parent_cask_dir: &Path) {
             Ok(mut entries) => {
                 if entries.next().is_none() {
                     // Check if directory is empty
-                    log::debug!(
+                    tracing::debug!(
                         "Removing empty parent cask directory: {}",
                         parent_cask_dir.display()
                     );
                     if let Err(e) = std::fs::remove_dir(parent_cask_dir) {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to remove empty parent cask directory {}: {}",
                             parent_cask_dir.display(),
                             e
                         );
                     }
                 } else {
-                    log::debug!(
+                    tracing::debug!(
                         "Parent cask directory {} is not empty, skipping removal.",
                         parent_cask_dir.display()
                     );
                 }
             }
-            Err(e) => log::warn!(
+            Err(e) => tracing::warn!(
                 "Failed to read parent cask directory {} to check if empty: {}",
                 parent_cask_dir.display(),
                 e
@@ -576,7 +579,7 @@ fn count_files_and_size(path: &std::path::Path) -> Result<(usize, u64)> {
                             }
                         }
                         Err(e) => {
-                            log::warn!(
+                            tracing::warn!(
                                 "Could not get metadata for {}: {}",
                                 entry_data.path().display(),
                                 e
@@ -586,7 +589,7 @@ fn count_files_and_size(path: &std::path::Path) -> Result<(usize, u64)> {
                 }
             }
             Err(e) => {
-                log::warn!("Error traversing directory {}: {}", path.display(), e);
+                tracing::warn!("Error traversing directory {}: {}", path.display(), e);
             }
         }
     }

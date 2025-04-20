@@ -4,7 +4,7 @@ use std::sync::Arc;
 // Removed: use std::fs;
 // Removed: use std::path::PathBuf;
 // Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
-use log::debug;
+use tracing::debug;
 
 use crate::model::formula::Formula;
 use crate::utils::cache::Cache;

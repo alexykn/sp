@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use log::{debug, error};
+use tracing::{debug, error};
 
 use crate::dependency::{Dependency, DependencyTag};
 use crate::formulary::Formulary;

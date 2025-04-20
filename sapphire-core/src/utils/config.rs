@@ -3,7 +3,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use dirs;
-use log::debug;
+use tracing::debug;
 
 use crate::utils::cache;
 use crate::utils::error::Result; // for home directory lookup

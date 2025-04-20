@@ -15,7 +15,6 @@ sapphire-core = { path = "../sapphire-core" }
 
 # Inherit from workspace
 anyhow = { workspace = true }
-log = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
@@ -35,6 +34,8 @@ futures = "0.3.31"
 terminal_size = "0.4.2"
 textwrap      = "0.16"
 unicode-width = "0.2.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [build-dependencies]
 clap_complete = "4.3"

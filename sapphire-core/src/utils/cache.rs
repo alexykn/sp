@@ -42,7 +42,7 @@ impl Cache {
     /// Stores raw string data in the cache
     pub fn store_raw(&self, filename: &str, data: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
-        log::debug!("Saving raw data to cache file: {:?}", path);
+        tracing::debug!("Saving raw data to cache file: {:?}", path);
         fs::write(&path, data).map_err(|e| SapphireError::Io(e))?;
         Ok(())
     }
@@ -50,7 +50,7 @@ impl Cache {
     /// Loads raw string data from the cache
     pub fn load_raw(&self, filename: &str) -> Result<String> {
         let path = self.cache_dir.join(filename);
-        log::debug!("Loading raw data from cache file: {:?}", path);
+        tracing::debug!("Loading raw data from cache file: {:?}", path);
 
         if !path.exists() {
             return Err(SapphireError::Cache(format!(
@@ -106,7 +106,7 @@ pub fn get_cache_dir() -> Result<PathBuf> {
     let app_cache_dir = base_cache_dir.join(CACHE_SUBDIR);
 
     if !app_cache_dir.exists() {
-        log::debug!("Creating cache directory at {:?}", app_cache_dir);
+        tracing::debug!("Creating cache directory at {:?}", app_cache_dir);
         fs::create_dir_all(&app_cache_dir).map_err(|e| {
             SapphireError::Io(e)
             // Consider a specific Cache error variant: Cache(format!("Failed to create cache dir:
@@ -125,7 +125,7 @@ fn get_cache_path(filename: &str) -> Result<PathBuf> {
 /// The data is serialized as JSON.
 pub fn save_to_cache<T: Serialize>(filename: &str, data: &T) -> Result<()> {
     let path = get_cache_path(filename)?;
-    log::debug!("Saving data to cache file: {:?}", path);
+    tracing::debug!("Saving data to cache file: {:?}", path);
     let file = fs::File::create(&path)?;
     // Use serde_json::to_writer_pretty for readable cache files (optional)
     serde_json::to_writer_pretty(file, data)?;
@@ -136,10 +136,10 @@ pub fn save_to_cache<T: Serialize>(filename: &str, data: &T) -> Result<()> {
 /// Checks if the cache file exists and is within the TTL (Time To Live).
 pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
     let path = get_cache_path(filename)?;
-    log::debug!("Attempting to load from cache file: {:?}", path);
+    tracing::debug!("Attempting to load from cache file: {:?}", path);
 
     if !path.exists() {
-        log::debug!("Cache file not found.");
+        tracing::debug!("Cache file not found.");
         return Err(SapphireError::Cache(
             "Cache file does not exist".to_string(),
         ));
@@ -153,7 +153,7 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
         .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
 
     if age > CACHE_TTL {
-        log::debug!("Cache file expired (age: {:?}, TTL: {:?}).", age, CACHE_TTL);
+        tracing::debug!("Cache file expired (age: {:?}, TTL: {:?}).", age, CACHE_TTL);
         return Err(SapphireError::Cache(format!(
             "Cache file expired ({} > {})",
             humantime::format_duration(age),
@@ -161,7 +161,7 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
         )));
     }
 
-    log::debug!("Cache file is valid. Loading...");
+    tracing::debug!("Cache file is valid. Loading...");
     let file = fs::File::open(&path)?;
     let data: T = serde_json::from_reader(file)?;
     Ok(data)
@@ -170,7 +170,7 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
 /// Clears the entire application cache directory.
 pub fn clear_cache() -> Result<()> {
     let path = get_cache_dir()?;
-    log::debug!("Clearing cache directory: {:?}", path);
+    tracing::debug!("Clearing cache directory: {:?}", path);
     if path.exists() {
         fs::remove_dir_all(&path)?;
     }

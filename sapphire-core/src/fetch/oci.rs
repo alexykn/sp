@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use futures::StreamExt;
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use reqwest::header::{ACCEPT, AUTHORIZATION};

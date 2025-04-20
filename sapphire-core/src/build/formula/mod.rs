@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 
 use crate::model::formula::Formula;
 use crate::utils::config::Config;

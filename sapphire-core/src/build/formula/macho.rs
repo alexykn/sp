@@ -9,7 +9,7 @@ use std::io::Write; // Keep for write_patched_buffer
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio}; // Keep for codesign
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 // --- Imports needed for Mach-O patching (macOS only) ---
 #[cfg(target_os = "macos")]
 use object::{
@@ -301,7 +301,7 @@ where
         let variant = match cmd.variant() {
             Ok(v) => v,
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Malformed load‑command in {}: {}; skipping",
                     file_path_for_log.display(),
                     e
@@ -330,7 +330,7 @@ where
 
                     if new_path.len() + 1 > allocated {
                         // would overflow – log & **skip** instead of throwing
-                        log::debug!(
+                        tracing::debug!(
                             "Skip patch (too long): '{}' → '{}' (alloc {} B) in {}",
                             old_path,
                             new_path,
@@ -393,7 +393,7 @@ fn patch_path_in_buffer(
 ) -> Result<()> {
     if new_path.len() + 1 > alloc_len || abs_off + alloc_len > buf.len() {
         // should never happen – just log & skip
-        log::debug!(
+        tracing::debug!(
             "Patch skipped (bounds) at {} in {}",
             abs_off,
             file.display()

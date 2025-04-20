@@ -188,7 +188,7 @@ impl Cask {
             }
             Err(e) => {
                 // Log error if reading the directory fails, but assume not installed
-                log::warn!(
+                tracing::warn!(
                     "Failed to read cask directory {} to check for installed versions: {}",
                     cask_dir.display(),
                     e
