@@ -32,7 +32,6 @@ cargo +nightly fmt --all
 ```bash
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
-> Not strictly required for now, still got much to clean up there.
 
 ### 6. Test (uses stable toolchain)
 ```bash
@@ -82,7 +81,7 @@ All crates live in one Cargo **workspace**, so `cargo <cmd>` from the repo root 
     ```
       * Ensure the nightly toolchain is installed (`rustup toolchain install nightly`).
       * CI runs `cargo +nightly fmt --all --check`, so MRs with incorrect formatting will fail.
-  * **Lint** ‑ `cargo clippy … -D warnings`; annotate false positives with `#[allow()]` + comment. (This uses the default stable toolchain). -> not required for now, gotta fix up the current mess first. Just try not to add more linter errors ;)
+  * **Lint** ‑ `cargo clippy … -D warnings`; annotate false positives with `#[allow()]` + comment. (This uses the default stable toolchain).
   * **API** ‑ follow the [Rust API Guidelines][Rust API Guidelines]; document every public item; avoid `unwrap()`.
   * **Dependencies** ‑ discuss new crates in the MR; future policy will use `cargo deny`.
 
