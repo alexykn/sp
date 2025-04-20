@@ -2,6 +2,7 @@
 
 > **WARNING: ALPHA SOFTWARE**  
 > Sapphire is experimental, under heavy development, and may be unstable. Use at your own risk!
+> Uninstalling a cask with brew then reinstalling it with Sapphire will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
 Sapphire is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
