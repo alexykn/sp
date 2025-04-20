@@ -7,20 +7,27 @@ on:
 
 jobs:
   rust-macos-arm64:
-    # Use the new M1 macOS 14 (Sonoma) runner, which is arm64-native 
     runs-on: macos-latest
 
     steps:
       - name: Check out code
         uses: actions/checkout@v3
 
-      - name: Install Rust toolchain (Nightly)
-        # macOS runners don’t come with Rust pre‑installed, so you need this 
+      - name: Install Rust toolchain (Nightly for fmt, Stable default)
+        # Installs both nightly (for fmt) and the stable version defined
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly # Keep nightly as per previous step
-          override: true
-          components: clippy, rustfmt 
+          # Install nightly for rustfmt
+          toolchain: nightly
+          components: rustfmt, clippy
+          override: true # Use nightly if specified
+
+      - name: Set Stable as Default (if rust-toolchain.toml exists)
+        # This step ensures commands without +nightly use the stable toolchain
+        if: success() # Only run if nightly install succeeded
+        uses: actions-rs/toolchain@v1
+        with:
+          components: clippy # Ensure clippy is on stable
 
       - name: Cache cargo registry & build artifacts
         uses: actions/cache@v3
@@ -29,10 +36,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          # Include toolchain in cache key
-          key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('**/Cargo.lock') }}
+          # Using hashFiles ensures cache invalidation when dependencies change
+          key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-nightly-
+            ${{ runner.os }}-cargo-stable-
             ${{ runner.os }}-cargo-
 
       - name: Verify runner architecture
@@ -40,16 +47,21 @@ jobs:
           echo "UNAME reports: $(uname -m)"
 
       - name: Check formatting (using Nightly rustfmt)
-        run: cargo fmt -- --check
+        # Explicitly use the nightly toolchain installed earlier
+        run: cargo +nightly fmt --all -- --check
 
-      - name: Run linters
+      - name: Run linters (using Default/Stable toolchain)
+        # Use the stable toolchain for clippy
         run: cargo clippy -- -D warnings
 
-      - name: Check for outdated dependencies
+      - name: Install cargo-outdated (using Default/Stable toolchain)
+        run: cargo install cargo-outdated --locked
+
+      - name: Check for outdated dependencies (using Default/Stable toolchain)
         run: cargo outdated --exit-code 1
 
-      - name: Build
+      - name: Build (using Default/Stable toolchain)
         run: cargo build --verbose
 
-      - name: Run tests
+      - name: Run tests (using Default/Stable toolchain)
         run: cargo test --verbose
