@@ -1,8 +1,7 @@
 // ===== sapphire-core/src/build/cask/mod.rs =====
 
-pub mod app;
+pub mod artifacts;
 pub mod dmg;
-pub mod pkg;
 
 use crate::model::cask::{Cask, UrlField}; // Added Artifact enum
 use crate::utils::cache::Cache;
@@ -146,7 +145,7 @@ pub fn install_cask(
     // --- Handle PKG directly ---
     if extension == "pkg" || extension == "mpkg" {
         info!("Detected PKG, installing directly...");
-        match pkg::install_pkg_from_path(cask, download_path, &cask_version_install_path, config) {
+        match artifacts::pkg::install_pkg_from_path(cask, download_path, &cask_version_install_path, config) {
              Ok(artifacts) => {
                  all_installed_artifacts.extend(artifacts);
                  // PKG install succeeded, now write manifest and return
@@ -212,62 +211,120 @@ pub fn install_cask(
             if let Some(artifact_obj) = artifact_value.as_object() {
                 for (key, value) in artifact_obj.iter() {
                     let result: Result<Vec<InstalledArtifact>> = match key.as_str() {
-                        "app" => {
-                            let mut app_artifacts = vec![];
-                            let mut app_errors = vec![];
-                            if let Some(app_array) = value.as_array() {
-                                for app_name_val in app_array {
-                                    if let Some(app_name) = app_name_val.as_str() {
-                                        let staged_app_path = stage_path.join(app_name);
-                                        if staged_app_path.exists() {
-                                            info!("Installing app artifact: {}", app_name);
-                                            match app::install_app_from_staged(cask, &staged_app_path, &cask_version_install_path, config) {
-                                                Ok(installed) => app_artifacts.extend(installed),
-                                                Err(e) => {
-                                                    error!("Failed to install app artifact '{}': {}", app_name, e);
-                                                    app_errors.push(e);
-                                                }
-                                            }
-                                        } else {
-                                            warn!("Declared app artifact '{}' not found in staged directory {}", app_name, stage_path.display());
-                                        }
-                                    } else { warn!("Non-string value found in 'app' artifact array: {:?}", app_name_val); }
-                                }
-                            } else { warn!("'app' artifact value is not an array: {:?}", value); }
-                            // If any app install failed, return the first error, otherwise return collected artifacts
-                            if let Some(first_err) = app_errors.into_iter().next() { Err(first_err) } else { Ok(app_artifacts) }
-                        }
-                        "pkg" => {
-                            let mut pkg_artifacts = vec![];
-                            let mut pkg_errors = vec![];
-                             if let Some(pkg_array) = value.as_array() {
-                                 for pkg_name_val in pkg_array {
-                                     if let Some(pkg_name) = pkg_name_val.as_str() {
-                                         let staged_pkg_path = stage_path.join(pkg_name);
-                                         if staged_pkg_path.exists() {
-                                             info!("Installing pkg artifact from stage: {}", pkg_name);
-                                             match pkg::install_pkg_from_path(cask, &staged_pkg_path, &cask_version_install_path, config) {
-                                                Ok(installed) => pkg_artifacts.extend(installed),
-                                                Err(e) => {
-                                                    error!("Failed to install pkg artifact '{}' from stage: {}", pkg_name, e);
-                                                    pkg_errors.push(e);
-                                                }
-                                             }
-                                         } else { warn!("Declared pkg artifact '{}' not found in staged directory {}", pkg_name, stage_path.display()); }
-                                     } else { warn!("Non-string value found in 'pkg' artifact array: {:?}", pkg_name_val); }
-                                 }
-                             } else { warn!("'pkg' artifact value is not an array: {:?}", value); }
-                             if let Some(first_err) = pkg_errors.into_iter().next() { Err(first_err) } else { Ok(pkg_artifacts) }
-                        }
-                        "binary" => {
-                            // Placeholder for future implementation
-                            warn!("Binary artifact linking not yet implemented.");
-                            Ok(vec![]) // Return empty vec for now
-                        }
-                        // Skip other keys like "uninstall", "zap", etc.
-                        _ => Ok(vec![]) // Ignore other types during install
-                    };
 
+                        "preflight" => {
+                            artifacts::preflight::run_preflight(cask, &stage_path, config)
+                        }
+
+                        "uninstall" => {
+                            artifacts::uninstall::record_uninstall(cask)
+                        }
+
+
+                        "app" => {
+                            // your existing app logic
+                            artifacts::app::install_app_from_staged(
+                                cask,
+                                &stage_path.join(value.as_array().unwrap().iter().map(|v| v.as_str().unwrap()).next().unwrap()),
+                                &cask_version_install_path,
+                                config,
+                            )
+                        }
+                    
+                        "suite" => {
+                            artifacts::suite::install_suite(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "installer" => {
+                            artifacts::installer::run_installer(cask, &stage_path, &cask_version_install_path, config)
+                        }
+
+                        "zap" => {
+                            // here we call our new zap handler
+                            // it only needs the Cask and Config, since it cleans things up on uninstall
+                            artifacts::zap::install_zap(cask, config)
+                        }
+                    
+                        "pkg" => {
+                            // your existing pkg logic
+                            let mut all = Vec::new();
+                            for pkg_name in value.as_array().unwrap().iter().filter_map(|v| v.as_str()) {
+                                let path = stage_path.join(pkg_name);
+                                let mut inst = artifacts::pkg::install_pkg_from_path(
+                                    cask, &path, &cask_version_install_path, config,
+                                )?;
+                                all.append(&mut inst);
+                            }
+                            Ok(all)
+                        }
+                    
+                        "binary" => artifacts::binary::install_binary(cask, stage_path, &cask_version_install_path, config),
+                    
+                        "manpage" => {
+                            artifacts::manpage::install_manpage(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "colorpicker" => {
+                            artifacts::colorpicker::install_colorpicker(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "dictionary" => {
+                            artifacts::dictionary::install_dictionary(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "font" => {
+                            artifacts::font::install_font(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "input_method" => {
+                            artifacts::input_method::install_input_method(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "internet_plugin" => {
+                            artifacts::internet_plugin::install_internet_plugin(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "keyboard_layout" => {
+                            artifacts::keyboard_layout::install_keyboard_layout(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "prefpane" => {
+                            artifacts::prefpane::install_prefpane(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "qlplugin" => {
+                            artifacts::qlplugin::install_qlplugin(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "mdimporter" => {
+                            artifacts::mdimporter::install_mdimporter(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "screen_saver" => {
+                            artifacts::screen_saver::install_screen_saver(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "service" => {
+                            artifacts::service::install_service(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "audio_unit_plugin" => {
+                            artifacts::audio_unit_plugin::install_audio_unit_plugin(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "vst_plugin" => {
+                            artifacts::vst_plugin::install_vst_plugin(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        "vst3_plugin" => {
+                            artifacts::vst3_plugin::install_vst3_plugin(cask, &stage_path, &cask_version_install_path, config)
+                        }
+                    
+                        other => {
+                            warn!("Artifact type '{}' not supported yet — skipping.", other);
+                            Ok(vec![])
+                        }
+                    };
                     // Handle result of artifact installation
                     match result {
                         Ok(installed) => all_installed_artifacts.extend(installed),

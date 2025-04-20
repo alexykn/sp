@@ -2,6 +2,7 @@
 use crate::utils::config::Config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs; // <-- Added import
 
 pub type Artifact = serde_json::Value;
 
@@ -152,33 +153,77 @@ pub struct CaskList {
 }
 
 impl Cask {
-    /// Check if this cask is installed
+    /// Check if this cask is installed by looking for a manifest file
+    /// in any versioned directory within the Caskroom.
     pub fn is_installed(&self, config: &Config) -> bool {
-        config.cask_dir(&self.token).exists()
+        let cask_dir = config.cask_dir(&self.token); // e.g., /opt/homebrew/Caskroom/firefox
+        if !cask_dir.exists() || !cask_dir.is_dir() {
+            return false;
+        }
+
+        // Iterate through entries (version dirs) inside the cask_dir
+        match fs::read_dir(&cask_dir) {
+            Ok(entries) => {
+                for entry_result in entries {
+                    if let Ok(entry) = entry_result {
+                        let version_path = entry.path();
+                        // Check if it's a directory (representing a version)
+                        if version_path.is_dir() {
+                            // Check for the existence of the manifest file
+                            let manifest_path = version_path.join("CASK_INSTALL_MANIFEST.json"); // <-- Correct filename
+                            if manifest_path.is_file() {
+                                // Found a manifest in at least one version directory, consider it installed
+                                return true;
+                            }
+                        }
+                    }
+                }
+                // If loop completes without finding a manifest in any version dir
+                false
+            }
+            Err(e) => {
+                // Log error if reading the directory fails, but assume not installed
+                log::warn!(
+                    "Failed to read cask directory {} to check for installed versions: {}",
+                    cask_dir.display(),
+                    e
+                );
+                false
+            }
+        }
     }
 
-    /// Get the installed version of this cask
+
+    /// Get the installed version of this cask by reading the directory names
+    /// in the Caskroom. Returns the first version found (use cautiously if multiple
+    /// versions could exist, though current install logic prevents this).
     pub fn installed_version(&self, config: &Config) -> Option<String> {
         let cask_dir = config.cask_dir(&self.token);
         if !cask_dir.exists() {
             return None;
         }
-        match std::fs::read_dir(&cask_dir) {
+        // Iterate through entries and return the first directory name found
+        match fs::read_dir(&cask_dir) {
             Ok(entries) => {
-                for entry in entries.flatten() {
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_dir() {
-                            if let Some(ver) = entry.file_name().to_str() {
-                                return Some(ver.to_string());
+                for entry_result in entries {
+                    if let Ok(entry) = entry_result {
+                        let path = entry.path();
+                        // Check if it's a directory (representing a version)
+                        if path.is_dir() {
+                            if let Some(version_str) = path.file_name().and_then(|name| name.to_str()) {
+                                // Return the first version directory name found
+                                return Some(version_str.to_string());
                             }
                         }
                     }
                 }
+                // No version directories found
                 None
             }
-            Err(_) => None,
+            Err(_) => None, // Error reading directory
         }
     }
+
 
     /// Get a friendly name for display purposes
     pub fn display_name(&self) -> String {
