@@ -42,9 +42,11 @@ jobs:
       - name: Check formatting (using Nightly rustfmt)
         run: cargo fmt -- --check
 
-      - name: Run linters (report only)
-        # Removed '-- -D warnings' to prevent build failure on warnings
-        run: cargo clippy
+      - name: Run linters
+        run: cargo clippy -- -D warnings
+
+      - name: Check for outdated dependencies
+        run: cargo outdated --exit-code 1
 
       - name: Build
         run: cargo build --verbose
