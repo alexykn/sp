@@ -47,12 +47,13 @@ pub struct ConflictsWith {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-/// Helper for architecture requirements: single or list
+/// Helper for architecture requirements: single string, list of strings, or list of spec objects
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ArchReq {
-    One(String),
-    Many(Vec<String>),
+    One(String),         // e.g., "arm64"
+    Many(Vec<String>),   // e.g., ["arm64", "x86_64"]
+    Specs(Vec<ArchSpec>), // Add this variant to handle [{"type": "arm", "bits": 64}]
 }
 
 /// Helper for macOS requirements: symbol, list, comparison, or map
@@ -80,6 +81,14 @@ impl From<StringList> for Vec<String> {
             StringList::Many(v) => v,
         }
     }
+}
+
+/// Represents the specific architecture details found in some cask definitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchSpec {
+    #[serde(rename = "type")] // Map the JSON "type" field
+    pub type_name: String, // e.g., "arm"
+    pub bits: u32, // e.g., 64
 }
 
 /// Represents `depends_on` block with multiple possible keys
