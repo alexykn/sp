@@ -8,11 +8,11 @@ use std::time::Duration;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
-use std::path::PathBuf;
+use std::sync::Arc; // <-- ADDED
 
 /// Updates the local cache of formulas and casks.
 /// This downloads the current lists from the Homebrew API.
-pub async fn run_update() -> Result<()> {
+pub async fn run_update(config: &Config, cache: &Arc<Cache>) -> Result<()> {
     log::debug!("Updating formula and cask lists...");
     // Spinner for update
     let pb = ProgressBar::new_spinner();
@@ -20,11 +20,7 @@ pub async fn run_update() -> Result<()> {
     pb.set_message("Updating package lists");
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    // Initialize config and cache
-    let config = Config::load()?;
-    let cache_dir: PathBuf = config.cache_dir.clone();
-    log::debug!("Cache directory: {:?}", cache_dir);
-    let cache = Cache::new(&config.cache_dir)?;
+    log::debug!("Using cache directory: {:?}", config.cache_dir);
 
     // Fetch and store raw formula data
     match api::fetch_all_formulas().await {
@@ -35,7 +31,7 @@ pub async fn run_update() -> Result<()> {
         }
         Err(e) => {
             log::error!("Failed to fetch formulas from API: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
     }
 
@@ -48,7 +44,7 @@ pub async fn run_update() -> Result<()> {
         }
         Err(e) => {
             log::error!("Failed to fetch casks from API: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
     }
 

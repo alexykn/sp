@@ -10,116 +10,109 @@ use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json::Value;
-// Removed unused prettytable imports; using fully qualified paths for table and row macros
+use std::sync::Arc; // <-- ADDED
 
 /// Displays detailed information about a formula or cask.
-pub async fn run_info(name: &str, is_cask: bool) -> Result<()> {
+pub async fn run_info(
+    name: &str,
+    is_cask: bool,
+    _config: &Config,
+    cache: &Arc<Cache>
+) -> Result<()> {
     log::debug!("Getting info for package: {}, is_cask: {}", name, is_cask);
-    // Spinner for info loading
     let pb = ProgressBar::new_spinner();
     pb.set_style(ProgressStyle::with_template("{spinner:.magenta} {msg}").unwrap());
     pb.set_message(format!("Loading info for {}", name));
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    // Initialize config and cache
-    let config = Config::load()?;
-    let cache = Cache::new(&config.cache_dir)?;
-
     if is_cask {
-        // Try as cask first when the flag is set
-        if let Ok(info) = get_cask_info(&cache, name).await {
-            pb.finish_and_clear();
-            print_cask_info(name, &info);
-            return Ok(());
-        }
-        // If specified as a cask but not found, return an error
-        return Err(SapphireError::NotFound(format!(
-            "Cask '{}' not found",
-            name
-        )));
-    } else {
-        // Try as formula first (only if a bottle is available)
-        if let Ok(info) = get_formula_info_raw(&cache, name).await {
-            if is_bottle_available(&info) {
+        match get_cask_info(Arc::clone(cache), name).await {
+            Ok(info) => {
                 pb.finish_and_clear();
-                print_formula_info(name, &info);
+                print_cask_info(name, &info);
                 return Ok(());
             }
-            // Skip formulas without bottles
+            Err(e) => {
+                return Err(e);
+            }
         }
-
-        // If not found as formula, try as cask
-        if let Ok(info) = get_cask_info(&cache, name).await {
-            pb.finish_and_clear();
-            print_cask_info(name, &info);
-            return Ok(());
+    } else {
+        match get_formula_info_raw(Arc::clone(cache), name).await {
+            Ok(info) => {
+                if is_bottle_available(&info) {
+                    pb.finish_and_clear();
+                    print_formula_info(name, &info);
+                    return Ok(());
+                }
+                log::debug!("Formula '{}' found but no bottle available, checking casks.", name);
+            }
+            Err(_e) => { /* proceed to check cask */ }
+        }
+        match get_cask_info(Arc::clone(cache), name).await {
+            Ok(info) => {
+                pb.finish_and_clear();
+                print_cask_info(name, &info);
+                return Ok(());
+            }
+            Err(e) => {
+                pb.finish_and_clear();
+                return Err(e);
+            }
         }
     }
-
-    // If we get here, the package was not found
-    Err(SapphireError::NotFound(format!(
-        "Package '{}' not found",
-        name
-    )))
 }
 
 /// Public function that retrieves formula information and returns the Formula model
-pub async fn get_formula_info(name: &str) -> Result<Formula> {
-    // Initialize config and cache
-    let config = Config::load()?;
-    let cache = Cache::new(&config.cache_dir)?;
-
-    // Get the raw JSON value
-    let raw_info = get_formula_info_raw(&cache, name).await?;
-
-    // Parse the JSON into a Formula struct
-    let formula: Formula = serde_json::from_value(raw_info).map_err(|e| SapphireError::Json(e))?;
-
+pub async fn get_formula_info(name: &str, _config: &Config, cache: &Arc<Cache>) -> Result<Formula> {
+    let raw_info = get_formula_info_raw(Arc::clone(cache), name).await?;
+    // Replace map_err closure with direct conversion since SapphireError implements From<serde_json::Error>
+    let formula: Formula = serde_json::from_value(raw_info)
+        .map_err(SapphireError::Json)?;
     Ok(formula)
 }
 
 /// Retrieves formula information from the cache or API as raw JSON
-async fn get_formula_info_raw(cache: &Cache, name: &str) -> Result<Value> {
-    // First try to load from cache
-    if let Ok(formula_data) = cache.load_raw("formula.json") {
-        // Parse the JSON
-        let formulas: Vec<Value> = serde_json::from_str(&formula_data)?;
-
-        // Find the formula with the matching name
-        for formula in formulas {
-            if let Some(formula_name) = formula.get("name").and_then(|n| n.as_str()) {
-                if formula_name == name {
-                    return Ok(formula);
+async fn get_formula_info_raw(cache: Arc<Cache>, name: &str) -> Result<Value> {
+    match cache.load_raw("formula.json") {
+        Ok(formula_data) => {
+            let formulas: Vec<Value> = serde_json::from_str(&formula_data)
+                .map_err(SapphireError::from)?;
+            for formula in formulas {
+                if let Some(fname) = formula.get("name").and_then(Value::as_str) {
+                    if fname == name {
+                        return Ok(formula);
+                    }
                 }
             }
+            log::debug!("Formula '{}' not found within cached 'formula.json'.", name);
         }
+        Err(e) => log::debug!("Cache file 'formula.json' not found or failed to load ({}).", e)
     }
-
-    // If not found in cache, try the API
-    log::debug!("Formula not found in cache, fetching from API...");
-    api::fetch_formula(name).await
+    log::debug!("Fetching formula '{}' directly from API...", name);
+    let value = api::fetch_formula(name).await?;
+    Ok(value)
 }
 
 /// Retrieves cask information from the cache or API
-async fn get_cask_info(cache: &Cache, name: &str) -> Result<Value> {
-    // First try to load from cache
-    if let Ok(cask_data) = cache.load_raw("cask.json") {
-        // Parse the JSON
-        let casks: Vec<Value> = serde_json::from_str(&cask_data)?;
-
-        // Find the cask with the matching token or name
-        for cask in casks {
-            if let Some(cask_token) = cask.get("token").and_then(|t| t.as_str()) {
-                if cask_token == name {
-                    return Ok(cask);
+async fn get_cask_info(cache: Arc<Cache>, name: &str) -> Result<Value> {
+    match cache.load_raw("cask.json") {
+        Ok(cask_data) => {
+            let casks: Vec<Value> = serde_json::from_str(&cask_data)
+                .map_err(SapphireError::from)?;
+            for cask in casks {
+                if let Some(token) = cask.get("token").and_then(Value::as_str) {
+                    if token == name {
+                        return Ok(cask);
+                    }
                 }
             }
+            log::debug!("Cask '{}' not found within cached 'cask.json'.", name);
         }
+        Err(e) => log::debug!("Cache file 'cask.json' not found or failed to load ({}).", e)
     }
-
-    // If not found in cache, try the API
-    log::debug!("Cask not found in cache, fetching from API...");
-    api::fetch_cask(name).await
+    log::debug!("Fetching cask '{}' directly from API...", name);
+    let value = api::fetch_cask(name).await?;
+    Ok(value)
 }
 
 /// Prints formula information in a formatted table

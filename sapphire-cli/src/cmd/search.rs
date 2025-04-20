@@ -12,6 +12,7 @@ use serde_json::Value;
 use prettytable::{Table, format};
 use terminal_size::{terminal_size, Width};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use std::sync::Arc;
 
 /// Represents the type of package to search for
 pub enum SearchType {
@@ -21,7 +22,12 @@ pub enum SearchType {
 }
 
 /// Searches for packages matching the query
-pub async fn run_search(query: &str, search_type: SearchType) -> Result<()> {
+pub async fn run_search(
+    query: &str,
+    search_type: SearchType,
+    _config: &Config, // kept for potential future needs
+    cache: &Arc<Cache>
+) -> Result<()> {
     log::debug!("Searching for packages matching: {}", query);
     // Spinner for searching
     let pb = ProgressBar::new_spinner();
@@ -29,22 +35,18 @@ pub async fn run_search(query: &str, search_type: SearchType) -> Result<()> {
     pb.set_message(format!("Searching for \"{}\"", query));
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    // Initialize config and cache
-    let config = Config::load()?;
-    let cache = Cache::new(&config.cache_dir)?;
-
     // Store search results
     let mut formula_matches = Vec::new();
     let mut cask_matches = Vec::new();
 
     // Search formulas if needed
     if matches!(search_type, SearchType::All | SearchType::Formula) {
-        formula_matches = search_formulas(&cache, query).await?;
+        formula_matches = search_formulas(Arc::clone(cache), query).await?;
     }
 
     // Search casks if needed
     if matches!(search_type, SearchType::All | SearchType::Cask) {
-        cask_matches = search_casks(&cache, query).await?;
+        cask_matches = search_casks(Arc::clone(cache), query).await?;
     }
 
     // Finished searching
@@ -56,30 +58,36 @@ pub async fn run_search(query: &str, search_type: SearchType) -> Result<()> {
 }
 
 /// Search for formulas matching the query
-async fn search_formulas(cache: &Cache, query: &str) -> Result<Vec<Value>> {
+async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
     let query_lower = query.to_lowercase();
     let mut matches = Vec::new();
 
     // Try to load from cache
-    if let Ok(formula_data) = cache.load_raw("formula.json") {
-        // Parse the JSON
-        let formulas: Vec<Value> = serde_json::from_str(&formula_data)?;
+    match cache.load_raw("formula.json") {
+        Ok(formula_data) => {
+            // Parse the JSON
+            let formulas: Vec<Value> = serde_json::from_str(&formula_data)?;
 
-        // Find matching formulas
-        for formula in formulas {
-            if is_formula_match(&formula, &query_lower) {
-                matches.push(formula);
+            // Find matching formulas
+            for formula in formulas {
+                if is_formula_match(&formula, &query_lower) {
+                    matches.push(formula);
+                }
             }
         }
-    } else {
-        // If cache fails, fetch from API
-        log::debug!("Formula cache not found, fetching from API...");
-        let all_formulas = api::fetch_all_formulas().await?;
-        let formulas: Vec<Value> = serde_json::from_str(&all_formulas)?;
+        Err(e) => {
+            // If cache fails, fetch from API
+            log::debug!("Formula cache load failed ({}), fetching from API...", e);
+            let all_formulas = api::fetch_all_formulas().await?;
+            let formulas: Vec<Value> = serde_json::from_str(&all_formulas)?;
 
-        for formula in formulas {
-            if is_formula_match(&formula, &query_lower) {
-                matches.push(formula);
+            for formula in formulas.iter() {
+                if is_formula_match(formula, &query_lower) {
+                    matches.push(formula.clone());
+                }
+            }
+            if let Err(cache_err) = cache.store_raw("formula.json", &all_formulas) {
+                log::warn!("Failed to cache formula data after fetching: {}", cache_err);
             }
         }
     }
@@ -90,30 +98,36 @@ async fn search_formulas(cache: &Cache, query: &str) -> Result<Vec<Value>> {
 }
 
 /// Search for casks matching the query
-async fn search_casks(cache: &Cache, query: &str) -> Result<Vec<Value>> {
+async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
     let query_lower = query.to_lowercase();
     let mut matches = Vec::new();
 
     // Try to load from cache
-    if let Ok(cask_data) = cache.load_raw("cask.json") {
-        // Parse the JSON
-        let casks: Vec<Value> = serde_json::from_str(&cask_data)?;
+    match cache.load_raw("cask.json") {
+        Ok(cask_data) => {
+            // Parse the JSON
+            let casks: Vec<Value> = serde_json::from_str(&cask_data)?;
 
-        // Find matching casks
-        for cask in casks {
-            if is_cask_match(&cask, &query_lower) {
-                matches.push(cask);
+            // Find matching casks
+            for cask in casks.iter() {
+                if is_cask_match(cask, &query_lower) {
+                    matches.push(cask.clone());
+                }
             }
         }
-    } else {
-        // If cache fails, fetch from API
-        log::debug!("Cask cache not found, fetching from API...");
-        let all_casks = api::fetch_all_casks().await?;
-        let casks: Vec<Value> = serde_json::from_str(&all_casks)?;
+        Err(e) => {
+            // If cache fails, fetch from API
+            log::debug!("Cask cache load failed ({}), fetching from API...", e);
+            let all_casks = api::fetch_all_casks().await?;
+            let casks: Vec<Value> = serde_json::from_str(&all_casks)?;
 
-        for cask in casks {
-            if is_cask_match(&cask, &query_lower) {
-                matches.push(cask);
+            for cask in casks.iter() {
+                if is_cask_match(cask, &query_lower) {
+                    matches.push(cask.clone());
+                }
+            }
+            if let Err(cache_err) = cache.store_raw("cask.json", &all_casks) {
+                log::warn!("Failed to cache cask data after fetching: {}", cache_err);
             }
         }
     }

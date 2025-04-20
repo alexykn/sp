@@ -10,7 +10,8 @@ use std::env;
 use std::fs;
 use std::time::{Duration, SystemTime};
 use sapphire_core::utils::error::Result as SapphireResult; // Alias to avoid clash
-
+use sapphire_core::utils::cache::Cache; // <-- ADDED
+use std::sync::Arc; // <-- ADDED
 
 mod cli; // For argument parsing (Cli struct, Commands enum)
 mod cmd; // For command implementations (run functions)
@@ -19,7 +20,7 @@ use cli::{Cli, Commands}; // Import the structs/enums from the cli module
 
 
 /// Checks if auto-update is needed and runs it.
-async fn check_and_run_auto_update(config: &Config) -> SapphireResult<()> {
+async fn check_and_run_auto_update(config: &Config, cache: &Arc<Cache>) -> SapphireResult<()> {
     // 1. Check if auto-update is disabled
     if env::var("SAPPHIRE_NO_AUTO_UPDATE").map_or(false, |v| v == "1") {
         log::debug!("Auto-update disabled via SAPPHIRE_NO_AUTO_UPDATE=1.");
@@ -71,7 +72,7 @@ async fn check_and_run_auto_update(config: &Config) -> SapphireResult<()> {
     if needs_update {
         log::info!("Running auto-update...");
         // Use the existing update command logic
-        match cmd::update::run_update().await {
+        match cmd::update::run_update(config, cache).await {
              Ok(_) => {
                  log::info!("Auto-update successful.");
                  // 5. Update timestamp file on success
@@ -121,6 +122,12 @@ async fn main() -> Result<()> {
         process::exit(1);
     });
 
+    // Create Cache once and wrap in Arc
+    let cache = Arc::new(
+        Cache::new(&config.cache_dir)
+            .map_err(|e| anyhow::anyhow!("Could not initialize cache: {}", e))?
+    );
+
     let needs_update_check = matches!(cli_args.command,
         Commands::Install(_) | Commands::Search { .. } | Commands::Info { .. }
         // Add Commands::Upgrade here when implemented
@@ -128,7 +135,7 @@ async fn main() -> Result<()> {
     );
 
     if needs_update_check {
-        if let Err(e) = check_and_run_auto_update(&config).await {
+        if let Err(e) = check_and_run_auto_update(&config, &cache).await {
             // Log the error from the check itself, but don't exit
              log::error!("Error during auto-update check: {}", e);
         }
@@ -139,10 +146,10 @@ async fn main() -> Result<()> {
 
     // Run the requested command
     let command_result = match cli_args.command {
-        Commands::Install(args) => cmd::install::execute(&args, &config).await,
+        Commands::Install(args) => cmd::install::execute(&args, &config, Arc::clone(&cache)).await,
         // Modified call to pass the vector `names`
-        Commands::Uninstall { names } => cmd::uninstall::run_uninstall(&names).await,
-        Commands::Update => cmd::update::run_update().await, // User-invoked update still runs normally
+        Commands::Uninstall { names } => cmd::uninstall::run_uninstall(&names, &config, Arc::clone(&cache)).await,
+        Commands::Update => cmd::update::run_update(&config, &Arc::clone(&cache)).await, // User-invoked update still runs normally
         Commands::Search {
             query,
             formula,
@@ -156,9 +163,9 @@ async fn main() -> Result<()> {
             } else {
                 cmd::search::SearchType::All
             };
-            cmd::search::run_search(&query, search_type).await
+            cmd::search::run_search(&query, search_type, &config, &Arc::clone(&cache)).await
         }
-        Commands::Info { name, cask } => cmd::info::run_info(&name, cask).await,
+        Commands::Info { name, cask } => cmd::info::run_info(&name, cask, &config, &Arc::clone(&cache)).await,
         //Commands::Upgrade => {
         //    cmd::upgrade::run_upgrade().await
         //}

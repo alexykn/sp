@@ -5,6 +5,7 @@ use crate::cmd::info; // Use crate::cmd path
 // Removed unused colored import
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
+use std::sync::Arc;
 use sapphire_core::build;
 use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json;
@@ -15,9 +16,10 @@ use log;
 use sapphire_core::fetch::api; // Add api import
 use sapphire_core::model::cask::Cask; // Add Cask import
 use sapphire_core::utils::cache::Cache; // Add Cache import // Use log crate
+use sapphire_core::utils::config::Config;
 
 // Modified function signature to accept Vec<String>
-pub async fn run_uninstall(names: &[String]) -> Result<()> {
+pub async fn run_uninstall(names: &[String], config: &Config, cache: Arc<Cache>) -> Result<()> {
     let mut errors: Vec<SapphireError> = Vec::new();
 
     // Initialize config and cache (outside the loop)
@@ -43,7 +45,7 @@ pub async fn run_uninstall(names: &[String]) -> Result<()> {
         pb.enable_steady_tick(Duration::from_millis(100));
 
         // Try to get info as a formula first
-        match info::get_formula_info(name).await {
+        match info::get_formula_info(name, config, &cache).await {
             Ok(formula) => {
                 log::debug!("Attempting to uninstall formula: {}", name);
                 let cellar_path = build::formula::get_formula_cellar_path(&formula); // Assuming this returns Result
