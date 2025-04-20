@@ -1,4 +1,3 @@
-// src/main.rs
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, fs, process};
@@ -6,16 +5,14 @@ use std::{env, fs, process};
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
-// Added imports for auto-update
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result as SapphireResult; // Alias to avoid clash
 
-mod cli; // For argument parsing (Cli struct, Commands enum)
-mod cmd; // For command implementations (run functions)
-mod ui; // <-- ADDED: UI utilities module
+mod cli;
+mod ui;
 
-use cli::{Cli, Commands}; // Import the structs/enums from the cli module
+use cli::{CliArgs, Commands};
 
 /// Checks if auto-update is needed and runs it.
 async fn check_and_run_auto_update(config: &Config, cache: &Arc<Cache>) -> SapphireResult<()> {
@@ -75,7 +72,7 @@ async fn check_and_run_auto_update(config: &Config, cache: &Arc<Cache>) -> Sapph
     if needs_update {
         println!("Running auto-update...");
         // Use the existing update command logic
-        match cmd::update::run_update(config, cache).await {
+        match cli::update::run_update(config, cache).await {
             // Pass Arc::clone if needed, depends on run_update signature
             Ok(_) => {
                 println!("Auto-update successful.");
@@ -109,7 +106,7 @@ async fn check_and_run_auto_update(config: &Config, cache: &Arc<Cache>) -> Sapph
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments using the Cli struct
-    let cli_args = Cli::parse();
+    let cli_args = CliArgs::parse();
 
     // Initialize logger based on verbosity (default to info)
     let log_level = match cli_args.verbose {
@@ -153,12 +150,12 @@ async fn main() -> Result<()> {
 
     // Run the requested command
     let command_result = match cli_args.command {
-        Commands::Install(args) => cmd::install::execute(&args, &config, Arc::clone(&cache)).await,
+        Commands::Install(args) => cli::install::execute(&args, &config, Arc::clone(&cache)).await,
         // Modified call to pass the vector `names`
         Commands::Uninstall { names } => {
-            cmd::uninstall::run_uninstall(&names, &config, Arc::clone(&cache)).await
+            cli::uninstall::run_uninstall(&names, &config, Arc::clone(&cache)).await
         }
-        Commands::Update => cmd::update::run_update(&config, &Arc::clone(&cache)).await, // User-invoked update still runs normally
+        Commands::Update => cli::update::run_update(&config, &Arc::clone(&cache)).await, // User-invoked update still runs normally
         Commands::Search {
             query,
             formula,
@@ -166,20 +163,19 @@ async fn main() -> Result<()> {
         } => {
             // Determine search type based on flags
             let search_type = if formula {
-                cmd::search::SearchType::Formula
+                cli::search::SearchType::Formula
             } else if cask {
-                cmd::search::SearchType::Cask
+                cli::search::SearchType::Cask
             } else {
-                cmd::search::SearchType::All
+                cli::search::SearchType::All
             };
-            cmd::search::run_search(&query, search_type, &config, &Arc::clone(&cache)).await
+            cli::search::run_search(&query, search_type, &config, &Arc::clone(&cache)).await
         }
         Commands::Info { name, cask } => {
-            cmd::info::run_info(&name, cask, &config, &Arc::clone(&cache)).await
-        }
-        //Commands::Upgrade => {
-        //    cmd::upgrade::run_upgrade().await
-        //}
+            cli::info::run_info(&name, cask, &config, &Arc::clone(&cache)).await
+        } //Commands::Upgrade => {
+          //    cmd::upgrade::run_upgrade().await
+          //}
     };
 
     // Handle potential errors from command execution

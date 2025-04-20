@@ -1,9 +1,13 @@
-// src/cli/args.rs
-// Defines the command-line argument structure using clap.
-
+//! Defines the command-line argument structure using clap.
 use clap::{ArgAction, Parser, Subcommand};
 
-use crate::cmd::install::InstallArgs;
+use crate::cli::install::InstallArgs;
+
+pub mod info;
+pub mod install;
+pub mod search;
+pub mod uninstall;
+pub mod update;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

@@ -1,4 +1,3 @@
-// src/cmd/search.rs
 // Contains the logic for the `search` command.
 
 use std::sync::Arc;
@@ -13,8 +12,7 @@ use serde_json::Value;
 use terminal_size::{terminal_size, Width};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-// Removed unused ProgressBar and ProgressStyle imports
-use crate::ui; // <-- ADDED: Import ui module
+use crate::ui;
 
 /// Represents the type of package to search for
 pub enum SearchType {
