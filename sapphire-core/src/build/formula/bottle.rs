@@ -558,7 +558,7 @@ fn original_relocation_scan_and_patch(
             // Let's add to chmod check if it's directly in bin/sbin for now.
             if path
                 .parent()
-                .map_or(false, |p| p.ends_with("bin") || p.ends_with("sbin"))
+                .is_some_and(|p| p.ends_with("bin") || p.ends_with("sbin"))
             {
                 files_to_chmod.push(path.to_path_buf());
             }
@@ -590,7 +590,7 @@ fn original_relocation_scan_and_patch(
 
         let is_in_exec_dir = path
             .parent()
-            .map_or(false, |p| p.ends_with("bin") || p.ends_with("sbin"));
+            .is_some_and(|p| p.ends_with("bin") || p.ends_with("sbin"));
 
         if meta.permissions().readonly() {
             warn!(
@@ -608,7 +608,7 @@ fn original_relocation_scan_and_patch(
                 || is_in_exec_dir
                 || path
                     .extension()
-                    .map_or(false, |e| e == "dylib" || e == "so" || e == "bundle")
+                    .is_some_and(|e| e == "dylib" || e == "so" || e == "bundle")
             {
                 match macho::patch_macho_file(path, &replacements) {
                     Ok(patched) if patched => {
@@ -748,7 +748,7 @@ fn original_relocation_scan_and_patch(
         let unique_files_to_chmod: HashSet<_> = files_to_chmod.into_iter().collect(); // Use HashSet for uniqueness
 
         for p in &unique_files_to_chmod {
-            if !p.exists() && !p.symlink_metadata().is_ok() {
+            if !p.exists() && p.symlink_metadata().is_err() {
                 debug!("Skipping chmod for non-existent path: {}", p.display());
                 continue;
             }

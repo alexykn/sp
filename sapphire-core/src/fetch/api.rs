@@ -44,7 +44,7 @@ fn build_api_client(config: &Config) -> Result<Client> {
     Client::builder()
         .default_headers(headers)
         .build()
-        .map_err(|e| SapphireError::Http(e))
+        .map_err(SapphireError::Http)
 }
 
 // --- Functions targeting formulae.brew.sh (remain largely unchanged, use default client) ---
@@ -113,7 +113,7 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
     if let Ok(body) = direct_fetch_result {
         let formula: serde_json::Value =
             serde_json::from_str(&body).map_err(SapphireError::Json)?;
-        return Ok(formula);
+        Ok(formula)
     } else {
         // Fallback might be less useful if the single endpoint fails, but keep for now
         warn!(
@@ -144,7 +144,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
 
     if let Ok(body) = direct_fetch_result {
         let cask: serde_json::Value = serde_json::from_str(&body).map_err(SapphireError::Json)?;
-        return Ok(cask);
+        Ok(cask)
     } else {
         warn!(
             "Direct fetch for cask '{}' failed. Fetching full list as fallback.",

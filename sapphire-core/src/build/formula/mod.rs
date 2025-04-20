@@ -129,10 +129,10 @@ fn get_current_platform() -> String {
         warn!("Using UNRELIABLE fallback platform detection. Bottle selection may be incorrect.");
         if arch == "arm64" {
             warn!("Falling back to platform tag: arm64_monterey");
-            return "arm64_monterey".to_string();
+            "arm64_monterey".to_string()
         } else {
             warn!("Falling back to platform tag: monterey");
-            return "monterey".to_string();
+            "monterey".to_string()
         }
     } else if cfg!(target_os = "linux") {
         if std::env::consts::ARCH == "aarch64" {

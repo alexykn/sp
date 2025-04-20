@@ -453,7 +453,7 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
                         if links_to_remove.is_empty() {
                             warn!("Install manifest {} is empty. Cannot perform manifest-based unlink.", manifest_path.display());
                             debug!("No links recorded in manifest, unlink complete.");
-                            return Ok(());
+                            Ok(())
                         } else {
                             // Use Config to get base paths for checking
                             let opt_base = config.opt_dir();
@@ -520,19 +520,19 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
                             if removal_errors > 0 {
                                 warn!("Encountered {} errors while removing links listed in manifest.", removal_errors);
                             }
-                            return Ok(());
+                            Ok(())
                         }
                     }
                     Err(e) => {
                         error!("Failed to parse formula install manifest {}: {}. Falling back to legacy unlink...", manifest_path.display(), e);
-                        return unlink_formula_binaries_legacy(formula, &expected_keg_path, config);
+                        unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
                         // Pass config
                     }
                 }
             }
             Err(e) => {
                 error!("Failed to read formula install manifest {}: {}. Falling back to legacy unlink...", manifest_path.display(), e);
-                return unlink_formula_binaries_legacy(formula, &expected_keg_path, config);
+                unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
                 // Pass config
             }
         }
@@ -541,7 +541,7 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
             "Warning: No install manifest found at {}. Falling back to legacy unlink...",
             manifest_path.display()
         );
-        return unlink_formula_binaries_legacy(formula, &expected_keg_path, config);
+        unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
         // Pass config
     }
 }

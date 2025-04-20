@@ -158,8 +158,8 @@ const AR_MAGIC: &[u8; 8] = b"!<arch>\n";
 
 /// Examine a buffer (Mach‑O or FAT) and return every patch we must apply.
 #[cfg(target_os = "macos")]
-fn collect_macho_patches<'data>(
-    buffer: &'data [u8],
+fn collect_macho_patches(
+    buffer: &[u8],
     kind: FileKind,
     replacements: &HashMap<String, String>,
     path_for_log: &Path,

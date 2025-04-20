@@ -234,7 +234,7 @@ impl Cask {
     pub fn display_name(&self) -> String {
         self.name
             .as_ref()
-            .and_then(|names| names.get(0).cloned())
+            .and_then(|names| names.first().cloned())
             .unwrap_or_else(|| self.token.clone())
     }
 }

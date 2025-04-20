@@ -81,7 +81,7 @@ impl Cache {
     pub fn clear_file(&self, filename: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
         if path.exists() {
-            fs::remove_file(&path).map_err(|e| SapphireError::Io(e))?;
+            fs::remove_file(&path).map_err(SapphireError::Io)?;
         }
         Ok(())
     }
