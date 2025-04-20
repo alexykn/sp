@@ -113,7 +113,7 @@ Feel free to open issues or PRs. Every contribution helps!
 
 ## 📄 License
 
-- **Sapphire:** BSD‑3‑Clause  
+- **Sapphire:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
 - Inspired by Homebrew (BSD‑2‑Clause) — see [NOTICE.md](NOTICE.md)
 
 ---
