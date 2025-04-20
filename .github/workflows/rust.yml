@@ -7,8 +7,7 @@ on:
 
 jobs:
   rust-macos-arm64:
-    # Use the new M1 macOS 14 (Sonoma) runner, which is arm64-native 
-    runs-on: macos-14
+    runs-on: macos-latest
 
     steps:
       - name: Check out code
