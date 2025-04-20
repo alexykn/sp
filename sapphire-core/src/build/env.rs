@@ -1,14 +1,15 @@
 // sapphire-core/src/build/env.rs
-// *** No major changes needed here for this specific fix, but ensure PERL5LIB/PYTHONPATH handling is correct ***
+// *** No major changes needed here for this specific fix, but ensure PERL5LIB/PYTHONPATH handling
+// is correct ***
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use log::debug;
 
 use crate::build::devtools;
 use crate::model::formula::FormulaDependencies;
 use crate::utils::error::{Result, SapphireError};
-use log::debug;
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
 
 // Constants remain the same...
 const ENV_VARS_TO_REMOVE: &[&str] = &[

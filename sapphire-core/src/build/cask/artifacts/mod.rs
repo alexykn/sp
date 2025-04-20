@@ -1,49 +1,47 @@
 pub mod app;
-pub mod suite;
-pub mod installer;
-pub mod pkg;
+pub mod audio_unit_plugin;
 pub mod binary;
-pub mod manpage;
 pub mod colorpicker;
 pub mod dictionary;
 pub mod font;
 pub mod input_method;
+pub mod installer;
 pub mod internet_plugin;
 pub mod keyboard_layout;
+pub mod manpage;
+pub mod mdimporter;
+pub mod pkg;
+pub mod preflight;
 pub mod prefpane;
 pub mod qlplugin;
-pub mod mdimporter;
 pub mod screen_saver;
 pub mod service;
-pub mod audio_unit_plugin;
-pub mod vst_plugin;
-pub mod vst3_plugin;
-pub mod zap;
-pub mod preflight;
+pub mod suite;
 pub mod uninstall;
+pub mod vst3_plugin;
+pub mod vst_plugin;
+pub mod zap;
 
 // Re‑export a single enum if you like:
-pub use self::{
-    app::install_app_from_staged,
-    suite::install_suite,
-    installer::run_installer,
-    pkg::install_pkg_from_path,
-    binary::install_binary,
-    manpage::install_manpage,
-    colorpicker::install_colorpicker,
-    dictionary::install_dictionary,
-    font::install_font,
-    input_method::install_input_method,
-    internet_plugin::install_internet_plugin,
-    keyboard_layout::install_keyboard_layout,
-    prefpane::install_prefpane,
-    qlplugin::install_qlplugin,
-    mdimporter::install_mdimporter,
-    screen_saver::install_screen_saver,
-    service::install_service,
-    audio_unit_plugin::install_audio_unit_plugin,
-    vst_plugin::install_vst_plugin,
-    vst3_plugin::install_vst3_plugin,
-    preflight::run_preflight,
-    uninstall::record_uninstall
-};
+pub use self::app::install_app_from_staged;
+pub use self::audio_unit_plugin::install_audio_unit_plugin;
+pub use self::binary::install_binary;
+pub use self::colorpicker::install_colorpicker;
+pub use self::dictionary::install_dictionary;
+pub use self::font::install_font;
+pub use self::input_method::install_input_method;
+pub use self::installer::run_installer;
+pub use self::internet_plugin::install_internet_plugin;
+pub use self::keyboard_layout::install_keyboard_layout;
+pub use self::manpage::install_manpage;
+pub use self::mdimporter::install_mdimporter;
+pub use self::pkg::install_pkg_from_path;
+pub use self::preflight::run_preflight;
+pub use self::prefpane::install_prefpane;
+pub use self::qlplugin::install_qlplugin;
+pub use self::screen_saver::install_screen_saver;
+pub use self::service::install_service;
+pub use self::suite::install_suite;
+pub use self::uninstall::record_uninstall;
+pub use self::vst3_plugin::install_vst3_plugin;
+pub use self::vst_plugin::install_vst_plugin;

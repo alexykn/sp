@@ -1,12 +1,13 @@
 // ===== sapphire-core/src/build/cask/artifacts/input_method.rs =====
 
+use std::fs;
+use std::os::unix::fs as unix_fs;
+use std::path::Path;
+
+use crate::build::cask::{write_cask_manifest, InstalledArtifact};
 use crate::model::cask::Cask;
-use crate::build::cask::{InstalledArtifact, write_cask_manifest};
 use crate::utils::config::Config;
 use crate::utils::error::Result;
-use std::fs;
-use std::path::Path;
-use std::os::unix::fs as unix_fs;
 
 /// Install `input_method` artifacts from the staged directory into
 /// `~/Library/Input Methods` and record installed artifacts.
@@ -28,10 +29,8 @@ pub fn install_input_method(
                             let source = stage_path.join(name);
                             if source.exists() {
                                 // Target directory: ~/Library/Input Methods
-                                let target_dir = config
-                                    .home_dir()
-                                    .join("Library")
-                                    .join("Input Methods");
+                                let target_dir =
+                                    config.home_dir().join("Library").join("Input Methods");
                                 if !target_dir.exists() {
                                     fs::create_dir_all(&target_dir)?;
                                 }

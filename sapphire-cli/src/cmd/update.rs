@@ -1,11 +1,13 @@
 // src/cmd/update.rs
 // Contains the logic for the `update` command.
 use std::fs;
+use std::sync::Arc;
+
 use sapphire_core::fetch::api;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
-use std::sync::Arc;
+
 use crate::ui; // <-- ADDED: Import ui module
 
 // Updated function signature (accepts Config and Cache)

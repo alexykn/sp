@@ -1,22 +1,21 @@
 // ===== sapphire-core/src/build/cask/artifacts/zap.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{debug, warn};
 use std::fs;
 use std::path::PathBuf;
 // Import Stdio for output redirection
 use std::process::{Command, Stdio};
 
+use log::{debug, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
+
 /// Implements the `zap` stanza by performing deep-clean actions
 /// such as trash, delete, rmdir, pkgutil forget, launchctl unload,
 /// and arbitrary scripts, matching Homebrew's Cask behavior.
-pub fn install_zap(
-    cask: &Cask,
-    config: &Config,
-) -> Result<Vec<InstalledArtifact>> {
+pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact>> {
     let mut artifacts: Vec<InstalledArtifact> = Vec::new();
     let home = config.home_dir();
 
@@ -50,11 +49,15 @@ pub fn install_zap(
                                                 let target = expand_tilde(item, &home);
                                                 debug!("Deleting file {}...", target.display());
                                                 if let Err(e) = fs::remove_file(&target) {
-                                                     // Log error only if it's NOT file not found
-                                                     if e.kind() != std::io::ErrorKind::NotFound {
-                                                         warn!("Failed to delete {}: {}", target.display(), e);
-                                                     }
-                                                 }
+                                                    // Log error only if it's NOT file not found
+                                                    if e.kind() != std::io::ErrorKind::NotFound {
+                                                        warn!(
+                                                            "Failed to delete {}: {}",
+                                                            target.display(),
+                                                            e
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -63,13 +66,20 @@ pub fn install_zap(
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home);
-                                                debug!("Removing directory {}...", target.display());
-                                                 if let Err(e) = fs::remove_dir_all(&target) {
-                                                     // Log error only if it's NOT file not found
-                                                     if e.kind() != std::io::ErrorKind::NotFound {
-                                                         warn!("Failed to rmdir {}: {}", target.display(), e);
-                                                     }
-                                                 }
+                                                debug!(
+                                                    "Removing directory {}...",
+                                                    target.display()
+                                                );
+                                                if let Err(e) = fs::remove_dir_all(&target) {
+                                                    // Log error only if it's NOT file not found
+                                                    if e.kind() != std::io::ErrorKind::NotFound {
+                                                        warn!(
+                                                            "Failed to rmdir {}: {}",
+                                                            target.display(),
+                                                            e
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -84,24 +94,35 @@ pub fn install_zap(
                                                     .stdout(Stdio::null()) // <--- Added
                                                     .stderr(Stdio::null()) // <--- Added
                                                     .status();
-                                                artifacts.push(InstalledArtifact::PkgUtilReceipt { id: item.to_string() });
+                                                artifacts.push(InstalledArtifact::PkgUtilReceipt {
+                                                    id: item.to_string(),
+                                                });
                                             }
                                         }
                                     }
                                     "launchctl" => {
                                         if let Some(arr) = val.as_array() {
                                             for label in arr.iter().filter_map(|v| v.as_str()) {
-                                                let plist = home.join("Library/LaunchAgents").join(format!("{}.plist", label));
-                                                debug!("Unloading launchctl {}...", plist.display());
+                                                let plist = home
+                                                    .join("Library/LaunchAgents")
+                                                    .join(format!("{}.plist", label));
+                                                debug!(
+                                                    "Unloading launchctl {}...",
+                                                    plist.display()
+                                                );
                                                 // Redirect stdout and stderr to null
                                                 let _ = Command::new("launchctl")
                                                     .arg("unload")
-                                                    // Consider adding -w for persistent unload if needed
+                                                    // Consider adding -w for persistent unload if
+                                                    // needed
                                                     .arg(&plist)
                                                     .stdout(Stdio::null()) // <--- Added
                                                     .stderr(Stdio::null()) // <--- Added
                                                     .status();
-                                                artifacts.push(InstalledArtifact::Launchd { label: label.to_string(), path: Some(plist) });
+                                                artifacts.push(InstalledArtifact::Launchd {
+                                                    label: label.to_string(),
+                                                    path: Some(plist),
+                                                });
                                             }
                                         }
                                     }
@@ -118,7 +139,8 @@ pub fn install_zap(
                                         }
                                     }
                                     "signal" => {
-                                        // Signals often target processes directly, less likely to have stdout/stderr,
+                                        // Signals often target processes directly, less likely to
+                                        // have stdout/stderr,
                                         // but redirecting won't hurt.
                                         if let Some(arr) = val.as_array() {
                                             for cmd in arr.iter().filter_map(|v| v.as_str()) {

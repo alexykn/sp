@@ -1,14 +1,16 @@
 // ===== sapphire-core/src/build/cask/artifacts/font.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{info, warn};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
+
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
 
 /// Implements the `font` stanza by moving each declared
 /// font file or directory from the staging area into

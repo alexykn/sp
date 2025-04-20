@@ -80,7 +80,8 @@ pub enum SapphireError {
     MachOModificationError(String), // Specific error during modification step
 
     #[error("Mach-O Relocation Error: Path too long - {0}")]
-    PathTooLongError(String), // Specifically for path length issues during patching [cite: 115, 142]
+    PathTooLongError(String), /* Specifically for path length issues during patching [cite:
+                               * 115, 142] */
 
     #[error("Codesign Error: {0}")]
     CodesignError(String), // For errors during re-signing on Apple Silicon [cite: 138, 142]

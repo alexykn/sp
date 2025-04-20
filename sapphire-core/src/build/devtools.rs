@@ -1,11 +1,11 @@
 // **File:** sapphire-core/src/build/devtools.rs (New file)
-use crate::utils::error::{Result, SapphireError};
-use std::{
-    env,
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::env;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
 use which;
+
+use crate::utils::error::{Result, SapphireError};
 /// Finds the path to the specified compiler executable (e.g., "cc", "c++").
 ///
 /// Tries environment variables (e.g., `CC`, `CXX`) first, then `xcrun` on macOS,

@@ -1,10 +1,12 @@
 // ===== sapphire-core/src/utils/config.rs =====
-use crate::utils::cache;
-use crate::utils::error::Result;
-use log::debug;
 use std::env;
 use std::path::{Path, PathBuf};
-use dirs; // for home directory lookup
+
+use dirs;
+use log::debug;
+
+use crate::utils::cache;
+use crate::utils::error::Result; // for home directory lookup
 
 /// Default installation prefixes
 const DEFAULT_LINUX_PREFIX: &str = "/home/linuxbrew/.linuxbrew";
@@ -62,10 +64,18 @@ impl Config {
         let docker_registry_basic_auth = env::var("HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN").ok();
         let github_api_token = env::var("HOMEBREW_GITHUB_API_TOKEN").ok();
 
-        if artifact_domain.is_some() { debug!("Loaded HOMEBREW_ARTIFACT_DOMAIN"); }
-        if docker_registry_token.is_some() { debug!("Loaded HOMEBREW_DOCKER_REGISTRY_TOKEN"); }
-        if docker_registry_basic_auth.is_some() { debug!("Loaded HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN"); }
-        if github_api_token.is_some() { debug!("Loaded HOMEBREW_GITHUB_API_TOKEN"); }
+        if artifact_domain.is_some() {
+            debug!("Loaded HOMEBREW_ARTIFACT_DOMAIN");
+        }
+        if docker_registry_token.is_some() {
+            debug!("Loaded HOMEBREW_DOCKER_REGISTRY_TOKEN");
+        }
+        if docker_registry_basic_auth.is_some() {
+            debug!("Loaded HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN");
+        }
+        if github_api_token.is_some() {
+            debug!("Loaded HOMEBREW_GITHUB_API_TOKEN");
+        }
 
         debug!("Configuration loaded successfully.");
         Ok(Self {
@@ -158,11 +168,15 @@ impl Config {
 
     pub fn get_formula_path_from_tap(&self, tap_name: &str, formula_name: &str) -> Option<PathBuf> {
         self.get_tap_path(tap_name).and_then(|tap_path| {
-            let json_path = tap_path.join("Formula").join(format!("{}.json", formula_name));
+            let json_path = tap_path
+                .join("Formula")
+                .join(format!("{}.json", formula_name));
             if json_path.exists() {
                 return Some(json_path);
             }
-            let rb_path = tap_path.join("Formula").join(format!("{}.rb", formula_name));
+            let rb_path = tap_path
+                .join("Formula")
+                .join(format!("{}.rb", formula_name));
             if rb_path.exists() {
                 return Some(rb_path);
             }

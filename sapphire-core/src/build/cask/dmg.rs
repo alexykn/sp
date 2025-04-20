@@ -1,11 +1,13 @@
 // In sapphire-core/src/build/cask/dmg.rs
 
 use std::fs;
-use crate::utils::error::{Result, SapphireError};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use log::{debug, error, warn}; // Added log imports
+
+use log::{debug, error, warn};
+
+use crate::utils::error::{Result, SapphireError}; // Added log imports
 
 // --- Keep Existing Helpers ---
 pub fn mount_dmg(dmg_path: &Path) -> Result<PathBuf> {
@@ -22,9 +24,15 @@ pub fn mount_dmg(dmg_path: &Path) -> Result<PathBuf> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("hdiutil attach failed for {}: {}", dmg_path.display(), stderr);
+        error!(
+            "hdiutil attach failed for {}: {}",
+            dmg_path.display(),
+            stderr
+        );
         return Err(SapphireError::Generic(format!(
-            "Failed to mount DMG '{}': {}", dmg_path.display(), stderr
+            "Failed to mount DMG '{}': {}",
+            dmg_path.display(),
+            stderr
         )));
     }
 
@@ -45,9 +53,15 @@ pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("hdiutil detach failed ({}): {}. Trying diskutil...", output.status, stderr);
+        warn!(
+            "hdiutil detach failed ({}): {}. Trying diskutil...",
+            output.status, stderr
+        );
         // Add logging for fallback
-        debug!("Executing: diskutil unmount force {}", mount_point.display());
+        debug!(
+            "Executing: diskutil unmount force {}",
+            mount_point.display()
+        );
         let diskutil_output = Command::new("diskutil")
             .arg("unmount")
             .arg("force")
@@ -56,11 +70,15 @@ pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
 
         if !diskutil_output.status.success() {
             let diskutil_stderr = String::from_utf8_lossy(&diskutil_output.stderr);
-            error!("diskutil unmount force failed ({}): {}", diskutil_output.status, diskutil_stderr);
+            error!(
+                "diskutil unmount force failed ({}): {}",
+                diskutil_output.status, diskutil_stderr
+            );
             // Consider returning error only if both fail? Or always error on diskutil fail?
             return Err(SapphireError::Generic(format!(
                 "Failed to unmount DMG '{}' using hdiutil and diskutil: {}",
-                mount_point.display(), diskutil_stderr
+                mount_point.display(),
+                diskutil_stderr
             )));
         }
     }
@@ -85,7 +103,9 @@ fn parse_mount_point(output: &[u8]) -> Result<PathBuf> {
             in_sys_entities = true;
             continue;
         }
-        if !in_sys_entities { continue; }
+        if !in_sys_entities {
+            continue;
+        }
 
         if trimmed == "<key>mount-point</key>" {
             in_mount_point = true;
@@ -93,32 +113,40 @@ fn parse_mount_point(output: &[u8]) -> Result<PathBuf> {
         }
 
         if in_mount_point && trimmed.starts_with("<string>") && trimmed.ends_with("</string>") {
-             mount_path_str = Some(trimmed.trim_start_matches("<string>").trim_end_matches("</string>").to_string());
-             break; // Found the first mount point, assume it's the main one
+            mount_path_str = Some(
+                trimmed
+                    .trim_start_matches("<string>")
+                    .trim_end_matches("</string>")
+                    .to_string(),
+            );
+            break; // Found the first mount point, assume it's the main one
         }
 
-         // Reset flags if we encounter closing tags for structures containing mount-point
-         if trimmed == "</dict>" {
-             in_mount_point = false;
-         }
-         if trimmed == "</array>" && in_sys_entities { // End of system-entities
+        // Reset flags if we encounter closing tags for structures containing mount-point
+        if trimmed == "</dict>" {
+            in_mount_point = false;
+        }
+        if trimmed == "</array>" && in_sys_entities {
+            // End of system-entities
             // break; // Stop searching if we leave the system-entities array
             in_sys_entities = false; // Reset this flag too
-         }
+        }
     }
 
-     match mount_path_str {
-         Some(path_str) if !path_str.is_empty() => {
-             debug!("Parsed mount point from plist: {}", path_str);
-             Ok(PathBuf::from(path_str))
-         },
-         _ => {
-             error!("Failed to parse mount point from hdiutil plist output.");
-             // Optionally log the raw output for debugging
-             // error!("Raw hdiutil output:\n{}", String::from_utf8_lossy(output));
-             Err(SapphireError::Generic("Failed to determine mount point from hdiutil output".to_string()))
-         }
-     }
+    match mount_path_str {
+        Some(path_str) if !path_str.is_empty() => {
+            debug!("Parsed mount point from plist: {}", path_str);
+            Ok(PathBuf::from(path_str))
+        }
+        _ => {
+            error!("Failed to parse mount point from hdiutil plist output.");
+            // Optionally log the raw output for debugging
+            // error!("Raw hdiutil output:\n{}", String::from_utf8_lossy(output));
+            Err(SapphireError::Generic(
+                "Failed to determine mount point from hdiutil output".to_string(),
+            ))
+        }
+    }
 }
 
 // --- NEW Function ---
@@ -138,10 +166,14 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
     );
     // Use ditto for robust copying, preserving metadata
     // ditto <source> <destination>
-    debug!("Executing: ditto {} {}", mount_point.display(), stage_dir.display());
+    debug!(
+        "Executing: ditto {} {}",
+        mount_point.display(),
+        stage_dir.display()
+    );
     let ditto_output = Command::new("ditto")
         .arg(&mount_point) // Source first
-        .arg(stage_dir)    // Then destination
+        .arg(stage_dir) // Then destination
         .output()?;
 
     let unmount_result = unmount_dmg(&mount_point); // Unmount regardless of ditto success
@@ -152,11 +184,12 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
         // Also log stdout which might contain info on specific file errors
         let stdout = String::from_utf8_lossy(&ditto_output.stdout);
         if !stdout.trim().is_empty() {
-             error!("ditto stdout: {}", stdout);
+            error!("ditto stdout: {}", stdout);
         }
         unmount_result?; // Ensure we still return unmount error if it happened
         return Err(SapphireError::Generic(format!(
-            "Failed to copy DMG contents using ditto: {}", stderr
+            "Failed to copy DMG contents using ditto: {}",
+            stderr
         )));
     }
 

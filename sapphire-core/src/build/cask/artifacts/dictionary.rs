@@ -1,19 +1,21 @@
 // ===== sapphire-core/src/build/cask/artifacts/dictionary.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{info, warn};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
+
 /// Implements the `dictionary` stanza by moving each declared
 /// `.dictionary` bundle from the staging area into `~/Library/Dictionaries`,
 /// then symlinking it in the Caskroom.
-/// 
+///
 /// Homebrew’s Ruby definition is simply:
 /// ```ruby
 /// class Dictionary < Moved; end
@@ -43,9 +45,10 @@ pub fn install_dictionary(
                                 continue;
                             }
 
-                            // Standard user dictionary directory: ~/Library/Dictionaries :contentReference[oaicite:3]{index=3}
+                            // Standard user dictionary directory: ~/Library/Dictionaries
+                            // :contentReference[oaicite:3]{index=3}
                             let dest_dir = config
-                                .home_dir()                 // e.g. /Users/alxknt
+                                .home_dir() // e.g. /Users/alxknt
                                 .join("Library")
                                 .join("Dictionaries");
                             fs::create_dir_all(&dest_dir)?;
@@ -62,16 +65,9 @@ pub fn install_dictionary(
                                 dest.display()
                             );
                             // Try a direct move; fall back to recursive copy
-                            let status = Command::new("mv")
-                                .arg(&src)
-                                .arg(&dest)
-                                .status()?;
+                            let status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !status.success() {
-                                Command::new("cp")
-                                    .arg("-R")
-                                    .arg(&src)
-                                    .arg(&dest)
-                                    .status()?;
+                                Command::new("cp").arg("-R").arg(&src).arg(&dest).status()?;
                             }
 
                             // Record the moved bundle

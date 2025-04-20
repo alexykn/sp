@@ -1,13 +1,15 @@
 // ===== sapphire-core/src/build/formula/mod.rs =====
-use crate::model::formula::Formula;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SapphireError};
-use log::{debug, error, warn};
 use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use log::{debug, error, warn};
+
+use crate::model::formula::Formula;
+use crate::utils::config::Config;
+use crate::utils::error::{Result, SapphireError};
 
 // Declare submodules
 pub mod bottle;
@@ -249,8 +251,8 @@ fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
 
 // --- get_formula_cellar_path uses Config ---
 // Parameter changed from formula: &Formula to formula_name: &str
-// Parameter changed from config: &Config to cellar_path: &Path for consistency where Config isn't fully available
-// If Config *is* available, call config.formula_cellar_dir(formula.name()) instead.
+// Parameter changed from config: &Config to cellar_path: &Path for consistency where Config isn't
+// fully available If Config *is* available, call config.formula_cellar_dir(formula.name()) instead.
 // **Keeping original signature for now where Config might not be easily passed**
 pub fn get_formula_cellar_path(formula: &Formula, config: &Config) -> PathBuf {
     // Use Config method

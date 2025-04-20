@@ -1,14 +1,16 @@
 // ===== sapphire-core/src/build/cask/artifacts/binary.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SapphireError};
-use log::{info, debug};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
+
+use log::{debug, info};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::{Result, SapphireError};
 
 /// Installs `binary` artifacts, which can be declared as:
 ///  - a simple string: `"foo"` (source and target both `"foo"`)
@@ -45,17 +47,22 @@ pub fn install_binary(
                             // simple form: "foo"
                             (tgt.to_string(), tgt.to_string(), None)
                         } else if let Some(m) = entry.as_object() {
-                            let target = m.get("target")
+                            let target = m
+                                .get("target")
                                 .and_then(|v| v.as_str())
                                 .map(String::from)
-                                .ok_or_else(|| SapphireError::InstallError(
-                                    format!("Binary artifact missing 'target': {:?}", m)
-                                ))?;
+                                .ok_or_else(|| {
+                                    SapphireError::InstallError(format!(
+                                        "Binary artifact missing 'target': {:?}",
+                                        m
+                                    ))
+                                })?;
 
                             let chmod = m.get("chmod").and_then(|v| v.as_str()).map(String::from);
 
                             // If `source` is provided, use it; otherwise generate wrapper
-                            let source = if let Some(src) = m.get("source").and_then(|v| v.as_str()) {
+                            let source = if let Some(src) = m.get("source").and_then(|v| v.as_str())
+                            {
                                 src.to_string()
                             } else {
                                 // generate wrapper script in caskroom
@@ -64,15 +71,11 @@ pub fn install_binary(
 
                                 // assume the real executable lives inside the .app bundle
                                 let app_name = format!("{}.app", cask.display_name());
-                                let exe_path = format!(
-                                    "/Applications/{}/Contents/MacOS/{}",
-                                    app_name, target
-                                );
+                                let exe_path =
+                                    format!("/Applications/{}/Contents/MacOS/{}", app_name, target);
 
-                                let script = format!(
-                                    "#!/usr/bin/env bash\nexec \"{}\" \"$@\"\n",
-                                    exe_path
-                                );
+                                let script =
+                                    format!("#!/usr/bin/env bash\nexec \"{}\" \"$@\"\n", exe_path);
                                 fs::write(&wrapper_path, script)?;
                                 Command::new("chmod")
                                     .arg("+x")
@@ -90,10 +93,7 @@ pub fn install_binary(
 
                         let src_path = stage_path.join(&source_rel);
                         if !src_path.exists() {
-                            debug!(
-                                "Binary source '{}' not found, skipping",
-                                src_path.display()
-                            );
+                            debug!("Binary source '{}' not found, skipping", src_path.display());
                             continue;
                         }
 
@@ -109,10 +109,7 @@ pub fn install_binary(
 
                         // Apply chmod if specified
                         if let Some(mode) = chmod.as_deref() {
-                            let _ = Command::new("chmod")
-                                .arg(mode)
-                                .arg(&link_path)
-                                .status();
+                            let _ = Command::new("chmod").arg(mode).arg(&link_path).status();
                         }
 
                         installed.push(InstalledArtifact::BinaryLink {

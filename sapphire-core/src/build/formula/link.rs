@@ -1,15 +1,17 @@
 // ===== sapphire-core/src/build/formula/link.rs =====
-use crate::model::formula::Formula;
-use crate::utils::config::Config; // Import Config
-use crate::utils::error::{Result, SapphireError};
-use log::{debug, error, warn};
-use serde_json;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs as unix_fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+use log::{debug, error, warn};
+use serde_json;
+
+use crate::model::formula::Formula;
+use crate::utils::config::Config; // Import Config
+use crate::utils::error::{Result, SapphireError};
 
 /// Link all artifacts from a formula's installation directory.
 // Added Config parameter
@@ -58,7 +60,11 @@ pub fn link_formula_artifacts(
                     symlinks_created.push(alias_path.to_string_lossy().to_string());
                 }
                 Err(e) => {
-                    warn!("  Could not create opt alias {}: {}", alias_path.display(), e);
+                    warn!(
+                        "  Could not create opt alias {}: {}",
+                        alias_path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -125,8 +131,8 @@ pub fn link_formula_artifacts(
     Ok(())
 }
 
-
-// ... (create_wrappers_in_dir, create_wrapper_script, determine_content_root, remove_existing_link_target, write_install_manifest remain mostly unchanged internally) ...
+// ... (create_wrappers_in_dir, create_wrapper_script, determine_content_root,
+// remove_existing_link_target, write_install_manifest remain mostly unchanged internally) ...
 fn create_wrappers_in_dir(
     source_dir: &Path,
     target_bin_dir: &Path,
@@ -146,7 +152,9 @@ fn create_wrappers_in_dir(
                         let source_item_path = entry.path();
                         let file_name = entry.file_name();
 
-                        if file_name.to_string_lossy().starts_with('.') { continue; }
+                        if file_name.to_string_lossy().starts_with('.') {
+                            continue;
+                        }
 
                         if source_item_path.is_dir() {
                             create_wrappers_in_dir(
@@ -161,26 +169,60 @@ fn create_wrappers_in_dir(
                                     let wrapper_path = target_bin_dir.join(&file_name);
                                     debug!("  Found executable: {}", source_item_path.display());
                                     if remove_existing_link_target(&wrapper_path).is_ok() {
-                                        debug!("    Creating wrapper script: {} -> {}", wrapper_path.display(), source_item_path.display());
-                                        match create_wrapper_script(&source_item_path, &wrapper_path, formula_content_root) {
+                                        debug!(
+                                            "    Creating wrapper script: {} -> {}",
+                                            wrapper_path.display(),
+                                            source_item_path.display()
+                                        );
+                                        match create_wrapper_script(
+                                            &source_item_path,
+                                            &wrapper_path,
+                                            formula_content_root,
+                                        ) {
                                             Ok(_) => {
-                                                debug!("  Created wrapper {} -> {}", wrapper_path.display(), source_item_path.display());
-                                                wrappers_created.push(wrapper_path.to_string_lossy().to_string());
+                                                debug!(
+                                                    "  Created wrapper {} -> {}",
+                                                    wrapper_path.display(),
+                                                    source_item_path.display()
+                                                );
+                                                wrappers_created.push(
+                                                    wrapper_path.to_string_lossy().to_string(),
+                                                );
                                             }
-                                            Err(e) => { error!("    Failed to create wrapper script {} -> {}: {}", wrapper_path.display(), source_item_path.display(), e); }
+                                            Err(e) => {
+                                                error!("    Failed to create wrapper script {} -> {}: {}", wrapper_path.display(), source_item_path.display(), e);
+                                            }
                                         }
                                     }
                                 }
                                 Ok(false) => { /* Not executable, ignore */ }
-                                Err(e) => { warn!("    Could not check executable status for {}: {}", source_item_path.display(), e); }
+                                Err(e) => {
+                                    warn!(
+                                        "    Could not check executable status for {}: {}",
+                                        source_item_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
-                    Err(e) => { warn!("  Failed to process directory entry in {}: {}", source_dir.display(), e); }
+                    Err(e) => {
+                        warn!(
+                            "  Failed to process directory entry in {}: {}",
+                            source_dir.display(),
+                            e
+                        );
+                    }
                 }
             }
         }
-        Err(e) => { warn!("Failed to read source directory {}: {}", source_dir.display(), e); }
+        Err(e) => {
+            warn!(
+                "Failed to read source directory {}: {}",
+                source_dir.display(),
+                e
+            );
+        }
     }
     Ok(())
 }
@@ -203,23 +245,38 @@ fn create_wrapper_script(
             "export PERL5LIB=\"{}:$PERL5LIB\"\n",
             perl_lib_path.display()
         ));
-        debug!("  (Wrapper will set PERL5LIB to {})", perl_lib_path.display());
+        debug!(
+            "  (Wrapper will set PERL5LIB to {})",
+            perl_lib_path.display()
+        );
     }
     if python_lib_path.exists() && python_lib_path.is_dir() {
         script_content.push_str(&format!(
             "export PYTHONPATH=\"{}:$PYTHONPATH\"\n",
             python_lib_path.display()
         ));
-        debug!("  (Wrapper will set PYTHONPATH to {})", python_lib_path.display());
+        debug!(
+            "  (Wrapper will set PYTHONPATH to {})",
+            python_lib_path.display()
+        );
     }
 
-    script_content.push_str(&format!("\nexec \"{}\" \"$@\"\n", target_executable.display()));
+    script_content.push_str(&format!(
+        "\nexec \"{}\" \"$@\"\n",
+        target_executable.display()
+    ));
 
     let mut file = fs::File::create(wrapper_path).map_err(|e| {
-        SapphireError::Io(std::io::Error::new(e.kind(), format!("Failed create wrapper {}: {}", wrapper_path.display(), e)))
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!("Failed create wrapper {}: {}", wrapper_path.display(), e),
+        ))
     })?;
     file.write_all(script_content.as_bytes()).map_err(|e| {
-        SapphireError::Io(std::io::Error::new(e.kind(), format!("Failed write wrapper {}: {}", wrapper_path.display(), e)))
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!("Failed write wrapper {}: {}", wrapper_path.display(), e),
+        ))
     })?;
 
     #[cfg(unix)]
@@ -228,7 +285,14 @@ fn create_wrapper_script(
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(wrapper_path, permissions).map_err(|e| {
-            SapphireError::Io(std::io::Error::new(e.kind(), format!("Failed set wrapper executable {}: {}", wrapper_path.display(), e)))
+            SapphireError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed set wrapper executable {}: {}",
+                    wrapper_path.display(),
+                    e
+                ),
+            ))
         })?;
     }
 
@@ -238,8 +302,14 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
     let mut potential_subdirs = Vec::new();
     let mut top_level_files_found = false;
     if !installed_keg_path.is_dir() {
-        error!("Keg path {} does not exist or is not a directory!", installed_keg_path.display());
-        return Err(SapphireError::NotFound(format!("Keg path not found: {}", installed_keg_path.display())));
+        error!(
+            "Keg path {} does not exist or is not a directory!",
+            installed_keg_path.display()
+        );
+        return Err(SapphireError::NotFound(format!(
+            "Keg path not found: {}",
+            installed_keg_path.display()
+        )));
     }
     match fs::read_dir(installed_keg_path) {
         Ok(entries) => {
@@ -247,15 +317,29 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
                 if let Ok(entry) = entry_res {
                     let path = entry.path();
                     let file_name = entry.file_name();
-                    if file_name.to_string_lossy().starts_with('.') || file_name == "INSTALL_MANIFEST.json" || file_name == "INSTALL_RECEIPT.json" { continue; }
-                    if path.is_dir() { potential_subdirs.push(path); }
-                    else if path.is_file() {
+                    if file_name.to_string_lossy().starts_with('.')
+                        || file_name == "INSTALL_MANIFEST.json"
+                        || file_name == "INSTALL_RECEIPT.json"
+                    {
+                        continue;
+                    }
+                    if path.is_dir() {
+                        potential_subdirs.push(path);
+                    } else if path.is_file() {
                         top_level_files_found = true;
-                        debug!("Found file '{}' at top level of keg {}, assuming no intermediate dir.", file_name.to_string_lossy(), installed_keg_path.display());
+                        debug!(
+                            "Found file '{}' at top level of keg {}, assuming no intermediate dir.",
+                            file_name.to_string_lossy(),
+                            installed_keg_path.display()
+                        );
                         break;
                     }
                 } else {
-                    warn!("Failed to read directory entry in {}: {}", installed_keg_path.display(), entry_res.err().unwrap());
+                    warn!(
+                        "Failed to read directory entry in {}: {}",
+                        installed_keg_path.display(),
+                        entry_res.err().unwrap()
+                    );
                 }
             }
         }
@@ -266,32 +350,57 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
     }
     if potential_subdirs.len() == 1 && !top_level_files_found {
         let intermediate_dir = potential_subdirs.remove(0);
-        debug!("Detected single intermediate content directory: {}", intermediate_dir.display());
+        debug!(
+            "Detected single intermediate content directory: {}",
+            intermediate_dir.display()
+        );
         Ok(intermediate_dir)
     } else {
-        if potential_subdirs.len() > 1 { warn!("Multiple potential content directories found under keg {}. Using main keg directory as content root.", installed_keg_path.display()); }
-        else if top_level_files_found { debug!("Top-level files found in keg {}. Using main keg directory as content root.", installed_keg_path.display()); }
-        else if potential_subdirs.is_empty() { debug!("No subdirectories or files found (excluding ignored ones) in keg {}. Using main keg directory as content root.", installed_keg_path.display()); }
+        if potential_subdirs.len() > 1 {
+            warn!("Multiple potential content directories found under keg {}. Using main keg directory as content root.", installed_keg_path.display());
+        } else if top_level_files_found {
+            debug!(
+                "Top-level files found in keg {}. Using main keg directory as content root.",
+                installed_keg_path.display()
+            );
+        } else if potential_subdirs.is_empty() {
+            debug!("No subdirectories or files found (excluding ignored ones) in keg {}. Using main keg directory as content root.", installed_keg_path.display());
+        }
         Ok(installed_keg_path.to_path_buf())
     }
 }
 fn remove_existing_link_target(path: &Path) -> Result<()> {
     match path.symlink_metadata() {
         Ok(metadata) => {
-            debug!("    Removing existing item at link target: {}", path.display());
+            debug!(
+                "    Removing existing item at link target: {}",
+                path.display()
+            );
             let is_dir = metadata.file_type().is_dir();
             let is_symlink = metadata.file_type().is_symlink();
             let is_real_dir = is_dir && !is_symlink;
-            let remove_result = if is_real_dir { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+            let remove_result = if is_real_dir {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            };
             if let Err(e) = remove_result {
-                warn!("    Failed to remove existing item at link target {}: {}", path.display(), e);
+                warn!(
+                    "    Failed to remove existing item at link target {}: {}",
+                    path.display(),
+                    e
+                );
                 return Err(SapphireError::Io(e));
             }
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => {
-            warn!("    Failed to get metadata for existing item {}: {}", path.display(), e);
+            warn!(
+                "    Failed to get metadata for existing item {}: {}",
+                path.display(),
+                e
+            );
             Err(SapphireError::Io(e))
         }
     }
@@ -301,10 +410,26 @@ fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]
     debug!("Writing install manifest to: {}", manifest_path.display());
     match serde_json::to_string_pretty(&symlinks_created) {
         Ok(manifest_json) => match fs::write(&manifest_path, manifest_json) {
-            Ok(_) => { debug!("Wrote install manifest with {} links: {}", symlinks_created.len(), manifest_path.display()); }
-            Err(e) => { error!("Failed to write install manifest {}: {}", manifest_path.display(), e); return Err(SapphireError::Io(e)); }
+            Ok(_) => {
+                debug!(
+                    "Wrote install manifest with {} links: {}",
+                    symlinks_created.len(),
+                    manifest_path.display()
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Failed to write install manifest {}: {}",
+                    manifest_path.display(),
+                    e
+                );
+                return Err(SapphireError::Io(e));
+            }
         },
-        Err(e) => { error!("Failed to serialize install manifest data: {}", e); return Err(SapphireError::Json(e)); }
+        Err(e) => {
+            error!("Failed to serialize install manifest data: {}", e);
+            return Err(SapphireError::Json(e));
+        }
     }
     Ok(())
 }
@@ -350,23 +475,40 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
                                         {
                                             match fs::remove_file(&link_path) {
                                                 Ok(_) => {
-                                                    debug!("Removed link/wrapper: {}", link_path.display());
+                                                    debug!(
+                                                        "Removed link/wrapper: {}",
+                                                        link_path.display()
+                                                    );
                                                     unlinked_count += 1;
                                                 }
                                                 Err(e) => {
-                                                    warn!("Failed to remove link/wrapper {}: {}", link_path.display(), e);
+                                                    warn!(
+                                                        "Failed to remove link/wrapper {}: {}",
+                                                        link_path.display(),
+                                                        e
+                                                    );
                                                     removal_errors += 1;
                                                 }
                                             }
                                         } else {
-                                            warn!("Manifest contains unexpected link path: {}", link_path.display());
+                                            warn!(
+                                                "Manifest contains unexpected link path: {}",
+                                                link_path.display()
+                                            );
                                         }
                                     }
                                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                                        debug!("Link listed in manifest not found: {}", link_path.display());
+                                        debug!(
+                                            "Link listed in manifest not found: {}",
+                                            link_path.display()
+                                        );
                                     }
                                     Err(e) => {
-                                        warn!("Failed to get metadata for link {}: {}", link_path.display(), e);
+                                        warn!(
+                                            "Failed to get metadata for link {}: {}",
+                                            link_path.display(),
+                                            e
+                                        );
                                         removal_errors += 1;
                                     }
                                 }
@@ -383,13 +525,15 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
                     }
                     Err(e) => {
                         error!("Failed to parse formula install manifest {}: {}. Falling back to legacy unlink...", manifest_path.display(), e);
-                        return unlink_formula_binaries_legacy(formula, &expected_keg_path, config); // Pass config
+                        return unlink_formula_binaries_legacy(formula, &expected_keg_path, config);
+                        // Pass config
                     }
                 }
             }
             Err(e) => {
                 error!("Failed to read formula install manifest {}: {}. Falling back to legacy unlink...", manifest_path.display(), e);
-                return unlink_formula_binaries_legacy(formula, &expected_keg_path, config); // Pass config
+                return unlink_formula_binaries_legacy(formula, &expected_keg_path, config);
+                // Pass config
             }
         }
     } else {
@@ -397,12 +541,17 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
             "Warning: No install manifest found at {}. Falling back to legacy unlink...",
             manifest_path.display()
         );
-        return unlink_formula_binaries_legacy(formula, &expected_keg_path, config); // Pass config
+        return unlink_formula_binaries_legacy(formula, &expected_keg_path, config);
+        // Pass config
     }
 }
 
 // Legacy unlink needs Config now
-fn unlink_formula_binaries_legacy(formula: &Formula, expected_keg_path: &Path, config: &Config) -> Result<()> {
+fn unlink_formula_binaries_legacy(
+    formula: &Formula,
+    expected_keg_path: &Path,
+    config: &Config,
+) -> Result<()> {
     warn!("Using legacy unlink for {}", formula.name());
     // Use config method
     let bin_dir = config.bin_dir();
@@ -528,11 +677,12 @@ fn unlink_formula_binaries_legacy(formula: &Formula, expected_keg_path: &Path, c
     Ok(())
 }
 
-
 // ... (unlink_executables_from_dir, is_executable, is_symlink_to remain unchanged) ...
 fn unlink_executables_from_dir(source_exec_dir: &Path, target_link_dir: &Path) -> Result<usize> {
     let mut unlinked_count = 0;
-    if !source_exec_dir.is_dir() { return Ok(0); }
+    if !source_exec_dir.is_dir() {
+        return Ok(0);
+    }
     match fs::read_dir(source_exec_dir) {
         Ok(entries) => {
             for entry_result in entries {
@@ -540,7 +690,8 @@ fn unlink_executables_from_dir(source_exec_dir: &Path, target_link_dir: &Path) -
                     Ok(entry) => {
                         let source_path = entry.path();
                         if source_path.is_dir() {
-                            unlinked_count += unlink_executables_from_dir(&source_path, target_link_dir)?;
+                            unlinked_count +=
+                                unlink_executables_from_dir(&source_path, target_link_dir)?;
                         } else if source_path.is_file() {
                             match is_executable(&source_path) {
                                 Ok(true) => {
@@ -548,57 +699,130 @@ fn unlink_executables_from_dir(source_exec_dir: &Path, target_link_dir: &Path) -
                                     let target_link = target_link_dir.join(file_name);
                                     match is_symlink_to(&target_link, &source_path) {
                                         Ok(true) => match fs::remove_file(&target_link) {
-                                            Ok(_) => { debug!("  Legacy unlinked {} -> {}", target_link.display(), source_path.display()); unlinked_count += 1; }
-                                            Err(e) => { warn!("Failed to remove legacy symlink {}: {}", target_link.display(), e); }
+                                            Ok(_) => {
+                                                debug!(
+                                                    "  Legacy unlinked {} -> {}",
+                                                    target_link.display(),
+                                                    source_path.display()
+                                                );
+                                                unlinked_count += 1;
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Failed to remove legacy symlink {}: {}",
+                                                    target_link.display(),
+                                                    e
+                                                );
+                                            }
                                         },
                                         Ok(false) => {}
-                                        Err(e) => { warn!("Failed to check legacy symlink {}: {}", target_link.display(), e); }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to check legacy symlink {}: {}",
+                                                target_link.display(),
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                                 Ok(false) => {}
-                                Err(e) => { warn!("Could not check executable status for {}: {}", source_path.display(), e); }
+                                Err(e) => {
+                                    warn!(
+                                        "Could not check executable status for {}: {}",
+                                        source_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
-                    Err(e) => { warn!("Failed to process directory entry in {}: {}", source_exec_dir.display(), e); }
+                    Err(e) => {
+                        warn!(
+                            "Failed to process directory entry in {}: {}",
+                            source_exec_dir.display(),
+                            e
+                        );
+                    }
                 }
             }
         }
-        Err(e) => { warn!("Failed to read source directory {} during legacy unlink: {}", source_exec_dir.display(), e); return Err(SapphireError::Io(e)); }
+        Err(e) => {
+            warn!(
+                "Failed to read source directory {} during legacy unlink: {}",
+                source_exec_dir.display(),
+                e
+            );
+            return Err(SapphireError::Io(e));
+        }
     }
     Ok(unlinked_count)
 }
 fn is_executable(path: &Path) -> Result<bool> {
-    if !path.try_exists().unwrap_or(false) || !path.is_file() { return Ok(false); }
+    if !path.try_exists().unwrap_or(false) || !path.is_file() {
+        return Ok(false);
+    }
     if cfg!(unix) {
         use std::os::unix::fs::PermissionsExt;
         match fs::metadata(path) {
             Ok(metadata) => Ok(metadata.permissions().mode() & 0o111 != 0),
             Err(e) => Err(SapphireError::Io(e)),
         }
-    } else { Ok(true) }
+    } else {
+        Ok(true)
+    }
 }
 fn is_symlink_to(link: &Path, target: &Path) -> Result<bool> {
     match link.symlink_metadata() {
         Ok(metadata) => {
-            if !metadata.file_type().is_symlink() { return Ok(false); }
+            if !metadata.file_type().is_symlink() {
+                return Ok(false);
+            }
             match fs::read_link(link) {
                 Ok(link_target_path) => match (target.canonicalize(), link.parent()) {
                     (Ok(canonical_target), Some(link_parent)) => {
-                        let resolved_link_target = if link_target_path.is_absolute() { link_target_path } else { link_parent.join(&link_target_path) };
+                        let resolved_link_target = if link_target_path.is_absolute() {
+                            link_target_path
+                        } else {
+                            link_parent.join(&link_target_path)
+                        };
                         match resolved_link_target.canonicalize() {
-                            Ok(canonical_link_target) => Ok(canonical_link_target == canonical_target),
-                            Err(e) => { debug!("Could not canonicalize link target path {} (from link {}): {}. Comparing raw paths.", resolved_link_target.display(), link.display(), e); Ok(resolved_link_target == canonical_target) }
+                            Ok(canonical_link_target) => {
+                                Ok(canonical_link_target == canonical_target)
+                            }
+                            Err(e) => {
+                                debug!("Could not canonicalize link target path {} (from link {}): {}. Comparing raw paths.", resolved_link_target.display(), link.display(), e);
+                                Ok(resolved_link_target == canonical_target)
+                            }
                         }
                     }
-                    (Err(e), _) => { debug!("Could not canonicalize expected target path {}: {}", target.display(), e); Ok(false) }
-                    (_, None) => { warn!("Could not get parent directory for link {}", link.display()); Ok(false) }
+                    (Err(e), _) => {
+                        debug!(
+                            "Could not canonicalize expected target path {}: {}",
+                            target.display(),
+                            e
+                        );
+                        Ok(false)
+                    }
+                    (_, None) => {
+                        warn!("Could not get parent directory for link {}", link.display());
+                        Ok(false)
+                    }
                 },
-                Err(e) => { warn!("Failed to read link target for {}: {}", link.display(), e); Err(SapphireError::Io(e)) }
+                Err(e) => {
+                    warn!("Failed to read link target for {}: {}", link.display(), e);
+                    Err(SapphireError::Io(e))
+                }
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => { warn!("Failed to get symlink metadata for {}: {}", link.display(), e); Err(SapphireError::Io(e)) }
+        Err(e) => {
+            warn!(
+                "Failed to get symlink metadata for {}: {}",
+                link.display(),
+                e
+            );
+            Err(SapphireError::Io(e))
+        }
     }
 }
 

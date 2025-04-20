@@ -1,19 +1,22 @@
 // src/build/cask/artifacts/suite.rs
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{info, warn};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
+
 /// Implements the `suite` stanza by moving each named directory from
 /// the staging area into `/Applications`, then symlinking it in the Caskroom.
 ///
-/// Mirrors Homebrew’s Suite < Moved behavior (dirmethod :appdir) :contentReference[oaicite:3]{index=3}
+/// Mirrors Homebrew’s Suite < Moved behavior (dirmethod :appdir)
+/// :contentReference[oaicite:3]{index=3}
 pub fn install_suite(
     cask: &Cask,
     stage_path: &Path,
@@ -38,24 +41,17 @@ pub fn install_suite(
                                 continue;
                             }
 
-                            let dest_dir = config.applications_dir();           // e.g. /Applications
-                            let dest = dest_dir.join(dir_name);                 // e.g. /Applications/Foobar Suite
+                            let dest_dir = config.applications_dir(); // e.g. /Applications
+                            let dest = dest_dir.join(dir_name); // e.g. /Applications/Foobar Suite
                             if dest.exists() {
-                                fs::remove_dir_all(&dest)?;                     // remove old
+                                fs::remove_dir_all(&dest)?; // remove old
                             }
 
                             info!("Moving suite '{}' → '{}'", src.display(), dest.display());
                             // Try a rename (mv); fall back to recursive copy if cross‑filesystem
-                            let mv_status = Command::new("mv")
-                                .arg(&src)
-                                .arg(&dest)
-                                .status()?;
+                            let mv_status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !mv_status.success() {
-                                Command::new("cp")
-                                    .arg("-R")
-                                    .arg(&src)
-                                    .arg(&dest)
-                                    .status()?;
+                                Command::new("cp").arg("-R").arg(&src).arg(&dest).status()?;
                             }
 
                             // Record as an App artifact (a directory moved into /Applications)

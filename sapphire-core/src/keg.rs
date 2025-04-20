@@ -1,8 +1,10 @@
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SapphireError};
-use semver::Version; // Changed from crate::model::version::Version
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use semver::Version; // Changed from crate::model::version::Version
+
+use crate::utils::config::Config;
+use crate::utils::error::{Result, SapphireError};
 
 /// Represents information about an installed package (Keg).
 #[derive(Debug, Clone, PartialEq, Eq)]
