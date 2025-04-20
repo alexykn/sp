@@ -8,7 +8,7 @@ Sapphire is a next‑generation, Rust‑powered package manager inspired by Home
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
 
-_ARM only for now, might add x86 support eventually_
+> _ARM only for now, might add x86 support eventually_
 
 ---
 
