@@ -2,32 +2,30 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
 
 jobs:
   rust-macos-arm64:
     runs-on: macos-latest
-
     steps:
       - name: Check out code
         uses: actions/checkout@v3
 
-      - name: Install Rust toolchain (Nightly for fmt, Stable default)
-        # Installs both nightly (for fmt) and the stable version defined
+      - name: Install Rust toolchain (Nightly for fmt)
         uses: actions-rs/toolchain@v1
         with:
-          # Install nightly for rustfmt
           toolchain: nightly
           components: rustfmt, clippy
-          override: true # Use nightly if specified
+          override: true
 
-      - name: Set Stable as Default (if rust-toolchain.toml exists)
-        # This step ensures commands without +nightly use the stable toolchain
-        if: success() # Only run if nightly install succeeded
+      - name: Set Stable as Default (MSRV 1.86.0)
+        if: success()
         uses: actions-rs/toolchain@v1
         with:
-          components: clippy # Ensure clippy is on stable
+          toolchain: 1.86.0
+          components: clippy
 
       - name: Cache cargo registry & build artifacts
         uses: actions/cache@v3
@@ -36,32 +34,28 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          # Using hashFiles ensures cache invalidation when dependencies change
           key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-stable-
             ${{ runner.os }}-cargo-
 
       - name: Verify runner architecture
-        run: |
-          echo "UNAME reports: $(uname -m)"
+        run: 'echo "UNAME reports: $(uname -m)"'
 
-      - name: Check formatting (using Nightly rustfmt)
-        # Explicitly use the nightly toolchain installed earlier
+      - name: Check formatting
         run: cargo +nightly fmt --all -- --check
 
-      - name: Run linters (using Default/Stable toolchain)
-        # Use the stable toolchain for clippy
+      - name: Run linters
         run: cargo clippy -- -D warnings
 
-      - name: Install cargo-outdated (using Default/Stable toolchain)
+      - name: Install cargo-outdated
         run: cargo install cargo-outdated --locked
 
-      - name: Check for outdated dependencies (using Default/Stable toolchain)
+      - name: Check for outdated dependencies
         run: cargo outdated --exit-code 1
 
-      - name: Build (using Default/Stable toolchain)
+      - name: Build
         run: cargo build --verbose
 
-      - name: Run tests (using Default/Stable toolchain)
+      - name: Run tests
         run: cargo test --verbose
