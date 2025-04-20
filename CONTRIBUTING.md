@@ -1,13 +1,15 @@
 # Contributing to Sapphire
 
-> We love pull requests! This guide shows the fastest path from **idea** to **merged code**. Skip straight to the *Quick‑Start* if you just want to get going, or dive into the details below.
+> We love merge requests! This guide shows the fastest path from **idea** to **merged code**. Skip straight to the *Quick‑Start* if you just want to get going, or dive into the details below.
 
 ---
 
 ## ⏩ Quick‑Start
 
-### 1. Fork & branch
+### 1. Fork, clone & branch
 ```bash
+git clone https://github.com/<your-username>/sapphire.git
+cd sapphire
 git checkout -b feat/<topic>
 ```
 
@@ -42,19 +44,20 @@ cargo test --workspace
 git commit -s -m "feat(core): add new fetcher"
 ```
 
-### 8. Push & open a PR against `main`
+### 8. Push & open a Merge Request against `main`
 ```bash
 git push origin feat/<topic>
+# then open a merge request on GitHub
 ```
 
 -----
 
 ## Project Layout
 
-| Crate             | Role                                                     |
-| ----------------- | -------------------------------------------------------- |
-| **`sapphire-core`** | Library: dependency resolution, fetchers, install logic |
-| **`sapphire-cli`** | Binary: user‑facing `sapphire` command                  |
+| Crate               | Role                                                     |
+| ------------------- | -------------------------------------------------------- |
+| **`sapphire-core`** | Library: dependency resolution, fetchers, install logic  |
+| **`sapphire-cli`**  | Binary: user‑facing `sapphire` command                   |
 
 All crates live in one Cargo **workspace**, so `cargo <cmd>` from the repo root affects everything.
 
@@ -78,37 +81,38 @@ All crates live in one Cargo **workspace**, so `cargo <cmd>` from the repo root 
     cargo +nightly fmt --all
     ```
       * Ensure the nightly toolchain is installed (`rustup toolchain install nightly`).
-      * CI runs `cargo +nightly fmt --all --check`, so PRs with incorrect formatting will fail.
+      * CI runs `cargo +nightly fmt --all --check`, so MRs with incorrect formatting will fail.
   * **Lint** ‑ `cargo clippy … -D warnings`; annotate false positives with `#[allow()]` + comment. (This uses the default stable toolchain). -> not required for now, gotta fix up the current mess first. Just try not to add more linter errors ;)
   * **API** ‑ follow the [Rust API Guidelines][Rust API Guidelines]; document every public item; avoid `unwrap()`.
-  * **Dependencies** ‑ discuss new crates in the PR; future policy will use `cargo deny`.
+  * **Dependencies** ‑ discuss new crates in the MR; future policy will use `cargo deny`.
 
 -----
 
 ## Testing
 
   * Unit tests in modules, integration tests in `tests/`.
-  * Aim to cover new code; bug‑fix PRs **must** include a failing test that passes after the fix.
+  * Aim to cover new code; bug‑fix MRs **must** include a failing test that passes after the fix.
   * `cargo test --workspace` must pass (uses the default stable toolchain).
 
 -----
 
 ## Git & Commits
 
-  * **Branches**: `feat/…`, `fix/…`, `docs/…`, `test/…`.
+  * **Fork** the repo on GitHub and add your remote if you haven’t already.
+  * **Branches**: use feature branches like `feat/…`, `fix/…`, `docs/…`, `test/…`.
   * **Conventional Commits** preferred (`feat(core): add bottle caching`).
   * **DCO**: add `-s` flag (`git commit -s …`).
-  * Keep commits atomic; squash fix‑ups before marking the PR ready.
+  * Keep commits atomic; squash fix‑ups before marking the MR ready.
 
 -----
 
-## Pull‑Request Flow
+## Merge‑Request Flow
 
 1.  Sync with `main`; rebase preferred.
 2.  Ensure your code is formatted correctly with `cargo +nightly fmt --all`.
 3.  Ensure CI is green (build, fmt check, clippy, tests on macOS using appropriate toolchains).
-4.  Fill out the PR template; explain *why* + *how*.
-5.  Respond to review comments promptly – we’re friendly, promise\!
+4.  Fill out the MR template; explain *why* + *how*.
+5.  Respond to review comments promptly – we’re friendly, promise!
 6.  Maintainers will *Squash & Merge* (unless history is already clean).
 
 -----
@@ -133,10 +137,11 @@ We follow the [Contributor Covenant][Contributor Covenant]; be kind and inclusiv
 
 -----
 
-Happy coding – and thanks for making Sapphire better\! ✨
+Happy coding – and thanks for making Sapphire better! ✨
 
 [rustup.rs]: https://rustup.rs/
 [homebrew]: https://brew.sh/
-[rust api guidelines]: https://rust-lang.github.io/api-guidelines/
-[developer certificate of origin]: https://developercertificate.org/
-[contributor covenant]: https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+[Rust API Guidelines]: https://rust-lang.github.io/api-guidelines/
+[Developer Certificate of Origin]: https://developercertificate.org/
+[Contributor Covenant]: https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+
