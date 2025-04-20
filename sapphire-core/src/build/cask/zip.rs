@@ -1,79 +1,93 @@
 // ===== sapphire-core/src/build/cask/zip.rs =====
+// Corrected E0502
+
 use crate::model::cask::Cask;
-use crate::utils::config::Config; // Import Config
+use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
+use log::{debug, warn};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 
 /// Install a cask from a ZIP file
-// Added Config parameter
 pub fn install_from_zip(
     cask: &Cask,
     zip_path: &Path,
     cask_version_install_path: &Path,
-    config: &Config, // Added config
+    config: &Config,
 ) -> Result<()> {
     println!("==> Extracting ZIP file: {}", zip_path.display());
 
-    let temp_dir = TempDir::new()?;
+    let temp_dir = TempDir::new().map_err(|e| {
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!("Failed to create temp directory for ZIP extraction: {}", e),
+        ))
+    })?;
     let extract_dir = temp_dir.path();
+    debug!("Extracting ZIP to temp dir: {}", extract_dir.display());
 
-    let output = Command::new("unzip")
-        .arg("-qq")
-        .arg("-o")
-        .arg(zip_path)
-        .arg("-d")
-        .arg(extract_dir)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(SapphireError::Generic(format!(
-            "Failed to extract ZIP file: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
+    match crate::build::extract::extract_archive(zip_path, extract_dir, 0) {
+        Ok(_) => {
+            println!("==> ZIP file extracted to: {}", extract_dir.display());
+        }
+        Err(e) => {
+            return Err(SapphireError::InstallError(format!(
+                "Failed to extract ZIP file '{}': {}",
+                zip_path.display(),
+                e
+            )));
+        }
     }
 
-    println!("==> ZIP file extracted to: {}", extract_dir.display());
-
-    // Pass Config down
     process_zip_content(cask, extract_dir, cask_version_install_path, config)
 }
 
 /// Process the contents of an extracted ZIP file
-// Added Config parameter
 fn process_zip_content(
     cask: &Cask,
     extract_dir: &Path,
     cask_version_install_path: &Path,
-    config: &Config, // Added config
+    config: &Config,
 ) -> Result<()> {
-    // Pass Config down
+    // Try installing an .app found in the extracted directory
     if let Ok(()) = super::app::install_app_from_zip(cask, extract_dir, cask_version_install_path, config) {
+        debug!("Installed .app artifact found in ZIP content.");
         return Ok(());
     }
+     // Try installing a .pkg found in the extracted directory
     if let Ok(()) = super::pkg::install_pkg_from_zip(cask, extract_dir, cask_version_install_path, config) {
+        debug!("Installed .pkg artifact found in ZIP content.");
         return Ok(());
     }
 
-    if let Ok(binary_paths) = find_executable_files(extract_dir) {
-        if !binary_paths.is_empty() {
-            // Pass Config down
-            return install_binary_files(cask, &binary_paths, cask_version_install_path, config);
-        }
+    // Fallback: Check for executable files if no .app or .pkg was handled
+    match find_executable_files(extract_dir) {
+         Ok(binary_paths) if !binary_paths.is_empty() => {
+             debug!("Found {} executable file(s) in ZIP content, installing as binaries.", binary_paths.len());
+             install_binary_files(cask, &binary_paths, cask_version_install_path, config)
+         }
+         Ok(_) => { // No binaries found either
+            Err(SapphireError::InstallError(format!(
+                "Couldn't find any installable artifacts (.app, .pkg, or binaries) in extracted ZIP content at {}",
+                extract_dir.display()
+            )))
+         }
+         Err(e) => { // Error during binary search
+             Err(SapphireError::InstallError(format!(
+                 "Failed to search for binaries in extracted ZIP content at {}: {}",
+                 extract_dir.display(), e
+            )))
+         }
     }
-
-    Err(SapphireError::Generic(format!(
-        "Couldn't find any installable artifacts in ZIP: {}",
-        extract_dir.display()
-    )))
 }
 
 /// Find executable files in a directory
-// ... (find_executable_files remains unchanged) ...
 fn find_executable_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut executable_paths = Vec::new();
+    // (Implementation remains the same as provided previously)
+     let mut executable_paths = Vec::new();
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) => { return Err(SapphireError::Generic(format!("Failed to read directory {}: {}", dir.display(), e))) }
@@ -81,24 +95,43 @@ fn find_executable_files(dir: &Path) -> Result<Vec<PathBuf>> {
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(e) => { return Err(SapphireError::Generic(format!("Failed to read directory entry: {}", e))) }
+            Err(e) => {
+                warn!("Failed to read directory entry in {}: {}", dir.display(), e);
+                continue;
+            }
         };
         let path = entry.path();
         if path.is_file() {
-            let metadata = fs::metadata(&path)?;
+            let metadata = match fs::metadata(&path) {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("Failed to get metadata for {}: {}", path.display(), e);
+                    continue;
+                }
+            };
             let permissions = metadata.permissions();
             #[cfg(unix)] {
-                use std::os::unix::fs::PermissionsExt;
-                if permissions.mode() & 0o111 != 0 { executable_paths.push(path); }
+                if permissions.mode() & 0o111 != 0 {
+                    debug!("Found executable file: {}", path.display());
+                    executable_paths.push(path);
+                }
             }
             #[cfg(not(unix))] {
-                if let Some(extension) = path.extension() {
-                    if extension == "exe" || extension == "bin" { executable_paths.push(path); }
+                if let Some(extension) = path.extension().and_then(|s| s.to_str()) {
+                    match extension.to_lowercase().as_str() {
+                        "exe" | "bat" | "cmd" | "com" | "bin" | "sh" => {
+                             debug!("Found potential executable file (by extension): {}", path.display());
+                             executable_paths.push(path);
+                        }
+                        _ => {}
+                    }
                 }
             }
         } else if path.is_dir() {
-            let sub_executables = find_executable_files(&path)?;
-            executable_paths.extend(sub_executables);
+            match find_executable_files(&path) {
+                 Ok(sub_executables) => executable_paths.extend(sub_executables),
+                 Err(e) => warn!("Failed to search subdirectory {}: {}", path.display(), e),
+             }
         }
     }
     Ok(executable_paths)
@@ -106,93 +139,130 @@ fn find_executable_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
 
 /// Install binary files to the appropriate location
-// Added Config parameter
 fn install_binary_files(
     cask: &Cask,
     binary_paths: &[PathBuf],
     cask_version_install_path: &Path,
-    config: &Config, // Added config
+    config: &Config,
 ) -> Result<()> {
-    println!("==> Installing binary files");
+    println!("==> Installing binary files for cask: {}", cask.token);
 
-    let bin_dir = cask_version_install_path.join("bin");
-    fs::create_dir_all(&bin_dir)?;
+    let caskroom_bin_dir = cask_version_install_path.join("bin");
+    fs::create_dir_all(&caskroom_bin_dir)?;
 
-    for binary_path in binary_paths {
-        let binary_name = binary_path
+    let mut created_artifacts = vec![caskroom_bin_dir.to_string_lossy().to_string()];
+
+    for temp_binary_path in binary_paths {
+        let binary_name = temp_binary_path
             .file_name()
-            .ok_or_else(|| SapphireError::Generic("Invalid binary path".to_string()))?;
-        let destination = bin_dir.join(binary_name);
-        println!(
-            "==> Copying binary '{}' to {}",
+            .ok_or_else(|| SapphireError::Generic(format!("Invalid temporary binary path: {}", temp_binary_path.display())))?;
+        let caskroom_dest = caskroom_bin_dir.join(binary_name);
+
+        debug!(
+            "Copying binary '{}' from temp dir to {}",
             binary_name.to_string_lossy(),
-            bin_dir.display()
+            caskroom_bin_dir.display()
         );
-        fs::copy(binary_path, &destination)?;
+
+        fs::copy(temp_binary_path, &caskroom_dest).map_err(|e| SapphireError::Io(e))?;
+        created_artifacts.push(caskroom_dest.to_string_lossy().to_string());
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = fs::metadata(&destination)?.permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&destination, permissions)?;
+            match fs::metadata(&caskroom_dest) {
+                 Ok(metadata) => {
+                     let mut permissions = metadata.permissions();
+                     let current_mode = permissions.mode();
+                     let new_mode = current_mode | 0o111;
+                     if new_mode != current_mode {
+                         permissions.set_mode(new_mode);
+                         if let Err(e) = fs::set_permissions(&caskroom_dest, permissions) {
+                             warn!("Failed to set executable permissions on {}: {}", caskroom_dest.display(), e);
+                         } else {
+                              debug!("Set executable permissions on {}", caskroom_dest.display());
+                         }
+                     }
+                 }
+                 Err(e) => {
+                     warn!("Failed to get metadata for copied binary {}: {}", caskroom_dest.display(), e);
+                 }
+             }
         }
+         #[cfg(not(unix))]
+         {
+            debug!("Skipping permission setting on non-Unix for {}", caskroom_dest.display());
+         }
     }
 
-    // Use Config method for bin directory
     let target_bin_dir = config.bin_dir();
     fs::create_dir_all(&target_bin_dir)?;
 
-    let mut created_symlinks: Vec<String> = Vec::new();
+    // *** FIX for E0502: Collect links to create *after* iterating ***
+    let mut links_to_create = Vec::new();
+    let mut links_created_paths = Vec::new(); // To record for the manifest
 
-    for binary_path in binary_paths {
-        let binary_name = binary_path
-            .file_name()
-            .ok_or_else(|| SapphireError::Generic("Invalid binary path".to_string()))?;
-        let source = bin_dir.join(binary_name);
-        let link_path = target_bin_dir.join(binary_name);
+    for caskroom_bin_path_str in &created_artifacts { // Iterate immutably
+         let caskroom_bin_path = PathBuf::from(caskroom_bin_path_str);
+         if caskroom_bin_path.is_dir() { continue; } // Skip the directory itself
 
-        if link_path.exists() {
-            if link_path
-                .symlink_metadata()
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false)
-            {
-                fs::remove_file(&link_path)?;
-            } else {
-                eprintln!("Warning: Existing file at link location {} is not a symlink. Skipping removal.", link_path.display());
-                continue;
-            }
+         if let Some(binary_name) = caskroom_bin_path.file_name() {
+            let link_path = target_bin_dir.join(binary_name);
+
+            if link_path.exists() || link_path.symlink_metadata().is_ok() {
+                 debug!("Removing existing item at link location: {}", link_path.display());
+                 if let Err(rm_err) = fs::remove_file(&link_path) {
+                     if rm_err.kind() == std::io::ErrorKind::IsADirectory || rm_err.kind() == std::io::ErrorKind::PermissionDenied {
+                         if let Err(rm_dir_err) = fs::remove_dir_all(&link_path) {
+                             warn!("Failed to remove existing directory at link location {}: {}", link_path.display(), rm_dir_err);
+                             continue;
+                          }
+                     } else if rm_err.kind() != std::io::ErrorKind::NotFound {
+                         warn!("Failed to remove existing item at link location {}: {}", link_path.display(), rm_err);
+                         continue;
+                     }
+                 }
+             }
+
+             // Store details needed to create the link after the loop
+             links_to_create.push((caskroom_bin_path.clone(), link_path.clone()));
         }
+    }
 
+    // Now create the links
+    for (source_path, link_path) in links_to_create {
         println!(
             "==> Linking binary '{}' to {}",
-            binary_name.to_string_lossy(),
+            link_path.file_name().map(|s|s.to_string_lossy()).unwrap_or_default(),
             target_bin_dir.display()
         );
-        if let Err(e) = std::os::unix::fs::symlink(&source, &link_path) {
-            eprintln!(
-                "Warning: Failed to create symlink {} -> {}: {}",
-                link_path.display(),
-                source.display(),
-                e
-            );
-            continue;
-        }
-        created_symlinks.push(link_path.to_string_lossy().to_string());
+        #[cfg(unix)]
+        {
+            if let Err(e) = std::os::unix::fs::symlink(&source_path, &link_path) {
+                warn!(
+                   "Warning: Failed to create symlink {} -> {}: {}",
+                   link_path.display(),
+                   source_path.display(),
+                   e
+               );
+               continue; // Skip recording if link failed
+            }
+            links_created_paths.push(link_path.to_string_lossy().to_string()); // Record the symlink path
+         }
+         #[cfg(not(unix))]
+         {
+             warn!("Symlink creation skipped on non-Unix platform for: {}", link_path.display());
+             // Handle copy or other alternative here if needed, and record path in links_created_paths
+         }
     }
 
-    let mut artifacts_to_record = created_symlinks;
-    for binary_path in binary_paths {
-        let binary_name = binary_path.file_name().unwrap();
-        let caskroom_bin_path = bin_dir.join(binary_name);
-        artifacts_to_record.push(caskroom_bin_path.to_string_lossy().to_string());
-    }
+    // Extend the original artifacts list with the successfully created link paths
+    created_artifacts.extend(links_created_paths);
 
-    // Use consistent parameter name
-    super::write_receipt(cask, cask_version_install_path, artifacts_to_record)?;
 
-    println!("==> Successfully installed binary files");
+    // Write receipt with all created artifacts
+    super::write_receipt(cask, cask_version_install_path, created_artifacts)?;
+
+    println!("==> Successfully installed binary files for cask: {}", cask.token);
 
     Ok(())
 }

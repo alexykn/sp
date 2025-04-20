@@ -37,6 +37,11 @@ hex = "0.4.3"
 object = { version = "0.36.7", features = ["read_core", "write_core", "macho"] }
 tokio = { version = "1.44.2", features = ["full"] }
 futures = "0.3.31"
+flate2 = "1.1.1"
+bzip2 = "0.5.2"
+xz2 = "0.1.7"
+tar = "0.4.44"
+zip = "2.6.1"
 
 # Added from check errors
 chrono = { version = "0.4.40", features = ["serde"] } # Added serde feature for potential use
