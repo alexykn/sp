@@ -1,106 +1,114 @@
-**IMPORTANT WARNING: ALPHA SOFTWARE**
+# Sapphire
 
-**Sapphire is currently in an ALPHA stage of development. It is experimental and potentially unstable. While many features are functional, exercise caution, especially when installing complex or foundational packages. Use at your own discretion and risk!**
+> **WARNING: ALPHA SOFTWARE**  
+> Sapphire is experimental, under heavy development, and may be unstable. Use at your own risk!
 
-*I do not know if I will ever manage to finish or maintain this, it is a bit much for one person as a side project.*
+Sapphire is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
-**I'd be happy to if you report any bugs you find, I can't test everything myself and this will help immensly in getting this thing polished**
+- **Formulae:** command‑line tools, libraries, and languages  
+- **Casks:** desktop applications and related artifacts on macOS (and Linux soon)
 
 ---
 
-## Introduction
+## ⚙️ Project Structure
 
-Sapphire is an experimental package manager written in Rust, inspired by Homebrew. It aims to provide a way to install and manage command-line software (formulae) and eventually applications (casks) on macOS and Linux, leveraging modern tools and technologies.
+- **sapphire‑core**  
+  Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
 
-It directly interacts with the official Homebrew repositories for formulae, bottles, and casks. Adding custom taps is not yet supported.
+- **sapphire‑cli**  
+  Command‑line interface: `sapphire` executable wrapping the core library.
 
-The project is split into:
+---
 
-- `sapphire-core`: The underlying library handling fetching, dependency resolution, building, installation, etc.
-- `sapphire-cli`: The command-line interface tool that users interact with.
+## 🚧 Current Status
 
-## Current State
+### Formulae
 
-- **Formulae Installation:**  
-  - Bottle support now allows installing and uninstalling multiple bottles in one command.  
-  - Concurrent downloads and installations make operations noticeably faster.  
-  - Source builds (`--build-from-source`) have been temporarily removed while the build-path and flag resolution is reworked.
-- **Rust & LLVM:**  
-  - Installing Rust and LLVM via Sapphire now works end-to-end.  
-  - Mach-O/Dylib patching on macOS is largely functional.  
-  - Known Issue: `rust-objcopy` (from the Rust cellar) cannot locate LLVM in its expected path. This does not prevent compilation or `rust-analyzer` functionality. A fix is planned once the bottle-installation logic is updated.
-- **Cask Functionality:**  
-  - `search` and `info` commands are functional.  
-  - `install` and `uninstall` remain unimplemented but will be supported soon.
-- **Core Commands:**  
-  - `update`, `search`, `info`, `install` (formulae), and `uninstall` (formulae) are implemented but may contain bugs.
-- **Stability:**  
-  - No system-breaking issues have been observed after reinstalling all previously installed formulae.  
+- Bottle installation and uninstallation  
+- Parallel downloads and installs for speed  
+- Dependencies, recommended/optional, tests support  
+- _Temporary:_ source‑build (`--build-from-source`) is paused pending flags‑rework
 
-## Roadmap
+### Casks
 
-1. **Finish bottle installation logic** to resolve the `rust-objcopy` issue.
-2. **Implement Cask install/uninstall** (substantially less complex than formula logic).
-3. **Reintroduce source builds** using Homebrew v2 JSON API (`info` route) for build paths and compiler flags. (Core per-build-system code is ready.)
-4. **Upgrade feature** to allow upgrading installed formulae and casks.
-5. **Cleanup feature** to remove unused downloads, old versions, and leftover files.
-6. **Reinstall feature** to reinstall existing formulae or casks easily.
-7. **Isolate Sapphire directory** under `/opt/sapphire` instead of Homebrew’s prefix, enabling independent development and testing.
-8. **Add `sapphire init`** setup command to bootstrap Sapphire in one step (similar to `brew install --prefix`).
+- **Info**, **search**, **install**, **uninstall** all implemented  
+- (untested for the most part) Supports _all_ Homebrew artifact stanzas, including:
+  - **app**, **suite**, **installer**, **pkg**, **zip/tar**, **binary**, **manpage**, **font**, **colorpicker**, **dictionary**, **input_method**, **internet_plugin**, **keyboard_layout**, **prefpane**, **qlplugin**, **mdimporter**, **screen_saver**, **service**, **audio_unit_plugin**, **vst_plugin**, **vst3_plugin**  
+  - **preflight** (run commands before moving files)  
+  - **uninstall** (record and replay uninstall steps)  
+  - **zap** (deep‑clean user data, logs, caches, receipts, launch agents)  
+- Automatic wrapper‑script generation for “binary only” casks (e.g. Firefox)
 
-## Upcoming Usage Examples
+---
 
-```bash
-# Update package metadata
+## 🚀 Roadmap
+
+1. **Finish source‑build support** (restore `--build-from-source`)  
+2. **Upgrade** command to update installed packages  
+3. **Cleanup** old downloads, versions, caches  
+4. **Reinstall** command for quick re‑pours  
+5. **Prefix isolation:** support `/opt/sapphire` as standalone layout  
+6. **`sapphire init`** helper to bootstrap your environment  
+
+---
+
+## 📦 Usage
+
+```sh
+# Update metadata
 sapphire update
 
-# Search for formulae
-sapphire search <query>
+# Search for packages
+sapphire search <term>
 
-# Install multiple bottles concurrently
-sapphire install <formula1> <formula2> <formula3>
+# Install bottles or casks
+sapphire install <application>
 
-# Uninstall multiple bottles concurrently
-sapphire uninstall <formula1> <formula2>
+# Uninstall
+sapphire uninstall <application>
 
-# Temporarily removed build-from-source option (coming back soon!)
-# sapphire install --build-from-source <formula_name>
+# (coming soon)
+sapphire install --build-from-source <formula>
+sapphire upgrade [--all] <name>…
+sapphire cleanup
+sapphire init
 ```
 
-## Building Sapphire
+---
 
-### Prerequisites
+## 🏗️ Building from Source
 
-- Rust toolchain (stable recommended)  
-- Standard build tools: make, C/C++ compiler (Clang or GCC)  
-- CMake, Ninja (often needed as build dependencies)  
-- pkg-config
+**Prerequisites:**  
+Rust toolchain (stable), C compiler, CMake, Ninja, pkg‑config.
 
-### Build Steps
-
-```bash
-git clone <repository_url>
+```sh
+git clone <repo-url>
 cd sapphire
 cargo build --release
 ```
 
-The `sapphire` binary will be at `target/release/sapphire`. Add it to your `PATH` for testing.
+The `sapphire` binary will be at `target/release/sapphire`. Add it to your `PATH`.
 
 ---
 
-### Contributing
+## 🤝 Contributing
 
-Contributions are welcome! Focus areas:
+Sapphire lives and grows by your feedback and code! We’re particularly looking for:
 
-- Stabilizing core features  
-- Improving error handling  
-- Adding comprehensive tests  
-- Refining CLI UX/UI
+- More real‑world cask testing  
+- Bug reports and reproducible cases  
+- Test coverage for core and cask modules  
+- CLI usability improvements
 
-Feel free to open issues or pull requests.
+Feel free to open issues or PRs. Every contribution helps tame this alpha beast!
 
-## License
+---
 
-Sapphire is licensed under the BSD 3-Clause License. See [LICENSE.md](LICENSE.md) for details.
+## 📄 License
 
-It incorporates concepts inspired by Homebrew (BSD 2-Clause License). See [licenses/LICENSE-Homebrew.md](licenses/LICENSE-Homebrew.md).
+- **Sapphire:** BSD‑3‑Clause  
+- Inspired by Homebrew (BSD‑2‑Clause) — see [licenses/LICENSE‑Homebrew.md](licenses/LICENSE‑Homebrew.md)
+
+---
+
+> _Alpha software. No guarantees. Use responsibly._
