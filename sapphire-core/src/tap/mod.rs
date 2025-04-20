@@ -1,4 +1,4 @@
-pub mod tap;
+pub mod definition; // Renamed from 'tap'
 
 // Re-export
-pub use tap::*;
+pub use definition::*;

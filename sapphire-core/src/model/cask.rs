@@ -168,18 +168,18 @@ impl Cask {
         // Iterate through entries (version dirs) inside the cask_dir
         match fs::read_dir(&cask_dir) {
             Ok(entries) => {
-                for entry_result in entries {
-                    if let Ok(entry) = entry_result {
-                        let version_path = entry.path();
-                        // Check if it's a directory (representing a version)
-                        if version_path.is_dir() {
-                            // Check for the existence of the manifest file
-                            let manifest_path = version_path.join("CASK_INSTALL_MANIFEST.json"); // <-- Correct filename
-                            if manifest_path.is_file() {
-                                // Found a manifest in at least one version directory, consider it
-                                // installed
-                                return true;
-                            }
+                // Clippy fix: Use flatten() to handle Result entries directly
+                for entry in entries.flatten() {
+                    // <-- Use flatten() here
+                    let version_path = entry.path();
+                    // Check if it's a directory (representing a version)
+                    if version_path.is_dir() {
+                        // Check for the existence of the manifest file
+                        let manifest_path = version_path.join("CASK_INSTALL_MANIFEST.json"); // <-- Correct filename
+                        if manifest_path.is_file() {
+                            // Found a manifest in at least one version directory, consider it
+                            // installed
+                            return true;
                         }
                     }
                 }
@@ -202,24 +202,22 @@ impl Cask {
     /// in the Caskroom. Returns the first version found (use cautiously if multiple
     /// versions could exist, though current install logic prevents this).
     pub fn installed_version(&self, config: &Config) -> Option<String> {
-        let cask_dir = config.cask_dir(&self.token);
+        let cask_dir = config.cask_dir(&self.token); //
         if !cask_dir.exists() {
             return None;
         }
         // Iterate through entries and return the first directory name found
         match fs::read_dir(&cask_dir) {
             Ok(entries) => {
-                for entry_result in entries {
-                    if let Ok(entry) = entry_result {
-                        let path = entry.path();
-                        // Check if it's a directory (representing a version)
-                        if path.is_dir() {
-                            if let Some(version_str) =
-                                path.file_name().and_then(|name| name.to_str())
-                            {
-                                // Return the first version directory name found
-                                return Some(version_str.to_string());
-                            }
+                // Clippy fix: Use flatten()
+                for entry in entries.flatten() {
+                    // <-- Use flatten() here
+                    let path = entry.path();
+                    // Check if it's a directory (representing a version)
+                    if path.is_dir() {
+                        if let Some(version_str) = path.file_name().and_then(|name| name.to_str()) {
+                            // Return the first version directory name found
+                            return Some(version_str.to_string());
                         }
                     }
                 }

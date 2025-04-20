@@ -14,6 +14,7 @@ use tracing::{debug, error, warn};
 use walkdir::WalkDir;
 
 use super::macho; // Assuming macho module exists within super (build::formula)
+use crate::build::formula::get_current_platform;
 use crate::fetch::{http, oci};
 use crate::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
 use crate::utils::config::Config;
@@ -162,6 +163,7 @@ pub async fn download_bottle(
     Ok(bottle_cache_path)
 }
 
+// Helper function (originally inside download_bottle, refactored for clarity)
 pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
     let stable_spec = formula.bottle.stable.as_ref().ok_or_else(|| {
         SapphireError::Generic(format!(
@@ -178,7 +180,7 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
     }
 
     // Use the function from build::formula module to get the platform tag
-    let current_platform = crate::build::formula::get_current_platform();
+    let current_platform = get_current_platform(); // Use the function from the parent module
     if current_platform == "unknown" || current_platform.contains("unknown") {
         warn!("Could not reliably determine current platform ('{}'). Bottle selection might be incorrect.", current_platform);
     }
@@ -211,16 +213,18 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
         if let Some(current_os_name) = current_platform
             .strip_prefix("arm64_")
             .or_else(|| Some(&current_platform))
+        // Treat non-arm as potential os name directly
         {
             let version_list = if current_platform.starts_with("arm64_") {
                 ARM_MACOS_VERSIONS
             } else {
                 INTEL_MACOS_VERSIONS
             };
+
             if let Some(current_os_index) = version_list.iter().position(|&v| v == current_os_name)
             {
-                for i in current_os_index..version_list.len() {
-                    let target_os_name = version_list[i];
+                // Clippy fix: Use an iterator instead of indexing
+                for target_os_name in version_list.iter().skip(current_os_index) {
                     let target_tag = if current_platform.starts_with("arm64_") {
                         format!("arm64_{}", target_os_name)
                     } else {
@@ -228,9 +232,9 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
                     };
                     if let Some(spec) = stable_spec.files.get(&target_tag) {
                         warn!(
-                            "No bottle found for exact platform '{}'. Using compatible older bottle '{}'.",
-                             current_platform, target_tag
-                         );
+                           "No bottle found for exact platform '{}'. Using compatible older bottle '{}'.",
+                            current_platform, target_tag
+                        );
                         return Ok((target_tag, spec));
                     }
                 }

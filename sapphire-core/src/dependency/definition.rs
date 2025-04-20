@@ -1,4 +1,4 @@
-// **File:** sapphire-core/src/dependency/dependency.rs (New file)
+// **File:** sapphire-core/src/dependency/dependency.rs // Should be in the model module
 use std::fmt;
 
 use bitflags::bitflags;

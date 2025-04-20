@@ -1,4 +1,4 @@
-// tap/tap.rs - Basic tap functionality
+// tap/tap.rs - Basic tap functionality // Should probably be in model module
 
 use std::path::PathBuf;
 
