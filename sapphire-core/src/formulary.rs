@@ -1,13 +1,15 @@
+use std::collections::HashMap; // For caching parsed formulas
+use std::sync::Arc;
+
+// Removed: use std::fs;
+// Removed: use std::path::PathBuf;
+// Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
+use log::debug;
+
 use crate::model::formula::Formula;
 use crate::utils::cache::Cache;
 use crate::utils::config::Config;
-use crate::utils::error::{Result, SapphireError}; // Import the Cache struct
-                                                  // Removed: use std::fs;
-                                                  // Removed: use std::path::PathBuf;
-                                                  // Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
-use std::collections::HashMap; // For caching parsed formulas
-use std::sync::Arc; // Import Arc for thread-safe shared ownership
-use log::debug;
+use crate::utils::error::{Result, SapphireError}; // Import the Cache struct // Import Arc for thread-safe shared ownership
 
 /// Responsible for finding and loading Formula definitions from the API cache.
 #[derive()]
@@ -15,7 +17,7 @@ pub struct Formulary {
     // config: Config, // Keep config if needed for cache path, etc.
     cache: Cache,
     // Optional: Add a cache for *parsed* formulas to avoid repeated parsing of the large JSON
-    parsed_cache: std::sync::Mutex<HashMap<String, std::sync::Arc<Formula>>>, // Using Arc for thread-safety
+    parsed_cache: std::sync::Mutex<HashMap<String, std::sync::Arc<Formula>>>, /* Using Arc for thread-safety */
 }
 
 impl Formulary {
@@ -103,4 +105,3 @@ impl Formulary {
         }
     }
 }
-

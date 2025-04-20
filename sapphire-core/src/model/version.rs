@@ -1,7 +1,10 @@
 // **File:** sapphire-core/src/model/version.rs (New file)
-use crate::utils::error::{Result, SapphireError};
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{fmt, str::FromStr};
+
+use crate::utils::error::{Result, SapphireError};
 
 /// Wrapper around semver::Version for formula versions.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

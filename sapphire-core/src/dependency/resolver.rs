@@ -1,12 +1,14 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use log::{debug, error};
+
 use crate::dependency::{Dependency, DependencyTag};
 use crate::formulary::Formulary;
 use crate::keg::KegRegistry;
 use crate::model::formula::Formula;
-use crate::utils::error::{Result, SapphireError};
-use log::{error, debug};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::{Path, PathBuf};
-use std::sync::Arc; // Use log crate
+use crate::utils::error::{Result, SapphireError}; // Use log crate
 
 /// Represents a fully resolved dependency, including its load status and path.
 #[derive(Debug, Clone)]
@@ -70,14 +72,16 @@ impl<'a> DependencyResolver<'a> {
         }
     }
 
-    /// Resolves dependencies for the targets and returns the installation plan and build dependency paths.
+    /// Resolves dependencies for the targets and returns the installation plan and build dependency
+    /// paths.
     pub fn resolve_targets(&mut self, targets: &[String]) -> Result<ResolvedGraph> {
         debug!("Starting dependency resolution for targets: {:?}", targets);
         self.visiting.clear();
         self.resolved.clear();
         let mut initial_deps = Vec::new();
         for target_name in targets {
-            initial_deps.push(Dependency::new_runtime(target_name)); // Treat targets as runtime deps initially
+            initial_deps.push(Dependency::new_runtime(target_name)); // Treat targets as runtime
+                                                                     // deps initially
         }
 
         for dep in initial_deps {
@@ -344,7 +348,8 @@ impl<'a> DependencyResolver<'a> {
             }
 
             // Recurse: Pass the tags defined *in the formula* (`dep_tags`)
-            self.resolve_recursive(dep_name, dep_tags, false)?; // is_target is false for dependencies
+            self.resolve_recursive(dep_name, dep_tags, false)?; // is_target is false for
+                                                                // dependencies
         }
         self.visiting.remove(name); // Remove after processing all children
         debug!("Finished resolving: {}", name);

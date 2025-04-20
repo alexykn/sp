@@ -1,8 +1,10 @@
 // ===== sapphire-core/src/model/cask.rs =====
-use crate::utils::config::Config;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs; // <-- Added import
+use std::fs;
+
+use serde::{Deserialize, Serialize};
+
+use crate::utils::config::Config; // <-- Added import
 
 pub type Artifact = serde_json::Value;
 
@@ -26,7 +28,9 @@ pub enum UrlField {
 pub enum Sha256Field {
     Hex(String),
     #[serde(rename_all = "snake_case")]
-    NoCheck { no_check: bool },
+    NoCheck {
+        no_check: bool,
+    },
     PerArch(HashMap<String, String>),
 }
 
@@ -52,8 +56,8 @@ pub struct ConflictsWith {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ArchReq {
-    One(String),         // e.g., "arm64"
-    Many(Vec<String>),   // e.g., ["arm64", "x86_64"]
+    One(String),          // e.g., "arm64"
+    Many(Vec<String>),    // e.g., ["arm64", "x86_64"]
     Specs(Vec<ArchSpec>), // Add this variant to handle [{"type": "arm", "bits": 64}]
 }
 
@@ -61,9 +65,9 @@ pub enum ArchReq {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MacOSReq {
-    Symbol(String),         // ":big_sur"
-    Symbols(Vec<String>),   // [":catalina", ":big_sur"]
-    Comparison(String),     // ">= :big_sur"
+    Symbol(String),       // ":big_sur"
+    Symbols(Vec<String>), // [":catalina", ":big_sur"]
+    Comparison(String),   // ">= :big_sur"
     Map(HashMap<String, Vec<String>>),
 }
 
@@ -172,7 +176,8 @@ impl Cask {
                             // Check for the existence of the manifest file
                             let manifest_path = version_path.join("CASK_INSTALL_MANIFEST.json"); // <-- Correct filename
                             if manifest_path.is_file() {
-                                // Found a manifest in at least one version directory, consider it installed
+                                // Found a manifest in at least one version directory, consider it
+                                // installed
                                 return true;
                             }
                         }
@@ -193,7 +198,6 @@ impl Cask {
         }
     }
 
-
     /// Get the installed version of this cask by reading the directory names
     /// in the Caskroom. Returns the first version found (use cautiously if multiple
     /// versions could exist, though current install logic prevents this).
@@ -210,7 +214,9 @@ impl Cask {
                         let path = entry.path();
                         // Check if it's a directory (representing a version)
                         if path.is_dir() {
-                            if let Some(version_str) = path.file_name().and_then(|name| name.to_str()) {
+                            if let Some(version_str) =
+                                path.file_name().and_then(|name| name.to_str())
+                            {
                                 // Return the first version directory name found
                                 return Some(version_str.to_string());
                             }
@@ -223,7 +229,6 @@ impl Cask {
             Err(_) => None, // Error reading directory
         }
     }
-
 
     /// Get a friendly name for display purposes
     pub fn display_name(&self) -> String {

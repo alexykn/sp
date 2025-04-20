@@ -1,10 +1,12 @@
+use std::path::Path;
+use std::process::Command;
+
+use log::debug;
+
+use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
-use log::debug;
-use std::path::Path;
-use std::process::Command;
-use crate::build::cask::InstalledArtifact;
 
 /// Execute any `preflight` commands listed in the Cask’s JSON artifact stanza.
 /// Returns an empty Vec since preflight does not produce install artifacts.
@@ -23,9 +25,10 @@ pub fn run_preflight(
                     debug!("Running preflight: {}", cmd_str);
                     let status = Command::new("sh").arg("-c").arg(&cmd_str).status()?;
                     if !status.success() {
-                        return Err(SapphireError::InstallError(
-                            format!("preflight failed: {}", cmd_str)
-                        ));
+                        return Err(SapphireError::InstallError(format!(
+                            "preflight failed: {}",
+                            cmd_str
+                        )));
                     }
                 }
             }

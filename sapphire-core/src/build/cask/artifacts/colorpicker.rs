@@ -1,17 +1,19 @@
 // ===== sapphire-core/src/build/cask/artifacts/colorpicker.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{info, warn};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
+
 /// Installs any `colorpicker` stanzas from the Cask definition.
-/// 
+///
 /// Homebrew’s `Colorpicker` artifact simply subclasses `Moved` with
 /// `dirmethod :colorpickerdir` → `~/Library/ColorPickers` :contentReference[oaicite:3]{index=3}.
 pub fn install_colorpicker(
@@ -38,9 +40,10 @@ pub fn install_colorpicker(
                                 continue;
                             }
 
-                            // Ensure ~/Library/ColorPickers exists :contentReference[oaicite:4]{index=4}
+                            // Ensure ~/Library/ColorPickers exists
+                            // :contentReference[oaicite:4]{index=4}
                             let dest_dir = config
-                                .home_dir()                      // e.g. /Users/alxknt
+                                .home_dir() // e.g. /Users/alxknt
                                 .join("Library")
                                 .join("ColorPickers");
                             fs::create_dir_all(&dest_dir)?;
@@ -57,22 +60,16 @@ pub fn install_colorpicker(
                                 dest.display()
                             );
                             // mv, fallback to cp -R if necessary (cross‑device)
-                            let status = Command::new("mv")
-                                .arg(&src)
-                                .arg(&dest)
-                                .status()?;
+                            let status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !status.success() {
-                                Command::new("cp")
-                                    .arg("-R")
-                                    .arg(&src)
-                                    .arg(&dest)
-                                    .status()?;
+                                Command::new("cp").arg("-R").arg(&src).arg(&dest).status()?;
                             }
 
                             // Record as a moved artifact (bundle installed)
                             installed.push(InstalledArtifact::App { path: dest.clone() });
 
-                            // Symlink back into Caskroom for reference :contentReference[oaicite:5]{index=5}
+                            // Symlink back into Caskroom for reference
+                            // :contentReference[oaicite:5]{index=5}
                             let link = cask_version_install_path.join(bundle_name);
                             let _ = fs::remove_file(&link);
                             symlink(&dest, &link)?;

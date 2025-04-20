@@ -1,12 +1,14 @@
 // ===== sapphire-core/src/build/cask/artifacts/installer.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SapphireError};
-use log::{info, warn};
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::{Result, SapphireError};
 
 /// Implements the `installer` stanza:
 /// - `manual`: prints instructions to open the staged path.
@@ -110,9 +112,8 @@ pub fn run_installer(
                             }
 
                             // No specific files to record here, but we can note the script ran
-                            installed.push(InstalledArtifact::CaskroomReference {
-                                path: script_path,
-                            });
+                            installed
+                                .push(InstalledArtifact::CaskroomReference { path: script_path });
                         }
                     }
                 }

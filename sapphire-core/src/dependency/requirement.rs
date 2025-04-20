@@ -1,6 +1,7 @@
 // **File:** sapphire-core/src/dependency/requirement.rs (New file)
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// Represents a requirement beyond a simple formula dependency.
 /// Placeholder - This needs significant expansion based on Homebrew's Requirement system.

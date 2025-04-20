@@ -1,7 +1,8 @@
 // **File:** sapphire-core/src/dependency/dependency.rs (New file)
+use std::fmt;
+
 use bitflags::bitflags;
-use serde::{Deserialize, Serialize};
-use std::fmt; // For derive macros and attributes
+use serde::{Deserialize, Serialize}; // For derive macros and attributes
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -95,7 +96,8 @@ impl DependencyExt for Vec<Dependency> {
                     || dep.tags.contains(DependencyTag::RUNTIME)
             })
             // Alternatively, be more explicit: include RUNTIME | RECOMMENDED | OPTIONAL
-            // .filter(|dep| dep.tags.intersects(DependencyTag::RUNTIME | DependencyTag::RECOMMENDED | DependencyTag::OPTIONAL))
+            // .filter(|dep| dep.tags.intersects(DependencyTag::RUNTIME | DependencyTag::RECOMMENDED
+            // | DependencyTag::OPTIONAL))
             .collect()
     }
 

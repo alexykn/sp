@@ -1,11 +1,14 @@
 // src/utils/cache.rs
 // Handles caching of formula data and downloads
 
-use crate::utils::error::{Result, SapphireError};
-use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::utils::error::{Result, SapphireError};
 
 // TODO: Define cache directory structure (e.g., ~/.cache/brew-rs-client)
 // TODO: Implement functions for storing, retrieving, and clearing cached data.
@@ -106,7 +109,8 @@ pub fn get_cache_dir() -> Result<PathBuf> {
         log::debug!("Creating cache directory at {:?}", app_cache_dir);
         fs::create_dir_all(&app_cache_dir).map_err(|e| {
             SapphireError::Io(e)
-            // Consider a specific Cache error variant: Cache(format!("Failed to create cache dir: {}", e))
+            // Consider a specific Cache error variant: Cache(format!("Failed to create cache dir:
+            // {}", e))
         })?;
     }
     Ok(app_cache_dir)

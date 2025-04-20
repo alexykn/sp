@@ -1,14 +1,16 @@
 // ===== sapphire-core/src/build/cask/artifacts/mdimporter.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{info, warn};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
+
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
 
 /// Installs `mdimporter` bundles from the staging area into
 /// `~/Library/Spotlight`, then symlinks them into the Caskroom,
@@ -53,16 +55,9 @@ pub fn install_mdimporter(
                                 dest.display()
                             );
                             // Try move, fallback to copy
-                            let status = Command::new("mv")
-                                .arg(&src)
-                                .arg(&dest)
-                                .status()?;
+                            let status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !status.success() {
-                                Command::new("cp")
-                                    .arg("-R")
-                                    .arg(&src)
-                                    .arg(&dest)
-                                    .status()?;
+                                Command::new("cp").arg("-R").arg(&src).arg(&dest).status()?;
                             }
 
                             // Record moved importer

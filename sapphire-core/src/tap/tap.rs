@@ -1,7 +1,8 @@
 // tap/tap.rs - Basic tap functionality
 
-use crate::utils::error::{Result, SapphireError};
 use std::path::PathBuf;
+
+use crate::utils::error::{Result, SapphireError};
 
 /// Represents a source of packages (formulas and casks)
 pub struct Tap {

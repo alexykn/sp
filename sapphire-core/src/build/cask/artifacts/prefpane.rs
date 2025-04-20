@@ -1,14 +1,16 @@
 // ===== sapphire-core/src/build/cask/artifacts/prefpane.rs =====
 
-use crate::model::cask::Cask;
-use crate::build::cask::InstalledArtifact;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
-use log::{info, warn};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
+
+use log::{info, warn};
+
+use crate::build::cask::InstalledArtifact;
+use crate::model::cask::Cask;
+use crate::utils::config::Config;
+use crate::utils::error::Result;
 
 /// Implements the `prefpane` stanza by moving each declared
 /// preference pane bundle from the staging area into
@@ -29,10 +31,7 @@ pub fn install_prefpane(
             if let Some(obj) = art.as_object() {
                 if let Some(entries) = obj.get("prefpane").and_then(|v| v.as_array()) {
                     // Target directory for user preference panes
-                    let dest_dir = config
-                        .home_dir()
-                        .join("Library")
-                        .join("PreferencePanes");
+                    let dest_dir = config.home_dir().join("Library").join("PreferencePanes");
                     fs::create_dir_all(&dest_dir)?;
 
                     for entry in entries {
@@ -57,16 +56,9 @@ pub fn install_prefpane(
                                 dest.display()
                             );
                             // Try move, fallback to copy
-                            let status = Command::new("mv")
-                                .arg(&src)
-                                .arg(&dest)
-                                .status()?;
+                            let status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !status.success() {
-                                Command::new("cp")
-                                    .arg("-R")
-                                    .arg(&src)
-                                    .arg(&dest)
-                                    .status()?;
+                                Command::new("cp").arg("-R").arg(&src).arg(&dest).status()?;
                             }
 
                             // Record moved bundle

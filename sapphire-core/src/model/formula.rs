@@ -1,15 +1,17 @@
 // sapphire-core/src/model/formula.rs
-// *** Corrected: Removed derive Deserialize from ResourceSpec, removed unused SapphireError import, added ResourceSpec struct and parsing ***
+// *** Corrected: Removed derive Deserialize from ResourceSpec, removed unused SapphireError import,
+// added ResourceSpec struct and parsing ***
 
-use crate::dependency::{Dependency, DependencyTag, Requirement};
-use crate::utils::error::Result; // <-- Import only Result
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use log::{debug, error, warn};
 use semver::Version;
-use serde::de;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf}; // Use log crate imports
+
+use crate::dependency::{Dependency, DependencyTag, Requirement};
+use crate::utils::error::Result; // <-- Import only Result // Use log crate imports
 
 // --- Resource Spec Struct ---
 // *** Added struct definition, REMOVED #[derive(Deserialize)] ***
@@ -451,7 +453,8 @@ impl<'de> Deserialize<'de> for ResourceSpec {
             sha256: String,
         }
         let helper = Helper::deserialize(deserializer)?;
-        // Note: The actual resource name comes from the key in the map during Formula deserialization
+        // Note: The actual resource name comes from the key in the map during Formula
+        // deserialization
         Ok(ResourceSpec {
             name: helper.name,
             url: helper.url,

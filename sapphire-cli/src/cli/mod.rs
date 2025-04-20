@@ -4,5 +4,4 @@
 pub mod args;
 
 // Re-export the main structs/enums needed by main.rs
-pub use args::CliArgs as Cli;
-pub use args::Commands;
+pub use args::{CliArgs as Cli, Commands};

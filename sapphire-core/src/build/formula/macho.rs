@@ -3,17 +3,13 @@
 // Updated to use MachOFatFile32 and MachOFatFile64 for FAT binary parsing.
 // Refactored to separate immutable analysis from mutable patching to fix borrow checker errors.
 
-use crate::utils::error::Result; // Keep top-level Result
-#[cfg(target_os = "macos")]
-use crate::utils::error::SapphireError;
-use log::{debug, error, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write; // Keep for write_patched_buffer
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio}; // Keep for codesign
-use tempfile::NamedTempFile; // Keep for write_patched_buffer
 
+use log::{debug, error, warn};
 // --- Imports needed for Mach-O patching (macOS only) ---
 #[cfg(target_os = "macos")]
 use object::{
@@ -31,6 +27,11 @@ use object::{
     Endianness,    // Import the Endianness enum
     FileKind,      // For checking FAT/single arch
 };
+use tempfile::NamedTempFile; // Keep for write_patched_buffer
+
+use crate::utils::error::Result; // Keep top-level Result
+#[cfg(target_os = "macos")]
+use crate::utils::error::SapphireError;
 
 // Constants for Mach-O header sizes
 #[cfg(target_os = "macos")]
@@ -68,10 +69,7 @@ pub fn patch_macho_file(path: &Path, replacements: &HashMap<String, String>) -> 
 }
 
 #[cfg(target_os = "macos")]
-fn patch_macho_file_macos(
-    path: &Path,
-    replacements: &HashMap<String, String>,
-) -> Result<bool> {
+fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -> Result<bool> {
     debug!("Processing potential Mach-O file: {}", path.display());
 
     // 1) Read the entire file into memory
@@ -100,18 +98,23 @@ fn patch_macho_file_macos(
 
     // 4) Only handle real Mach‑O variants here; bail on archives & others
     match file_kind {
-        FileKind::MachO32
-        | FileKind::MachO64
-        | FileKind::MachOFat32
-        | FileKind::MachOFat64 => {
-            debug!("  Recognized Mach-O kind {:?}: {}", file_kind, path.display());
+        FileKind::MachO32 | FileKind::MachO64 | FileKind::MachOFat32 | FileKind::MachOFat64 => {
+            debug!(
+                "  Recognized Mach-O kind {:?}: {}",
+                file_kind,
+                path.display()
+            );
         }
         FileKind::Archive => {
             debug!("  Skipping static archive (not Mach‑O): {}", path.display());
             return Ok(false);
         }
         other => {
-            debug!("  Not a Mach‑O binary (kind: {:?}), skipping: {}", other, path.display());
+            debug!(
+                "  Not a Mach‑O binary (kind: {:?}), skipping: {}",
+                other,
+                path.display()
+            );
             return Ok(false);
         }
     }
@@ -149,7 +152,6 @@ fn patch_macho_file_macos(
     Ok(true)
 }
 
-
 /// ASCII magic for the start of a static `ar` archive  (`!<arch>\n`)
 #[cfg(target_os = "macos")]
 const AR_MAGIC: &[u8; 8] = b"!<arch>\n";
@@ -169,14 +171,22 @@ fn collect_macho_patches<'data>(
         FileKind::MachO32 => {
             let m = MachOFile::<MachHeader32<Endianness>, _>::parse(buffer)?;
             patches.extend(find_patches_in_commands(
-                &m, 0, MACHO_HEADER32_SIZE, replacements, path_for_log,
+                &m,
+                0,
+                MACHO_HEADER32_SIZE,
+                replacements,
+                path_for_log,
             )?);
         }
         /* ---------------------------------------------------------- */
         FileKind::MachO64 => {
             let m = MachOFile::<MachHeader64<Endianness>, _>::parse(buffer)?;
             patches.extend(find_patches_in_commands(
-                &m, 0, MACHO_HEADER64_SIZE, replacements, path_for_log,
+                &m,
+                0,
+                MACHO_HEADER64_SIZE,
+                replacements,
+                path_for_log,
             )?);
         }
         /* ---------------------------------------------------------- */
@@ -184,7 +194,7 @@ fn collect_macho_patches<'data>(
             let fat = MachOFatFile32::parse(buffer)?;
             for (idx, arch) in fat.arches().iter().enumerate() {
                 let (off, sz) = arch.file_range();
-                let slice     = &buffer[off as usize .. (off + sz) as usize];
+                let slice = &buffer[off as usize..(off + sz) as usize];
 
                 /* short‑circuit: static .a archive inside FAT ---------- */
                 if slice.starts_with(AR_MAGIC) {
@@ -198,13 +208,21 @@ fn collect_macho_patches<'data>(
                     if magic == MH_MAGIC_64 {
                         if let Ok(m) = MachOFile::<MachHeader64<Endianness>, _>::parse(slice) {
                             patches.extend(find_patches_in_commands(
-                                &m, off as usize, MACHO_HEADER64_SIZE, replacements, path_for_log,
+                                &m,
+                                off as usize,
+                                MACHO_HEADER64_SIZE,
+                                replacements,
+                                path_for_log,
                             )?);
                         }
                     } else if magic == MH_MAGIC {
                         if let Ok(m) = MachOFile::<MachHeader32<Endianness>, _>::parse(slice) {
                             patches.extend(find_patches_in_commands(
-                                &m, off as usize, MACHO_HEADER32_SIZE, replacements, path_for_log,
+                                &m,
+                                off as usize,
+                                MACHO_HEADER32_SIZE,
+                                replacements,
+                                path_for_log,
                             )?);
                         }
                     }
@@ -216,7 +234,7 @@ fn collect_macho_patches<'data>(
             let fat = MachOFatFile64::parse(buffer)?;
             for (idx, arch) in fat.arches().iter().enumerate() {
                 let (off, sz) = arch.file_range();
-                let slice     = &buffer[off as usize .. (off + sz) as usize];
+                let slice = &buffer[off as usize..(off + sz) as usize];
 
                 if slice.starts_with(AR_MAGIC) {
                     debug!("    [slice {}] static archive – skipped", idx);
@@ -228,13 +246,21 @@ fn collect_macho_patches<'data>(
                     if magic == MH_MAGIC_64 {
                         if let Ok(m) = MachOFile::<MachHeader64<Endianness>, _>::parse(slice) {
                             patches.extend(find_patches_in_commands(
-                                &m, off as usize, MACHO_HEADER64_SIZE, replacements, path_for_log,
+                                &m,
+                                off as usize,
+                                MACHO_HEADER64_SIZE,
+                                replacements,
+                                path_for_log,
                             )?);
                         }
                     } else if magic == MH_MAGIC {
                         if let Ok(m) = MachOFile::<MachHeader32<Endianness>, _>::parse(slice) {
                             patches.extend(find_patches_in_commands(
-                                &m, off as usize, MACHO_HEADER32_SIZE, replacements, path_for_log,
+                                &m,
+                                off as usize,
+                                MACHO_HEADER32_SIZE,
+                                replacements,
+                                path_for_log,
                             )?);
                         }
                     }
@@ -247,7 +273,6 @@ fn collect_macho_patches<'data>(
 
     Ok(patches)
 }
-
 
 /// Iterates through load commands of a parsed MachOFile (slice) and returns
 /// patch details.  (SKIPS paths that are too long instead of erroring.)
@@ -269,9 +294,9 @@ where
 
     let mut it = macho_file.macho_load_commands()?;
     while let Some(cmd) = it.next()? {
-        let cmd_size   = cmd.cmdsize() as usize;
-        let cmd_offset = cur_off;               // offset *inside this slice*
-        cur_off       += cmd_size;
+        let cmd_size = cmd.cmdsize() as usize;
+        let cmd_offset = cur_off; // offset *inside this slice*
+        cur_off += cmd_size;
 
         let variant = match cmd.variant() {
             Ok(v) => v,
@@ -287,16 +312,14 @@ where
 
         // — which commands carry path strings we might want? —
         let path_info: Option<(u32, &[u8])> = match variant {
-            LoadCommandVariant::Dylib(d) | LoadCommandVariant::IdDylib(d) => {
-                cmd.string(endian, d.dylib.name)
-                    .ok()
-                    .map(|bytes| (d.dylib.name.offset.get(endian), bytes))
-            }
-            LoadCommandVariant::Rpath(r) => {
-                cmd.string(endian, r.path)
-                    .ok()
-                    .map(|bytes| (r.path.offset.get(endian), bytes))
-            }
+            LoadCommandVariant::Dylib(d) | LoadCommandVariant::IdDylib(d) => cmd
+                .string(endian, d.dylib.name)
+                .ok()
+                .map(|bytes| (d.dylib.name.offset.get(endian), bytes)),
+            LoadCommandVariant::Rpath(r) => cmd
+                .string(endian, r.path)
+                .ok()
+                .map(|bytes| (r.path.offset.get(endian), bytes)),
             _ => None,
         };
 
@@ -319,7 +342,7 @@ where
 
                     patches.push(PatchInfo {
                         absolute_offset: slice_base_offset + cmd_offset + offset_in_cmd as usize,
-                        allocated_len:   allocated,
+                        allocated_len: allocated,
                         new_path,
                     });
                 }
@@ -379,9 +402,8 @@ fn patch_path_in_buffer(
     }
 
     // null‑padded copy
-    buf[abs_off          .. abs_off + new_path.len() ]
-        .copy_from_slice(new_path.as_bytes());
-    buf[abs_off + new_path.len() .. abs_off + alloc_len].fill(0);
+    buf[abs_off..abs_off + new_path.len()].copy_from_slice(new_path.as_bytes());
+    buf[abs_off + new_path.len()..abs_off + alloc_len].fill(0);
 
     Ok(())
 }
@@ -463,7 +485,8 @@ fn resign_binary(path: &Path) -> Result<()> {
     } else {
         error!(
             "    codesign command failed for {} with status: {}",
-            path.display(), status
+            path.display(),
+            status
         );
         Err(SapphireError::CodesignError(format!(
             "Failed to re-sign patched binary {}, it may not be executable. Exit status: {}",

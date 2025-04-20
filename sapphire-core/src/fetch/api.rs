@@ -1,14 +1,15 @@
 // **File:** sapphire-core/src/fetch/api.rs
 
-use crate::utils::config::Config; // Import Config
-use crate::utils::error::{Result, SapphireError};
+use log::{debug, error, warn};
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT}; // Import headers
 use reqwest::Client;
+use serde_json::Value;
+
 //use serde::de::DeserializeOwned; // Import DeserializeOwned - might be used later
 use crate::model::cask::{Cask, CaskList};
 use crate::model::formula::Formula;
-use log::{debug, error, warn};
-use serde_json::Value; // Use log crate
+use crate::utils::config::Config; // Import Config
+use crate::utils::error::{Result, SapphireError}; // Use log crate
 
 /// Base URL for the Homebrew API (formulae.brew.sh)
 const FORMULAE_API_BASE_URL: &str = "https://formulae.brew.sh/api";
@@ -317,7 +318,8 @@ pub async fn get_cask(name: &str) -> Result<Cask> {
     };
 
     // Now, attempt to deserialize the raw JSON into the Cask struct
-    match serde_json::from_value::<Cask>(raw_json.clone()) { // Clone raw_json in case we need to print it
+    match serde_json::from_value::<Cask>(raw_json.clone()) {
+        // Clone raw_json in case we need to print it
         Ok(cask) => Ok(cask), // Deserialization successful
         Err(e) => {
             // Deserialization failed! Log the error and print the JSON.
@@ -338,7 +340,11 @@ pub async fn get_cask(name: &str) -> Result<Cask> {
                     eprintln!("\n--- Problematic JSON (raw debug) for cask '{}' ---", name);
                     eprintln!("{:?}", raw_json); // Print debug format
                     eprintln!("--- End of JSON ---");
-                    log::error!("Could not pretty-print problematic JSON for cask {}: {}", name, fmt_err);
+                    log::error!(
+                        "Could not pretty-print problematic JSON for cask {}: {}",
+                        name,
+                        fmt_err
+                    );
                     log::error!("Raw problematic value: {:?}", raw_json);
                 }
             }
@@ -360,4 +366,5 @@ pub async fn get_all_casks() -> Result<CaskList> {
 }
 
 // --- Generic fetch_and_parse removed as specific implementations are preferred ---
-// async fn fetch_and_parse_json<T: DeserializeOwned>(url: &str, client: &Client) -> Result<T> { ... }
+// async fn fetch_and_parse_json<T: DeserializeOwned>(url: &str, client: &Client) -> Result<T> { ...
+// }

@@ -2,23 +2,22 @@
 // Main module for build functionality
 // Removed deprecated functions and re-exports.
 
-use crate::model::formula::Formula;
-use crate::utils::config::Config;
 use std::path::PathBuf;
 
+use crate::model::formula::Formula;
+use crate::utils::config::Config;
 
 // --- Submodules ---
 pub mod cask;
 pub mod devtools;
 pub mod env;
-pub mod formula;
-pub mod extract; // <-- Declare the extract module
+pub mod extract;
+pub mod formula; // <-- Declare the extract module
 
 // --- Re-exports ---
 pub use extract::extract_archive; // <-- Re-export the main function from extract.rs
 // Re-export relevant functions from formula submodule
 pub use formula::{get_formula_cellar_path, write_receipt};
-
 
 // --- Path helpers using Config ---
 pub fn get_formula_opt_path(formula: &Formula, config: &Config) -> PathBuf {

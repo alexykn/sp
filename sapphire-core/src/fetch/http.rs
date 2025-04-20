@@ -1,18 +1,20 @@
 // sapphire-core/src/fetch/http.rs
 // *** No changes from previous correction - kept async ***
 
-use crate::model::formula::ResourceSpec;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SapphireError};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use log::{error, warn};
 use reqwest::header::{HeaderMap, ACCEPT, USER_AGENT};
 use reqwest::{Client, StatusCode}; // Use async Client
 use sha2::{Digest, Sha256};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
 use tokio::fs::File as TokioFile; // Use tokio's async File
-use tokio::io::AsyncWriteExt; // For async write operations
+use tokio::io::AsyncWriteExt;
+
+use crate::model::formula::ResourceSpec;
+use crate::utils::config::Config;
+use crate::utils::error::{Result, SapphireError}; // For async write operations
 
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 const CONNECT_TIMEOUT_SECS: u64 = 30;
