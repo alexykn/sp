@@ -43,7 +43,33 @@ pub async fn execute(args: &InstallArgs, cfg: &Config, cache: Arc<Cache>) -> Res
     if args.skip_deps {
         warn!("--skip-deps not fully supported; dependencies will still be processed.");
     }
-    install_formulae(args, cfg, Arc::clone(&cache)).await
+
+    // Try installing as formulae first…
+    match install_formulae(args, cfg, Arc::clone(&cache)).await {
+        Ok(()) => {
+            // success as formula
+            Ok(())
+        }
+        Err(e) => {
+            // Detect "formula not found" errors and fall back to cask install
+            let msg = e.to_string();
+            let any_not_found = args.names.iter().any(|name| {
+                msg.contains(&format!("Formula '{}' not found", name))
+            });
+
+            if any_not_found {
+                info!(
+                    "⚠️  No matching formulae found for {:?}; trying to install as casks instead…",
+                    args.names
+                );
+                // retry as casks
+                return install_casks(&args.names, args.max_concurrent_installs, cfg, Arc::clone(&cache)).await;
+            }
+
+            // otherwise propagate the original error
+            Err(e)
+        }
+    }
 }
 
 fn join_to_err(e: JoinError) -> SapphireError {
@@ -328,39 +354,60 @@ async fn install_cask_task(
 ) -> Result<()> {
     info!("🔎 Fetching info for cask {}...", token);
     let cask: Cask = sapphire_core::fetch::api::get_cask(token).await?;
+
     if let Some(deps) = &cask.depends_on {
-        if let Some(formulas) = &deps.formula {
-            if !formulas.is_empty() {
-                info!("⚙️ Installing formula dependencies for cask {}: {:?}", token, formulas);
-                let dep_args = InstallArgs { names: formulas.clone(), skip_deps: false, cask: false, include_optional: false, skip_recommended: false, max_concurrent_installs: 4 };
-                install_formulae(&dep_args, cfg, Arc::clone(cache)).await?;
-            }
+        // Formula dependencies
+        if !deps.formula.is_empty() {
+            info!(
+                "⚙️ Installing formula dependencies for cask {}: {:?}",
+                token, deps.formula
+            );
+            let dep_args = InstallArgs {
+                names: deps.formula.clone(),
+                skip_deps: false,
+                cask: false,
+                include_optional: false,
+                skip_recommended: false,
+                max_concurrent_installs: 4,
+            };
+            install_formulae(&dep_args, cfg, Arc::clone(cache)).await?;
         }
-        if let Some(casks) = &deps.cask {
-            if !casks.is_empty() {
-                info!("🍹 Installing cask dependencies for cask {}: {:?}", token, casks);
-                let casks_to_install = casks.clone();
-                let cache_clone = Arc::clone(cache);
-                let cfg_clone = cfg.clone();
-                tokio::spawn(install_casks_boxed(casks_to_install, 2, cfg_clone, cache_clone))
-                    .await
-                    .map_err(join_to_err)??;
-            }
+
+        // Cask‐to‐cask dependencies
+        if !deps.cask.is_empty() {
+            info!(
+                "🍹 Installing cask dependencies for cask {}: {:?}",
+                token, deps.cask
+            );
+            let casks_to_install = deps.cask.clone();
+            let cache_clone = Arc::clone(cache);
+            let cfg_clone = cfg.clone();
+            tokio::spawn(install_casks_boxed(casks_to_install, 2, cfg_clone, cache_clone))
+                .await
+                .map_err(join_to_err)??;
         }
     }
+
     if cask.is_installed(cfg) {
         info!("✅ Cask {} already installed – skipping.", token);
         return Ok(());
     }
+
     info!("⬇️ Downloading cask {}...", token);
     let dl = build::cask::download_cask(&cask, cache.as_ref()).await?;
+
     info!("🍺 Installing cask {}...", token);
     tokio::task::spawn_blocking({
         let cask_clone = cask.clone();
         let dl_clone = dl.clone();
         let cfg_clone = cfg.clone();
-        move || -> Result<()> { build::cask::install_cask(&cask_clone, &dl_clone, &cfg_clone) }
-    }).await.map_err(join_to_err)??;
+        move || -> Result<()> {
+            build::cask::install_cask(&cask_clone, &dl_clone, &cfg_clone)
+        }
+    })
+    .await
+    .map_err(join_to_err)??;
+
     info!("✅ Cask {} installed successfully", token);
     Ok(())
 }

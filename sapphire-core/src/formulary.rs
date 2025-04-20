@@ -7,7 +7,7 @@ use crate::utils::error::{Result, SapphireError}; // Import the Cache struct
                                                   // Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
 use std::collections::HashMap; // For caching parsed formulas
 use std::sync::Arc; // Import Arc for thread-safe shared ownership
-use log::{debug, error};
+use log::{debug, warn};
 
 /// Responsible for finding and loading Formula definitions from the API cache.
 #[derive()]
@@ -91,7 +91,7 @@ impl Formulary {
                 Ok(f)
             }
             None => {
-                error!(
+                warn!(
                     "Formula '{}' not found within the cached formula data.",
                     name
                 );

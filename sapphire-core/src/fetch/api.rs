@@ -303,12 +303,49 @@ pub async fn get_all_formulas() -> Result<Vec<Formula>> {
 
 /// Get data for a specific cask, parsed into the Cask struct.
 pub async fn get_cask(name: &str) -> Result<Cask> {
-    let raw_json = fetch_cask(name).await?; // Fetches from formulae.brew.sh
-    serde_json::from_value(raw_json) // Use from_value since fetch_cask returns Value
-        .map_err(|e| {
-            error!("Failed to parse cask {} JSON: {}", name, e);
-            SapphireError::Json(e)
-        })
+    // Fetch the raw JSON value first
+    let raw_json_result = fetch_cask(name).await; // This returns Result<serde_json::Value>
+
+    // Handle potential errors during the raw fetch itself
+    let raw_json = match raw_json_result {
+        Ok(json_val) => json_val,
+        Err(e) => {
+            // Log fetch error and return immediately
+            error!("Failed to fetch raw JSON for cask {}: {}", name, e);
+            return Err(e); // Return the fetch error
+        }
+    };
+
+    // Now, attempt to deserialize the raw JSON into the Cask struct
+    match serde_json::from_value::<Cask>(raw_json.clone()) { // Clone raw_json in case we need to print it
+        Ok(cask) => Ok(cask), // Deserialization successful
+        Err(e) => {
+            // Deserialization failed! Log the error and print the JSON.
+            error!("Failed to parse cask {} JSON: {}", name, e); // Log the serde error
+
+            // Attempt to pretty-print the JSON that caused the error
+            match serde_json::to_string_pretty(&raw_json) {
+                Ok(json_str) => {
+                    // Print to stderr so it's visible even if logging is redirected
+                    eprintln!("\n--- Problematic JSON for cask '{}' ---", name);
+                    eprintln!("{}", json_str);
+                    eprintln!("--- End of JSON ---");
+                    // Also log it for persistence
+                    log::error!("Problematic JSON for cask '{}':\n{}", name, json_str);
+                }
+                Err(fmt_err) => {
+                    // Fallback if pretty-printing fails (less likely)
+                    eprintln!("\n--- Problematic JSON (raw debug) for cask '{}' ---", name);
+                    eprintln!("{:?}", raw_json); // Print debug format
+                    eprintln!("--- End of JSON ---");
+                    log::error!("Could not pretty-print problematic JSON for cask {}: {}", name, fmt_err);
+                    log::error!("Raw problematic value: {:?}", raw_json);
+                }
+            }
+            // Important: Return the original deserialization error
+            Err(SapphireError::Json(e))
+        }
+    }
 }
 
 /// Get data for all casks, parsed into CaskList.
