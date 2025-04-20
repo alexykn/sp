@@ -60,7 +60,7 @@ pub async fn run_search(
     _config: &Config, // kept for potential future needs
     cache: Arc<Cache>,
 ) -> Result<()> {
-    log::debug!("Searching for packages matching: {}", query);
+    tracing::debug!("Searching for packages matching: {}", query);
 
     // Use the ui utility function to create the spinner
     let pb = ui::create_spinner(&format!("Searching for \"{}\"", query)); // <-- CHANGED
@@ -76,7 +76,7 @@ pub async fn run_search(
         match search_formulas(Arc::clone(&cache), query).await {
             Ok(matches) => formula_matches = matches,
             Err(e) => {
-                log::error!("Error searching formulas: {}", e);
+                tracing::error!("Error searching formulas: {}", e);
                 formula_err = Some(e); // Store error
             }
         }
@@ -87,7 +87,7 @@ pub async fn run_search(
         match search_casks(Arc::clone(&cache), query).await {
             Ok(matches) => cask_matches = matches,
             Err(e) => {
-                log::error!("Error searching casks: {}", e);
+                tracing::error!("Error searching casks: {}", e);
                 cask_err = Some(e); // Store error
             }
         }
@@ -124,12 +124,12 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         Ok(formula_data) => serde_json::from_str(&formula_data)?,
         Err(e) => {
             // If cache fails, fetch from API
-            log::debug!("Formula cache load failed ({}), fetching from API...", e);
+            tracing::debug!("Formula cache load failed ({}), fetching from API...", e);
             data_source_name = "API";
             let all_formulas = api::fetch_all_formulas().await?; // This fetches String
                                                                  // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("formula.json", &all_formulas) {
-                log::warn!("Failed to cache formula data after fetching: {}", cache_err);
+                tracing::warn!("Failed to cache formula data after fetching: {}", cache_err);
             }
             // Now parse the String fetched from API
             serde_json::from_str(&all_formulas)?
@@ -143,14 +143,14 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         }
     }
 
-    log::debug!(
+    tracing::debug!(
         "Found {} potential formula matches from {}",
         matches.len(),
         data_source_name
     );
     // Filter out formulae without bottles *after* finding matches
     matches.retain(|formula| is_bottle_available(formula));
-    log::debug!(
+    tracing::debug!(
         "Filtered down to {} formula matches with available bottles",
         matches.len()
     );
@@ -171,12 +171,12 @@ async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         Ok(cask_data) => serde_json::from_str(&cask_data)?,
         Err(e) => {
             // If cache fails, fetch from API
-            log::debug!("Cask cache load failed ({}), fetching from API...", e);
+            tracing::debug!("Cask cache load failed ({}), fetching from API...", e);
             data_source_name = "API";
             let all_casks = api::fetch_all_casks().await?; // Fetches String
                                                            // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("cask.json", &all_casks) {
-                log::warn!("Failed to cache cask data after fetching: {}", cache_err);
+                tracing::warn!("Failed to cache cask data after fetching: {}", cache_err);
             }
             // Parse the String fetched from API
             serde_json::from_str(&all_casks)?
@@ -189,7 +189,7 @@ async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
             matches.push(cask);
         }
     }
-    log::debug!(
+    tracing::debug!(
         "Found {} cask matches from {}",
         matches.len(),
         data_source_name

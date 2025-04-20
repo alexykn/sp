@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use log::{info, warn};
+use tracing::{info, warn};
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;

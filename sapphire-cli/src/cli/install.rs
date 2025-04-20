@@ -5,7 +5,6 @@ use std::sync::Arc;
 use clap::Args;
 use colored::Colorize;
 use futures::future::{BoxFuture, FutureExt};
-use log::{error, info, warn};
 use reqwest::Client;
 use sapphire_core::build;
 use sapphire_core::dependency::{
@@ -20,6 +19,7 @@ use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
 use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Args)]
 pub struct Install {
@@ -173,7 +173,7 @@ names
             while let Some(name) = queue.pop_front() {
                 if let Some(node) = nodes.get(&name) {
                     if !matches!(node.state, InstallState::Ready) {
-                        log::trace!(
+                        tracing::trace!(
                             "Node {} not ready (state: {:?}), skipping spawn attempt.",
                             name,
                             node.state
@@ -312,7 +312,7 @@ fn process_task_outcome(
     match outcome {
         Ok(opt_path) => {
             node.state = InstallState::Ok(opt_path);
-            log::debug!("{} installed successfully", name);
+            tracing::debug!("{} installed successfully", name);
         }
         Err(e) => {
             let msg = format!("{}", e);
@@ -348,7 +348,7 @@ fn process_task_outcome(
             ) {
                 dep_node.state =
                     InstallState::Failed(format!("dependency '{}' failed: {}", name, failure_msg));
-                log::debug!(
+                tracing::debug!(
                     "Marking dependent '{}' as failed due to upstream failure of '{}'",
                     dependent,
                     name

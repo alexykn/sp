@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use log::{info, warn};
+use tracing::{info, warn};
 use regex::Regex;
 
 use crate::build::cask::InstalledArtifact;

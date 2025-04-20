@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use log::debug;
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;

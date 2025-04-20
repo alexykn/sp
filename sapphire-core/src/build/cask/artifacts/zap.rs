@@ -5,7 +5,7 @@ use std::path::PathBuf;
 // Import Stdio for output redirection
 use std::process::{Command, Stdio};
 
-use log::{debug, warn};
+use tracing::{debug, warn};
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;

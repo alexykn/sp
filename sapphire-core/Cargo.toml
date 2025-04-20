@@ -10,7 +10,6 @@ description = "Core library for the Sapphire package manager"
 # Inherit from workspace where possible
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-log = { workspace = true }
 serde = { version = "1.0.219", features = ["derive"] }
 
 # Core-specific dependencies (add others identified from moved code)
@@ -51,3 +50,4 @@ num_cpus = "1.16.0"
 humantime = "2.2.0"
 bitflags = { version = "2.9.0", features = ["serde"] }
 async-recursion = "1.1.1"
+tracing = "0.1.41"

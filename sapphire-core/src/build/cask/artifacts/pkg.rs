@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask; // Artifact type alias is just Value

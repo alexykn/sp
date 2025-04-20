@@ -6,7 +6,7 @@ use std::os::unix::fs as unix_fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use serde_json;
 
 use crate::model::formula::Formula;

@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use log::debug;
+use tracing::debug;
 
 use crate::build::devtools;
 use crate::model::formula::FormulaDependencies;
@@ -381,11 +381,11 @@ impl BuildEnvironment {
         // They should be handled specifically during resource installation or via wrapper scripts.
         // The initial filtering should remove them, but double-check they aren't added back.
         if vars.contains_key("PERL5LIB") {
-            log::warn!("PERL5LIB unexpectedly present in global build env, removing.");
+            tracing::warn!("PERL5LIB unexpectedly present in global build env, removing.");
             vars.remove("PERL5LIB");
         }
         if vars.contains_key("PYTHONPATH") {
-            log::warn!("PYTHONPATH unexpectedly present in global build env, removing.");
+            tracing::warn!("PYTHONPATH unexpectedly present in global build env, removing.");
             vars.remove("PYTHONPATH");
         }
 

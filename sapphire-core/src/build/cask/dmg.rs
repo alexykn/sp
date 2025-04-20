@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 
 use crate::utils::error::{Result, SapphireError}; // Added log imports
 

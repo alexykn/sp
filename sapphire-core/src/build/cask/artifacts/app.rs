@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use log::{debug, error, info, warn}; // Added log imports
+use tracing::{debug, error, info, warn}; // Added log imports
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;

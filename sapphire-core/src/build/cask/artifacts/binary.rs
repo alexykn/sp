@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use log::{debug, info};
+use tracing::{debug, info};
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;

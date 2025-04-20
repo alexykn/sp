@@ -28,7 +28,7 @@ impl Info {
     pub async fn run(&self, _config: &Config, cache: Arc<Cache>) -> Result<()> {
         let name = &self.name;
         let is_cask = self.cask;
-        log::debug!("Getting info for package: {name}, is_cask: {is_cask}",);
+        tracing::debug!("Getting info for package: {name}, is_cask: {is_cask}",);
 
         // Use the ui utility function to create the spinner
         let pb = ui::create_spinner(&format!("Loading info for {}", name)); // <-- CHANGED
@@ -56,7 +56,7 @@ impl Info {
                 }
                 Err(SapphireError::NotFound(_)) | Err(SapphireError::Generic(_)) => {
                     // If formula lookup failed (not found or generic error), try cask.
-                    log::debug!("Formula '{}' info failed, trying cask.", name);
+                    tracing::debug!("Formula '{}' info failed, trying cask.", name);
                 }
                 Err(e) => {
                     pb.finish_and_clear(); // Ensure spinner is cleared on other errors
@@ -107,19 +107,19 @@ async fn get_formula_info_raw(cache: Arc<Cache>, name: &str) -> Result<Value> {
                     }
                 }
             }
-            log::debug!("Formula '{}' not found within cached 'formula.json'.", name);
+            tracing::debug!("Formula '{}' not found within cached 'formula.json'.", name);
             // Explicitly return NotFound if not in cache
             return Err(SapphireError::NotFound(format!(
                 "Formula '{}' not found in cache",
                 name
             )));
         }
-        Err(e) => log::debug!(
+        Err(e) => tracing::debug!(
             "Cache file 'formula.json' not found or failed to load ({}). Fetching from API.",
             e
         ),
     }
-    log::debug!("Fetching formula '{}' directly from API...", name);
+    tracing::debug!("Fetching formula '{}' directly from API...", name);
     // api::fetch_formula returns Value directly now
     let value = api::fetch_formula(name).await?;
     // Store in cache if fetched successfully
@@ -148,19 +148,19 @@ async fn get_cask_info(cache: Arc<Cache>, name: &str) -> Result<Value> {
                     }
                 }
             }
-            log::debug!("Cask '{}' not found within cached 'cask.json'.", name);
+            tracing::debug!("Cask '{}' not found within cached 'cask.json'.", name);
             // Explicitly return NotFound if not in cache
             return Err(SapphireError::NotFound(format!(
                 "Cask '{}' not found in cache",
                 name
             )));
         }
-        Err(e) => log::debug!(
+        Err(e) => tracing::debug!(
             "Cache file 'cask.json' not found or failed to load ({}). Fetching from API.",
             e
         ),
     }
-    log::debug!("Fetching cask '{}' directly from API...", name);
+    tracing::debug!("Fetching cask '{}' directly from API...", name);
     // api::fetch_cask returns Value directly now
     let value = api::fetch_cask(name).await?;
     // Store in cache if fetched successfully

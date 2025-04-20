@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use semver::Version;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;

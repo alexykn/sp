@@ -7,7 +7,7 @@ use std::io::{Read, Write}; // Added Write for atomic write
 use std::os::unix::fs::{symlink, PermissionsExt}; // Combined unix imports
 use std::path::{Path, PathBuf};
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use reqwest::Client;
 use semver; // For find_brewed_perl
 use tempfile::NamedTempFile;
@@ -508,9 +508,9 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         }
     }
 
-    log::debug!("Relocation table:");
+    tracing::debug!("Relocation table:");
     for (k, v) in &repl {
-        log::debug!("  {}  →  {}", k, v);
+        tracing::debug!("  {}  →  {}", k, v);
     }
 
     // Call the actual patching function
