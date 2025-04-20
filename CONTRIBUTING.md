@@ -49,20 +49,6 @@ git push origin feat/<topic>
 
 -----
 
-## 📑 Table of Contents
-
-1.  [Project Layout](https://www.google.com/search?q=%23project-layout)
-2.  [Dev Environment](https://www.google.com/search?q=%23dev-environment)
-3.  [Coding Style](https://www.google.com/search?q=%23coding-style)
-4.  [Testing](https://www.google.com/search?q=%23testing)
-5.  [Git & Commits](https://www.google.com/search?q=%23git--commits)
-6.  [Pull‑Request Flow](https://www.google.com/search?q=%23pull%E2%80%91request-flow)
-7.  [Reporting Issues](https://www.google.com/search?q=%23reporting-issues)
-8.  [License & DCO](https://www.google.com/search?q=%23license--dco)
-9.  [Code of Conduct](https://www.google.com/search?q=%23code-of-conduct)
-
------
-
 ## Project Layout
 
 | Crate             | Role                                                     |
