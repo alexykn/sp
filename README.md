@@ -59,13 +59,16 @@ Sapphire is a next‑generation, Rust‑powered package manager inspired by Home
 sapphire update
 
 # Search for packages
-sapphire search <term>
+sapphire search <app>
+
+# Get package info
+sapphire info <app>
 
 # Install bottles or casks
-sapphire install <application>
+sapphire install <app>
 
 # Uninstall
-sapphire uninstall <application>
+sapphire uninstall <app>
 
 # (coming soon)
 sapphire install --build-from-source <formula>
