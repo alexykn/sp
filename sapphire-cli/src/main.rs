@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
 /// Checks if auto-update is needed and runs it.
 async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> SapphireResult<()> {
     // 1. Check if auto-update is disabled
-    if env::var("SAPPHIRE_NO_AUTO_UPDATE").map_or(false, |v| v == "1") {
+    if env::var("SAPPHIRE_NO_AUTO_UPDATE").is_ok_and(|v| v == "1") {
         tracing::debug!("Auto-update disabled via SAPPHIRE_NO_AUTO_UPDATE=1.");
         return Ok(());
     }

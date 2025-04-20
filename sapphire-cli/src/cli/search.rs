@@ -149,7 +149,7 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         data_source_name
     );
     // Filter out formulae without bottles *after* finding matches
-    matches.retain(|formula| is_bottle_available(formula));
+    matches.retain(is_bottle_available);
     tracing::debug!(
         "Filtered down to {} formula matches with available bottles",
         matches.len()

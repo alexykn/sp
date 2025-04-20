@@ -332,9 +332,7 @@ impl Uninstall {
                 }
             }
 
-            return Err(SapphireError::Generic(format!(
-                "Uninstall failed for one or more packages."
-            )));
+            return Err(SapphireError::Generic("Uninstall failed for one or more packages.".to_string()));
         }
 
         Ok(())

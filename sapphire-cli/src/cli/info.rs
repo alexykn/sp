@@ -38,11 +38,11 @@ impl Info {
                 Ok(info) => {
                     pb.finish_and_clear();
                     print_cask_info(name, &info);
-                    return Ok(());
+                    Ok(())
                 }
                 Err(e) => {
                     pb.finish_and_clear(); // Ensure spinner is cleared on error
-                    return Err(e);
+                    Err(e)
                 }
             }
         } else {
@@ -68,11 +68,11 @@ impl Info {
                 Ok(info) => {
                     pb.finish_and_clear();
                     print_cask_info(name, &info);
-                    return Ok(());
+                    Ok(())
                 }
                 Err(e) => {
                     pb.finish_and_clear(); // Clear spinner on cask error too
-                    return Err(e); // Return the cask error if both formula and cask fail
+                    Err(e)// Return the cask error if both formula and cask fail
                 }
             }
         }
