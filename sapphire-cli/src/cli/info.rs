@@ -1,5 +1,4 @@
-// src/cmd/info.rs
-// Contains the logic for the `info` command.
+//! Contains the logic for the `info` command.
 
 use std::sync::Arc;
 

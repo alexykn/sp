@@ -1,9 +1,10 @@
 use std::fs;
-use std::path::Path; // Added PathBuf
-use std::process::Command; // Added Command
+use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 use colored::Colorize;
+use log;
 use sapphire_core::build;
 use sapphire_core::build::cask::{CaskInstallManifest, InstalledArtifact};
 use sapphire_core::fetch::api;
@@ -11,10 +12,10 @@ use sapphire_core::model::cask::Cask;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
-use {log, serde_json, walkdir};
+use serde_json;
+use walkdir;
 
-use crate::cmd::info;
-// Import the new cask manifest types
+use crate::cli::info;
 use crate::ui;
 
 pub async fn run_uninstall(names: &[String], config: &Config, cache: Arc<Cache>) -> Result<()> {
