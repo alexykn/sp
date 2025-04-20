@@ -114,7 +114,7 @@ Feel free to open issues or PRs. Every contribution helps!
 ## 📄 License
 
 - **Sapphire:** BSD‑3‑Clause  
-- Inspired by Homebrew (BSD‑2‑Clause) — see [licenses/LICENSE‑Homebrew.md](licenses/LICENSE‑Homebrew.md)
+- Inspired by Homebrew (BSD‑2‑Clause) — see [NOTICE.md](NOTICE.md)
 
 ---
 
