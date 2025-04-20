@@ -50,14 +50,14 @@ impl Cache {
     pub fn load_raw(&self, filename: &str) -> Result<String> {
         let path = self.cache_dir.join(filename);
         tracing::debug!("Loading raw data from cache file: {:?}", path);
-    
+
         if !path.exists() {
             return Err(SapphireError::Cache(format!(
                 "Cache file {} does not exist",
                 filename
             )));
         }
-    
+
         fs::read_to_string(&path).map_err(SapphireError::Io)
     }
 

@@ -14,8 +14,7 @@ use crate::utils::config::Config;
 use crate::utils::error::Result;
 
 // --- Moved Regex Creation Outside ---
-static MANPAGE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap());
+static MANPAGE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap());
 
 /// Install any `manpage` stanzas from the Cask definition.
 /// Mirrors Homebrew’s `Cask::Artifact::Manpage < Symlinked` behavior
@@ -37,10 +36,7 @@ pub fn install_manpage(
                         if let Some(man_file) = entry.as_str() {
                             let src = stage_path.join(man_file);
                             if !src.exists() {
-                                warn!(
-                                    "Manpage '{}' not found in staging area, skipping",
-                                    man_file
-                                );
+                                warn!("Manpage '{}' not found in staging area, skipping", man_file);
                                 continue;
                             }
 
@@ -61,9 +57,12 @@ pub fn install_manpage(
                             fs::create_dir_all(&man_dir)?;
 
                             // Determine the target path
-                            let file_name = Path::new(man_file)
-                                .file_name()
-                                .ok_or_else(|| crate::utils::error::SapphireError::Generic(format!("Invalid manpage filename: {}", man_file)))?; // Handle potential None
+                            let file_name = Path::new(man_file).file_name().ok_or_else(|| {
+                                crate::utils::error::SapphireError::Generic(format!(
+                                    "Invalid manpage filename: {}",
+                                    man_file
+                                ))
+                            })?; // Handle potential None
                             let dest = man_dir.join(file_name);
 
                             // Remove any existing file or symlink

@@ -155,7 +155,8 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
 }
 
 /// Expand a path that may start with '~' to the user's home directory
-fn expand_tilde(path: &str, home: &Path) -> PathBuf { // Changed to &Path
+fn expand_tilde(path: &str, home: &Path) -> PathBuf {
+    // Changed to &Path
     if let Some(stripped) = path.strip_prefix("~/") {
         home.join(stripped)
     } else {

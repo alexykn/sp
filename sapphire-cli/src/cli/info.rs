@@ -72,7 +72,7 @@ impl Info {
                 }
                 Err(e) => {
                     pb.finish_and_clear(); // Clear spinner on cask error too
-                    Err(e)// Return the cask error if both formula and cask fail
+                    Err(e) // Return the cask error if both formula and cask fail
                 }
             }
         }

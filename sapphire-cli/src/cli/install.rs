@@ -125,8 +125,8 @@ names
                         .filter(|d| {
                             nodes.contains_key(&d.name)
                                 && !d.tags.contains(DependencyTag::TEST)
-                                && !(d.tags.contains(DependencyTag::OPTIONAL)
-                                    && !self.include_optional)
+                                && (!d.tags.contains(DependencyTag::OPTIONAL)
+                                    || self.include_optional)
                                 && !(d.tags.contains(DependencyTag::RECOMMENDED)
                                     && self.skip_recommended)
                         })
@@ -141,7 +141,7 @@ names
             for d in deps {
                 if nodes.contains_key(&d.name)
                     && !d.tags.contains(DependencyTag::TEST)
-                    && !(d.tags.contains(DependencyTag::OPTIONAL) && !self.include_optional)
+                    && (!d.tags.contains(DependencyTag::OPTIONAL) || self.include_optional)
                     && !(d.tags.contains(DependencyTag::RECOMMENDED) && self.skip_recommended)
                 {
                     if let Some(dep_node) = nodes.get_mut(&d.name) {

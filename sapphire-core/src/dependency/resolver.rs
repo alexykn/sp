@@ -509,5 +509,4 @@ impl<'a> DependencyResolver<'a> {
         }
         true
     }
-
 }

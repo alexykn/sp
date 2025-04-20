@@ -866,7 +866,8 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
 
     match fs::read_dir(opt_dir) {
         Ok(entries) => {
-            for entry_res in entries.flatten() { // Use flatten suggested by other warning
+            for entry_res in entries.flatten() {
+                // Use flatten suggested by other warning
                 let name = entry_res.file_name();
                 let s = name.to_string_lossy();
                 let entry_path = entry_res.path();
@@ -875,7 +876,9 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
                     let version_str_padded = format!("{}.0.0", version_part); // Assume major.minor -> major.minor.0
                     if let Ok(v) = semver::Version::parse(&version_str_padded) {
                         let candidate_bin = entry_path.join("bin/perl");
-                        if candidate_bin.is_file() && (best.is_none() || v > best.as_ref().unwrap().0) {
+                        if candidate_bin.is_file()
+                            && (best.is_none() || v > best.as_ref().unwrap().0)
+                        {
                             best = Some((v, candidate_bin));
                         }
                     } else {

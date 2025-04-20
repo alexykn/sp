@@ -111,7 +111,8 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
     let direct_fetch_result = fetch_raw_formulae_json(&format!("formula/{}.json", name)).await;
 
     if let Ok(body) = direct_fetch_result {
-        let formula: serde_json::Value = serde_json::from_str(&body).map_err(SapphireError::Json)?;
+        let formula: serde_json::Value =
+            serde_json::from_str(&body).map_err(SapphireError::Json)?;
         return Ok(formula);
     } else {
         // Fallback might be less useful if the single endpoint fails, but keep for now
