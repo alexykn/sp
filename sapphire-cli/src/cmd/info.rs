@@ -3,14 +3,14 @@
 
 use sapphire_core::fetch::api;
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
+// Removed unused ProgressBar and ProgressStyle imports
 use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
 use serde_json::Value;
-use std::sync::Arc; // <-- ADDED
+use std::sync::Arc;
+use crate::ui; // <-- ADDED: Import ui module
 
 /// Displays detailed information about a formula or cask.
 pub async fn run_info(
@@ -20,10 +20,9 @@ pub async fn run_info(
     cache: &Arc<Cache>
 ) -> Result<()> {
     log::debug!("Getting info for package: {}, is_cask: {}", name, is_cask);
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::with_template("{spinner:.magenta} {msg}").unwrap());
-    pb.set_message(format!("Loading info for {}", name));
-    pb.enable_steady_tick(Duration::from_millis(100));
+
+    // Use the ui utility function to create the spinner
+    let pb = ui::create_spinner(&format!("Loading info for {}", name)); // <-- CHANGED
 
     if is_cask {
         match get_cask_info(Arc::clone(cache), name).await {
@@ -33,21 +32,29 @@ pub async fn run_info(
                 return Ok(());
             }
             Err(e) => {
+                 pb.finish_and_clear(); // Ensure spinner is cleared on error
                 return Err(e);
             }
         }
     } else {
         match get_formula_info_raw(Arc::clone(cache), name).await {
             Ok(info) => {
-                if is_bottle_available(&info) {
-                    pb.finish_and_clear();
-                    print_formula_info(name, &info);
-                    return Ok(());
-                }
-                log::debug!("Formula '{}' found but no bottle available, checking casks.", name);
+                // Removed bottle check logic here as it was complex and potentially racy.
+                // We'll try formula first, then cask if formula fails.
+                pb.finish_and_clear(); // Clear spinner after successful fetch
+                print_formula_info(name, &info);
+                return Ok(());
             }
-            Err(_e) => { /* proceed to check cask */ }
+            Err(SapphireError::NotFound(_)) | Err(SapphireError::Generic(_)) => {
+                // If formula lookup failed (not found or generic error), try cask.
+                log::debug!("Formula '{}' info failed, trying cask.", name);
+            }
+            Err(e) => {
+                 pb.finish_and_clear(); // Ensure spinner is cleared on other errors
+                return Err(e); // Propagate other errors (API, JSON, etc.)
+            }
         }
+        // --- Cask Fallback ---
         match get_cask_info(Arc::clone(cache), name).await {
             Ok(info) => {
                 pb.finish_and_clear();
@@ -55,8 +62,8 @@ pub async fn run_info(
                 return Ok(());
             }
             Err(e) => {
-                pb.finish_and_clear();
-                return Err(e);
+                pb.finish_and_clear(); // Clear spinner on cask error too
+                return Err(e); // Return the cask error if both formula and cask fail
             }
         }
     }
@@ -83,13 +90,25 @@ async fn get_formula_info_raw(cache: Arc<Cache>, name: &str) -> Result<Value> {
                         return Ok(formula);
                     }
                 }
+                 // Also check aliases if needed
+                 if let Some(aliases) = formula.get("aliases").and_then(|a| a.as_array()) {
+                    if aliases.iter().any(|a| a.as_str() == Some(name)) {
+                         return Ok(formula);
+                    }
+                 }
             }
             log::debug!("Formula '{}' not found within cached 'formula.json'.", name);
+             // Explicitly return NotFound if not in cache
+            return Err(SapphireError::NotFound(format!("Formula '{}' not found in cache", name)));
         }
-        Err(e) => log::debug!("Cache file 'formula.json' not found or failed to load ({}).", e)
+        Err(e) => log::debug!("Cache file 'formula.json' not found or failed to load ({}). Fetching from API.", e)
     }
     log::debug!("Fetching formula '{}' directly from API...", name);
+    // api::fetch_formula returns Value directly now
     let value = api::fetch_formula(name).await?;
+    // Store in cache if fetched successfully
+    // Note: This might overwrite the full list cache, consider storing individual files or a map
+    // cache.store_raw(&format!("formula/{}.json", name), &value.to_string())?; // Example of storing individually
     Ok(value)
 }
 
@@ -105,28 +124,47 @@ async fn get_cask_info(cache: Arc<Cache>, name: &str) -> Result<Value> {
                         return Ok(cask);
                     }
                 }
+                 // Check aliases if needed
+                 if let Some(aliases) = cask.get("aliases").and_then(|a| a.as_array()) {
+                    if aliases.iter().any(|a| a.as_str() == Some(name)) {
+                        return Ok(cask);
+                    }
+                 }
             }
             log::debug!("Cask '{}' not found within cached 'cask.json'.", name);
+            // Explicitly return NotFound if not in cache
+            return Err(SapphireError::NotFound(format!("Cask '{}' not found in cache", name)));
         }
-        Err(e) => log::debug!("Cache file 'cask.json' not found or failed to load ({}).", e)
+        Err(e) => log::debug!("Cache file 'cask.json' not found or failed to load ({}). Fetching from API.", e)
     }
     log::debug!("Fetching cask '{}' directly from API...", name);
+    // api::fetch_cask returns Value directly now
     let value = api::fetch_cask(name).await?;
+    // Store in cache if fetched successfully
+    // cache.store_raw(&format!("cask/{}.json", name), &value.to_string())?; // Example of storing individually
     Ok(value)
 }
 
+
 /// Prints formula information in a formatted table
 fn print_formula_info(_name: &str, formula: &Value) {
+    // Basic info extraction
     let full_name = formula.get("full_name").and_then(|f| f.as_str()).unwrap_or("N/A");
     let version = formula.get("versions").and_then(|v| v.get("stable")).and_then(|s| s.as_str()).unwrap_or("N/A");
+    let revision = formula.get("revision").and_then(|r| r.as_u64()).unwrap_or(0);
+    let version_str = if revision > 0 { format!("{}_{}", version, revision) } else { version.to_string() };
     let license = formula.get("license").and_then(|l| l.as_str()).unwrap_or("N/A");
     let homepage = formula.get("homepage").and_then(|h| h.as_str()).unwrap_or("N/A");
+
+    // Header
+    println!("{}",
+        format!("Formula: {}", full_name).green().bold()
+    );
 
     // Summary table
     let mut table = prettytable::Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-    table.add_row(prettytable::row!["Name", full_name]);
-    table.add_row(prettytable::row!["Version", version]);
+    table.add_row(prettytable::row!["Version", version_str]);
     table.add_row(prettytable::row!["License", license]);
     table.add_row(prettytable::row!["Homepage", homepage]);
     table.printstd();
@@ -144,16 +182,47 @@ fn print_formula_info(_name: &str, formula: &Value) {
             println!("  {}", caveats);
         }
     }
-    if let Some(deps) = formula.get("dependencies").and_then(|d| d.as_array()) {
-        let dep_list: Vec<&str> = deps.iter().filter_map(|d| d.as_str()).collect();
-        if !dep_list.is_empty() {
-            println!("\n{}", "Dependencies".blue().bold());
-            for d in dep_list {
-                println!("  - {}", d);
-            }
-        }
-    }
+
+     // Combined Dependencies Section
+     let mut dep_table = prettytable::Table::new();
+     dep_table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+     let mut has_deps = false;
+
+     let mut add_deps = |title: &str, key: &str, tag: &str| {
+         if let Some(deps) = formula.get(key).and_then(|d| d.as_array()) {
+             let dep_list: Vec<&str> = deps.iter().filter_map(|d| d.as_str()).collect();
+             if !dep_list.is_empty() {
+                 has_deps = true;
+                 for (i, d) in dep_list.iter().enumerate() {
+                     let display_title = if i == 0 { title } else { "" };
+                     let display_tag = if i == 0 { format!("({})", tag) } else { "".to_string() };
+                     dep_table.add_row(prettytable::row![display_title, d, display_tag]);
+                 }
+             }
+         }
+     };
+
+     add_deps("Required", "dependencies", "runtime");
+     add_deps("Recommended", "recommended_dependencies", "runtime, recommended");
+     add_deps("Optional", "optional_dependencies", "runtime, optional");
+     add_deps("Build", "build_dependencies", "build");
+     add_deps("Test", "test_dependencies", "test");
+
+
+     if has_deps {
+         println!("\n{}", "Dependencies".blue().bold());
+         dep_table.printstd();
+     }
+
+
+    // Installation hint
+    println!("\n{}", "Installation".blue().bold());
+    println!("  {} install {}",
+        "sapphire".cyan(),
+        formula.get("name").and_then(|n| n.as_str()).unwrap_or(full_name) // Use short name if available
+    );
 }
+
 
 /// Prints cask information in a formatted table
 fn print_cask_info(name: &str, cask: &Value) {
@@ -182,24 +251,53 @@ fn print_cask_info(name: &str, cask: &Value) {
     if let Some(url) = cask.get("url").and_then(|u| u.as_str()) {
         table.add_row(prettytable::row!["Download URL", url]);
     }
+     // Add SHA if present
+     if let Some(sha) = cask.get("sha256").and_then(|s| s.as_str()) {
+         if !sha.is_empty() {
+             table.add_row(prettytable::row!["SHA256", sha]);
+         }
+     }
     table.printstd();
-    
-    // Installation hint
-    println!("\n{}", "Installation".blue().bold());
-    println!("  {} install {}{}",
-        "sapphire".cyan(),
-        if name.contains(":") { "--cask " } else { "" },
-        name
-    );
-}
-/// Check if a formula has a bottle available
-fn is_bottle_available(formula: &Value) -> bool {
-    if let Some(bottle) = formula.get("bottle").and_then(|b| b.as_object()) {
-        if let Some(stable) = bottle.get("stable").and_then(|s| s.as_object()) {
-            if let Some(files) = stable.get("files").and_then(|f| f.as_object()) {
-                return !files.is_empty();
+
+    // Dependencies Section
+    if let Some(deps) = cask.get("depends_on").and_then(|d| d.as_object()) {
+        let mut dep_table = prettytable::Table::new();
+        dep_table.set_format(*prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+        let mut has_deps = false;
+
+        if let Some(formulas) = deps.get("formula").and_then(|f| f.as_array()) {
+            if !formulas.is_empty() {
+                has_deps = true;
+                 dep_table.add_row(prettytable::row!["Formula".yellow(), formulas.iter().map(|v| v.as_str().unwrap_or("")).collect::<Vec<_>>().join(", ")]);
             }
         }
+        if let Some(casks) = deps.get("cask").and_then(|c| c.as_array()) {
+             if !casks.is_empty() {
+                 has_deps = true;
+                 dep_table.add_row(prettytable::row!["Cask".yellow(), casks.iter().map(|v| v.as_str().unwrap_or("")).collect::<Vec<_>>().join(", ")]);
+             }
+        }
+         if let Some(macos) = deps.get("macos") {
+             has_deps = true;
+             let macos_str = match macos {
+                 Value::String(s) => s.clone(),
+                 Value::Array(arr) => arr.iter().map(|v| v.as_str().unwrap_or("")).collect::<Vec<_>>().join(" or "),
+                 _ => "Unknown".to_string(),
+             };
+             dep_table.add_row(prettytable::row!["macOS".yellow(), macos_str]);
+         }
+
+        if has_deps {
+            println!("\n{}", "Dependencies".blue().bold());
+            dep_table.printstd();
+        }
     }
-    false
+
+    // Installation hint
+    println!("\n{}", "Installation".blue().bold());
+    println!("  {} install --cask {}", // Always use --cask for clarity
+        "sapphire".cyan(),
+        name // Use the token 'name' passed to the function
+    );
 }
+// Removed is_bottle_available check

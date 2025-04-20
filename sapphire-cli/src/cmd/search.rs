@@ -3,8 +3,7 @@
 
 use sapphire_core::fetch::api;
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
+// Removed unused ProgressBar and ProgressStyle imports
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::Result;
@@ -13,6 +12,7 @@ use prettytable::{Table, format};
 use terminal_size::{terminal_size, Width};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use std::sync::Arc;
+use crate::ui; // <-- ADDED: Import ui module
 
 /// Represents the type of package to search for
 pub enum SearchType {
@@ -29,111 +29,139 @@ pub async fn run_search(
     cache: &Arc<Cache>
 ) -> Result<()> {
     log::debug!("Searching for packages matching: {}", query);
-    // Spinner for searching
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(ProgressStyle::with_template("{spinner:.cyan} {msg}").unwrap());
-    pb.set_message(format!("Searching for \"{}\"", query));
-    pb.enable_steady_tick(Duration::from_millis(100));
+
+    // Use the ui utility function to create the spinner
+    let pb = ui::create_spinner(&format!("Searching for \"{}\"", query)); // <-- CHANGED
 
     // Store search results
     let mut formula_matches = Vec::new();
     let mut cask_matches = Vec::new();
+    let mut formula_err = None;
+    let mut cask_err = None;
+
 
     // Search formulas if needed
     if matches!(search_type, SearchType::All | SearchType::Formula) {
-        formula_matches = search_formulas(Arc::clone(cache), query).await?;
+         match search_formulas(Arc::clone(cache), query).await {
+             Ok(matches) => formula_matches = matches,
+             Err(e) => {
+                 log::error!("Error searching formulas: {}", e);
+                 formula_err = Some(e); // Store error
+             }
+         }
     }
 
     // Search casks if needed
     if matches!(search_type, SearchType::All | SearchType::Cask) {
-        cask_matches = search_casks(Arc::clone(cache), query).await?;
+        match search_casks(Arc::clone(cache), query).await {
+            Ok(matches) => cask_matches = matches,
+            Err(e) => {
+                log::error!("Error searching casks: {}", e);
+                cask_err = Some(e); // Store error
+            }
+        }
     }
 
     // Finished searching
     pb.finish_and_clear();
-    // Print results
+
+     // Handle potential errors after attempting searches
+    if formula_matches.is_empty() && cask_matches.is_empty() {
+        if let Some(e) = formula_err.or(cask_err) {
+             // If both searches errored, return one of the errors
+             return Err(e);
+         }
+        // If no errors but no matches, print message below
+    }
+
+
+    // Print results (even if empty, the function handles that)
     print_search_results(query, &formula_matches, &cask_matches);
 
     Ok(())
 }
 
+
 /// Search for formulas matching the query
 async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
     let query_lower = query.to_lowercase();
     let mut matches = Vec::new();
+    let mut data_source_name = "cache"; // Assume cache initially
 
     // Try to load from cache
-    match cache.load_raw("formula.json") {
-        Ok(formula_data) => {
-            // Parse the JSON
-            let formulas: Vec<Value> = serde_json::from_str(&formula_data)?;
+    let formula_data_result = cache.load_raw("formula.json");
 
-            // Find matching formulas
-            for formula in formulas {
-                if is_formula_match(&formula, &query_lower) {
-                    matches.push(formula);
-                }
-            }
+    let formulas: Vec<Value> = match formula_data_result {
+        Ok(formula_data) => {
+            serde_json::from_str(&formula_data)?
         }
         Err(e) => {
             // If cache fails, fetch from API
             log::debug!("Formula cache load failed ({}), fetching from API...", e);
-            let all_formulas = api::fetch_all_formulas().await?;
-            let formulas: Vec<Value> = serde_json::from_str(&all_formulas)?;
-
-            for formula in formulas.iter() {
-                if is_formula_match(formula, &query_lower) {
-                    matches.push(formula.clone());
-                }
-            }
+            data_source_name = "API";
+            let all_formulas = api::fetch_all_formulas().await?; // This fetches String
+            // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("formula.json", &all_formulas) {
                 log::warn!("Failed to cache formula data after fetching: {}", cache_err);
             }
+             // Now parse the String fetched from API
+            serde_json::from_str(&all_formulas)?
+        }
+    };
+
+    // Find matching formulas from the loaded data (either cache or API)
+    for formula in formulas {
+        if is_formula_match(&formula, &query_lower) {
+            matches.push(formula);
         }
     }
 
-    // Only include formulae that have bottles available
+    log::debug!("Found {} potential formula matches from {}", matches.len(), data_source_name);
+    // Filter out formulae without bottles *after* finding matches
     matches.retain(|formula| is_bottle_available(formula));
+    log::debug!("Filtered down to {} formula matches with available bottles", matches.len());
+
     Ok(matches)
 }
+
 
 /// Search for casks matching the query
 async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
     let query_lower = query.to_lowercase();
     let mut matches = Vec::new();
+    let mut data_source_name = "cache"; // Assume cache initially
 
     // Try to load from cache
-    match cache.load_raw("cask.json") {
-        Ok(cask_data) => {
-            // Parse the JSON
-            let casks: Vec<Value> = serde_json::from_str(&cask_data)?;
+    let cask_data_result = cache.load_raw("cask.json");
 
-            // Find matching casks
-            for cask in casks.iter() {
-                if is_cask_match(cask, &query_lower) {
-                    matches.push(cask.clone());
-                }
-            }
+    let casks: Vec<Value> = match cask_data_result {
+        Ok(cask_data) => {
+            serde_json::from_str(&cask_data)?
         }
         Err(e) => {
             // If cache fails, fetch from API
             log::debug!("Cask cache load failed ({}), fetching from API...", e);
-            let all_casks = api::fetch_all_casks().await?;
-            let casks: Vec<Value> = serde_json::from_str(&all_casks)?;
-
-            for cask in casks.iter() {
-                if is_cask_match(cask, &query_lower) {
-                    matches.push(cask.clone());
-                }
-            }
+            data_source_name = "API";
+            let all_casks = api::fetch_all_casks().await?; // Fetches String
+             // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("cask.json", &all_casks) {
                 log::warn!("Failed to cache cask data after fetching: {}", cache_err);
             }
+             // Parse the String fetched from API
+            serde_json::from_str(&all_casks)?
+        }
+    };
+
+    // Find matching casks
+    for cask in casks {
+        if is_cask_match(&cask, &query_lower) {
+            matches.push(cask);
         }
     }
-
+    log::debug!("Found {} cask matches from {}", matches.len(), data_source_name);
     Ok(matches)
 }
+
 
 /// Check if a formula matches the search query
 fn is_formula_match(formula: &Value, query: &str) -> bool {
@@ -199,6 +227,18 @@ fn is_cask_match(cask: &Value, query: &str) -> bool {
         }
     }
 
+    // Check aliases if casks have them (add if necessary)
+     if let Some(aliases) = cask.get("aliases").and_then(|a| a.as_array()) {
+         for alias in aliases {
+             if let Some(alias_str) = alias.as_str() {
+                 if alias_str.to_lowercase().contains(query) {
+                     return true;
+                 }
+             }
+         }
+     }
+
+
     false
 }
 
@@ -207,12 +247,13 @@ fn is_bottle_available(formula: &Value) -> bool {
     if let Some(bottle) = formula.get("bottle").and_then(|b| b.as_object()) {
         if let Some(stable) = bottle.get("stable").and_then(|s| s.as_object()) {
             if let Some(files) = stable.get("files").and_then(|f| f.as_object()) {
-                return !files.is_empty();
+                return !files.is_empty(); // True if the files map is not empty
             }
         }
     }
-    false
+    false // No bottle, no stable spec, or no files found
 }
+
 
 /// Truncates to max visible width, adding '…' if cut.
 fn truncate_vis(s: &str, max: usize) -> String {
@@ -221,9 +262,13 @@ fn truncate_vis(s: &str, max: usize) -> String {
     }
     let mut w = 0;
     let mut out = String::new();
+    // Ensure max is at least 1 for the ellipsis
+    let effective_max = if max > 0 { max } else { 1 };
+
     for ch in s.chars() {
         let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + cw >= max.saturating_sub(1) {
+         // Check if adding the next char *including* ellipsis fits
+        if w + cw >= effective_max.saturating_sub(1) {
             break;
         }
         out.push(ch);
@@ -249,67 +294,65 @@ pub fn print_search_results(
     // 1) Terminal width
     let term_cols = terminal_size()
         .map(|(Width(w), _)| w as usize)
-        .unwrap_or(120);
+        .unwrap_or(120); // Default width if detection fails
 
-    // 2) Fixed columns: "formula"/"cask" plus two " | "
-    let type_col    = 7;
-    let sep_pad     = 3; 
-    let leftover    = term_cols.saturating_sub(type_col + sep_pad * 2);
-    let name_max    = leftover / 3;       // one third for names
-    let desc_max    = leftover.saturating_sub(name_max); // two thirds for desc
+    // 2) Fixed columns: "Formula"/"Cask" plus two " | " separators
+    let type_col    = 7; // Max width for "Formula"
+    let sep_width   = 3; // Width of " | "
+    let total_fixed = type_col + sep_width * 2;
+
+    // Ensure leftover is not negative
+    let leftover = term_cols.saturating_sub(total_fixed);
+
+    // Allocate space, ensuring minimum width for names/desc
+    let name_min_width = 10; // Minimum columns for the name
+    let desc_min_width = 20; // Minimum columns for the description
+
+    // Calculate proportional widths, respecting minimums
+    let name_prop_width = leftover / 3;
+    let _desc_prop_width = leftover.saturating_sub(name_prop_width);
+
+    let name_max = std::cmp::max(name_min_width, name_prop_width);
+    // Adjust desc_max based on the actual space name_max takes, ensuring desc gets at least its minimum
+    let desc_max = std::cmp::max(desc_min_width, leftover.saturating_sub(name_max));
+
+    // Clamp to ensure total doesn't exceed leftover (due to minimums)
+    let name_max = std::cmp::min(name_max, leftover.saturating_sub(desc_min_width));
+    let desc_max = std::cmp::min(desc_max, leftover.saturating_sub(name_max));
+
 
     // 3) Build plain table with truncated cells
     let mut tbl = Table::new();
     tbl.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-    tbl.set_titles(prettytable::row!["Type", "Name", "Description"]);
+    // Don't set titles, we'll manually handle the header coloring later if desired
+    // tbl.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
     for f in formula_matches {
         let raw_name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
         let raw_desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        let name = truncate_vis(raw_name, name_max);
+        let _name = truncate_vis(raw_name, name_max);
         let desc = truncate_vis(raw_desc, desc_max);
-        tbl.add_row(prettytable::row!["formula", name, desc]);
+        // Add colored type and name directly
+         tbl.add_row(prettytable::row![
+             "Formula".cyan(),
+             raw_name.blue().bold(), // Color the full name before potential truncation for simplicity here
+             desc // Description remains uncolored
+         ]);
     }
     for c in cask_matches {
         let raw_name = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
         let raw_desc = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        let name = truncate_vis(raw_name, name_max);
+        // let name = truncate_vis(raw_name, name_max); // Truncation might hide colored part
         let desc = truncate_vis(raw_desc, desc_max);
-        tbl.add_row(prettytable::row!["cask", name, desc]);
+        // Add colored type and name directly
+         tbl.add_row(prettytable::row![
+             "Cask".green(),
+             raw_name.blue().bold(), // Color the full name
+             desc // Description remains uncolored
+         ]);
     }
 
-    // 4) Render → recolour only the Name column slice
-    let mut lines: Vec<String> = tbl.to_string().lines().map(|l| l.to_owned()).collect();
-    for line in &mut lines {
-        // skip the header row and the dashed border rows
-        if line.starts_with('-') || line.contains("Name | Description") {
-            continue;
-        }
-    
-        // split into exactly three pieces: before |, between the two |, and after
-        let parts: Vec<&str> = line.splitn(3, '|').collect();
-        if parts.len() != 3 {
-            continue;
-        }
-        let (left, mid, right) = (parts[0], parts[1], parts[2]);
-    
-        // mid includes the whitespace padding around the Name cell
-        let name_text = mid.trim();
-        if name_text.is_empty() {
-            continue;
-        }
-    
-        // colour JUST the trimmed name, leave padding in place
-        let coloured = name_text.blue().bold().to_string();
-        // replace only the first occurrence so we don’t accidentally colour pipes or desc
-        let coloured_mid = mid.replacen(name_text, &coloured, 1);
-    
-        // rebuild the line
-        *line = format!("{left}|{coloured_mid}|{right}");
-    }
-    
-    // finally, print
-    for l in lines {
-        println!("{l}");
-    }
+    // 4) Print the table directly (coloring is done during row creation)
+    tbl.printstd();
+
 }

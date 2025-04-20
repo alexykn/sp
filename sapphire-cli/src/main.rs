@@ -10,11 +10,12 @@ use std::env;
 use std::fs;
 use std::time::{Duration, SystemTime};
 use sapphire_core::utils::error::Result as SapphireResult; // Alias to avoid clash
-use sapphire_core::utils::cache::Cache; // <-- ADDED
-use std::sync::Arc; // <-- ADDED
+use sapphire_core::utils::cache::Cache;
+use std::sync::Arc;
 
 mod cli; // For argument parsing (Cli struct, Commands enum)
 mod cmd; // For command implementations (run functions)
+mod ui; // <-- ADDED: UI utilities module
 
 use cli::{Cli, Commands}; // Import the structs/enums from the cli module
 
@@ -72,7 +73,7 @@ async fn check_and_run_auto_update(config: &Config, cache: &Arc<Cache>) -> Sapph
     if needs_update {
         log::info!("Running auto-update...");
         // Use the existing update command logic
-        match cmd::update::run_update(config, cache).await {
+        match cmd::update::run_update(config, cache).await { // Pass Arc::clone if needed, depends on run_update signature
              Ok(_) => {
                  log::info!("Auto-update successful.");
                  // 5. Update timestamp file on success
