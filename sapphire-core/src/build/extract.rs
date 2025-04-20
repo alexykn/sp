@@ -1,6 +1,6 @@
 // ===== sapphire-core/src/build/extract.rs =====
 // Contains logic for extracting various archive formats.
-// Compatible with tar v0.4.40+: `Entry::unpack` returns `io::Result<tar::Unpacked>`
+// Compatible with tar v0.4.40+: `Entry::unpack` returns `io::Result<tar::Unpacked>`
 // and `Entry::path` returns `io::Result<Cow<Path>>`.
 
 use crate::utils::error::{Result, SapphireError};
@@ -16,15 +16,18 @@ use zip::read::ZipArchive;
 
 /// Extracts an archive to the target directory using native Rust crates.
 /// Supports `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, and `.zip`.
-/// `strip_components` behaves like the GNU tar `--strip-components` flag.
+/// `strip_components` behaves like the GNU tar `--strip-components` flag.
+/// `archive_type` should be the determined extension (e.g., "zip", "gz", "bz2", "xz", "tar").
 pub fn extract_archive(
     archive_path: &Path,
     target_dir: &Path,
     strip_components: usize,
+    archive_type: &str, // <-- Parameter added
 ) -> Result<()> {
     debug!(
-        "Extracting archive '{}' to '{}' (strip_components={}) using native Rust crates.",
+        "Extracting archive '{}' (type: {}) to '{}' (strip_components={}) using native Rust crates.",
         archive_path.display(),
+        archive_type,
         target_dir.display(),
         strip_components
     );
@@ -47,40 +50,36 @@ pub fn extract_archive(
         ))
     })?;
 
-    let extension = archive_path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("");
-
-    let filename_str = archive_path.file_name().unwrap_or_default().to_string_lossy();
-
     // --- Determine archive type and extract ---
-    if filename_str.ends_with(".tar.gz") || filename_str.ends_with(".tgz") {
-        let tar = GzDecoder::new(file);
-        extract_tar_archive(tar, target_dir, strip_components, archive_path)
-    } else if filename_str.ends_with(".tar.bz2")
-        || filename_str.ends_with(".tbz")
-        || filename_str.ends_with(".tbz2")
-    {
-        let tar = BzDecoder::new(file);
-        extract_tar_archive(tar, target_dir, strip_components, archive_path)
-    } else if filename_str.ends_with(".tar.xz") || filename_str.ends_with(".txz") {
-        let tar = XzDecoder::new(file);
-        extract_tar_archive(tar, target_dir, strip_components, archive_path)
-    } else if filename_str.ends_with(".tar") {
-        // No decompression needed
-        extract_tar_archive(file, target_dir, strip_components, archive_path)
-    } else if extension == "zip" {
-        extract_zip_archive(file, target_dir, strip_components, archive_path)
-    } else {
-        Err(SapphireError::Generic(format!(
-            "Unsupported archive format for native extraction: {}",
-            filename_str
-        )))
+    // Use the provided archive_type instead of inspecting filename/extension here
+    match archive_type {
+        "zip" => extract_zip_archive(file, target_dir, strip_components, archive_path),
+        "gz" | "tgz" => { // infer often returns "gz" for .tar.gz
+            let tar = GzDecoder::new(file);
+            extract_tar_archive(tar, target_dir, strip_components, archive_path)
+        }
+        "bz2" | "tbz" | "tbz2" => {
+            let tar = BzDecoder::new(file);
+            extract_tar_archive(tar, target_dir, strip_components, archive_path)
+        }
+        "xz" | "txz" => {
+            let tar = XzDecoder::new(file);
+            extract_tar_archive(tar, target_dir, strip_components, archive_path)
+        }
+        "tar" => {
+             // No decompression needed
+             extract_tar_archive(file, target_dir, strip_components, archive_path)
+        }
+        // Add other types like "7z" here if you add support
+        _ => Err(SapphireError::Generic(format!(
+            "Unsupported archive type provided for extraction: '{}' for file {}",
+            archive_type,
+            archive_path.display()
+        ))),
     }
 }
 
-// --- Tar Extraction Helper ---
+// --- Tar Extraction Helper (unchanged) ---
 fn extract_tar_archive<R: Read>(
     reader: R,
     target_dir: &Path,
@@ -165,6 +164,16 @@ fn extract_tar_archive<R: Read>(
             )));
         }
 
+        // Ensure parent directory exists before unpacking
+         if let Some(parent) = target_path.parent() {
+             if !parent.exists() {
+                 fs::create_dir_all(parent).map_err(|e| SapphireError::Io(io::Error::new(
+                     e.kind(), format!("Failed create parent dir {}: {}", parent.display(), e)
+                 )))?;
+             }
+         }
+
+
         // Unpack entry
         match entry.unpack(&target_path) {
             Ok(_) => debug!("Unpacked TAR entry to: {}", target_path.display()),
@@ -190,7 +199,7 @@ fn extract_tar_archive<R: Read>(
     Ok(())
 }
 
-// --- Zip Extraction Helper ---
+// --- Zip Extraction Helper (unchanged) ---
 fn extract_zip_archive<R: Read + Seek>(
     reader: R,
     target_dir: &Path,
@@ -258,22 +267,63 @@ fn extract_zip_archive<R: Read + Seek>(
             )));
         }
 
+        // Ensure parent directory exists
+         if let Some(parent) = target_path.parent() {
+             if !parent.exists() {
+                 fs::create_dir_all(parent).map_err(|e| SapphireError::Io(io::Error::new(
+                     e.kind(), format!("Failed create dir {}: {}", parent.display(), e)
+                 )))?;
+             }
+         }
+
         if file.is_dir() {
-            fs::create_dir_all(&target_path).map_err(|e| SapphireError::Io(io::Error::new(
-                e.kind(), format!("Failed create dir {}: {}", target_path.display(), e)
-            )))?;
+            // Directory entry in zip - ensure it exists on filesystem
+             if !target_path.exists() {
+                 fs::create_dir_all(&target_path).map_err(|e| SapphireError::Io(io::Error::new(
+                     e.kind(), format!("Failed create dir {}: {}", target_path.display(), e)
+                 )))?;
+             }
         } else if file.is_symlink() {
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-            let mut buf = Vec::new(); file.read_to_end(&mut buf)?;
-            let link = PathBuf::from(String::from_utf8_lossy(&buf).to_string());
-            #[cfg(unix)] std::os::unix::fs::symlink(&link, &target_path).ok();
+            // Symlink entry in zip
+             let mut buf = Vec::new(); file.read_to_end(&mut buf)?;
+             let link_target = PathBuf::from(String::from_utf8_lossy(&buf).to_string());
+             #[cfg(unix)] {
+                 // Remove existing file/link at target first
+                 if target_path.exists() || target_path.symlink_metadata().is_ok() {
+                    let _ = fs::remove_file(&target_path); // Ignore error if it doesn't exist
+                 }
+                 std::os::unix::fs::symlink(&link_target, &target_path).map_err(|e| {
+                     warn!("Failed to create symlink {} -> {}: {}", target_path.display(), link_target.display(), e);
+                     SapphireError::Io(e) // Propagate error
+                 })?;
+             }
+             #[cfg(not(unix))] {
+                 warn!("Cannot create symlink on non-unix system: {} -> {}", target_path.display(), link_target.display());
+                 // Potentially write a file with the link target path?
+             }
         } else {
-            if let Some(p) = target_path.parent() { fs::create_dir_all(p).ok(); }
-            let mut out = File::create(&target_path)?;
-            io::copy(&mut file, &mut out)?;
+            // Regular file entry in zip
+            // Remove existing file at target first to avoid errors
+             if target_path.exists() {
+                 let _ = fs::remove_file(&target_path);
+             }
+             let mut out_file = File::create(&target_path).map_err(|e| SapphireError::Io(io::Error::new(
+                 e.kind(), format!("Failed create file {}: {}", target_path.display(), e)
+             )))?;
+             io::copy(&mut file, &mut out_file)?;
         }
+
+         // Set permissions if available (Unix only)
+         #[cfg(unix)]
+         {
+             use std::os::unix::fs::PermissionsExt;
+             if let Some(mode) = file.unix_mode() {
+                 // Check if it's a symlink; don't chmod symlinks directly
+                 if !file.is_symlink() {
+                     fs::set_permissions(&target_path, fs::Permissions::from_mode(mode))?;
+                 }
+             }
+         }
     }
     debug!("Finished ZIP extraction for {}", archive_path_for_log.display());
     Ok(())

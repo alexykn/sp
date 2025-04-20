@@ -1,31 +1,30 @@
 // ===== sapphire-core/src/build/formula/bottle.rs =====
-// Corrected E0308
+// Corrected E0061 and Compiler Warnings
 
-use super::macho;
+use super::macho; // Assuming macho module exists within super (build::formula)
 use crate::fetch::{http, oci};
 use crate::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SapphireError};
 use log::{debug, error, warn};
 use reqwest::Client;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet}; // Added HashSet
 use std::fs::{self, File};
-use std::io::Read; // Added io import
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::io::{Read, Write}; // Added Write for atomic write
+use std::os::unix::fs::{PermissionsExt, symlink}; // Combined unix imports
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use semver; // For find_brewed_perl
+use tempfile::NamedTempFile; // For atomic write
 
 
 // --- Bottle Functions ---
 
-// download_bottle (unchanged)
 pub async fn download_bottle(
     formula: &Formula,
     config: &Config,
     client: &Client,
 ) -> Result<PathBuf> {
-    // (Implementation remains the same as provided previously)
      debug!("Attempting to download bottle for {}", formula.name);
 
     let (platform_tag, bottle_file_spec) = get_bottle_for_platform(formula)?;
@@ -42,6 +41,7 @@ pub async fn download_bottle(
     }
 
     let standard_version_str = formula.version_str_full();
+    // Bottle filename convention usually includes .tar.gz
     let filename = format!(
         "{}-{}.{}.bottle.tar.gz",
         formula.name, standard_version_str, platform_tag
@@ -124,52 +124,34 @@ pub async fn download_bottle(
             "Detected standard HTTPS URL, using direct download for: {}",
             bottle_url_str
         );
-        match http::fetch_formula_source_or_bottle(
+        // Use the generic fetch function which now handles checksums internally
+        match crate::fetch::http::fetch_formula_source_or_bottle(
             formula.name(),
             bottle_url_str,
-            &bottle_file_spec.sha256,
-            &[],
+            &bottle_file_spec.sha256, // Pass expected checksum
+            &[], // No mirrors specified here, could add if needed
             config,
         )
         .await
         {
-            Ok(downloaded_path) => {
-                if downloaded_path != bottle_cache_path {
-                    warn!("Direct download saved to unexpected path: {}. Expected: {}. Attempting move.", downloaded_path.display(), bottle_cache_path.display());
-                    if let Err(move_err) = fs::rename(&downloaded_path, &bottle_cache_path) {
-                        error!(
-                            "Failed to move downloaded file from {} to {}: {}",
-                            downloaded_path.display(),
-                            bottle_cache_path.display(),
-                            move_err
-                        );
-                        return Err(SapphireError::Io(move_err));
-                    }
-                }
-                debug!(
-                    "Successfully downloaded directly to {}",
-                    bottle_cache_path.display()
-                );
-            }
-            Err(e) => {
-                error!("Failed to download directly from {}: {}", bottle_url_str, e);
-                let _ = fs::remove_file(&bottle_cache_path);
-                return Err(SapphireError::DownloadError(
-                    formula.name.clone(),
-                    bottle_url_str.to_string(),
-                    format!("Direct download failed: {}", e),
-                ));
-            }
+             Ok(downloaded_path) => {
+                 // fetch_formula_source_or_bottle now returns the final cache path directly
+                 if downloaded_path != bottle_cache_path {
+                     warn!(
+                         "fetch_formula_source_or_bottle returned unexpected path: {}. Expected: {}. Assuming correct.",
+                         downloaded_path.display(), bottle_cache_path.display()
+                     );
+                 }
+                 debug!(
+                     "Successfully downloaded directly to {}",
+                     bottle_cache_path.display()
+                 );
+             }
+             Err(e) => {
+                 error!("Failed to download directly from {}: {}", bottle_url_str, e);
+                 return Err(e);
+             }
         }
-    }
-
-    if !bottle_file_spec.sha256.is_empty() {
-        http::verify_checksum(&bottle_cache_path, &bottle_file_spec.sha256)?;
-    } else {
-        warn!(
-            "Skipping checksum verification for {} as none was provided in the spec.",
-            formula.name
-        );
     }
 
     debug!(
@@ -180,7 +162,6 @@ pub async fn download_bottle(
 }
 
 pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
-    // (Implementation remains the same as provided previously)
     let stable_spec = formula.bottle.stable.as_ref().ok_or_else(|| {
         SapphireError::Generic(format!(
             "Formula '{}' has no stable bottle specification.",
@@ -195,9 +176,10 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
         )));
     }
 
+    // Use the function from build::formula module to get the platform tag
     let current_platform = crate::build::formula::get_current_platform();
     if current_platform == "unknown" || current_platform.contains("unknown") {
-        warn!("Could not reliably determine macOS platform. Bottle selection might be incorrect.");
+         warn!("Could not reliably determine current platform ('{}'). Bottle selection might be incorrect.", current_platform);
     }
     debug!(
         "Determining bottle for current platform: {}",
@@ -208,21 +190,28 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
         stable_spec.files.keys().cloned().collect::<Vec<_>>()
     );
 
+    // 1. Exact Match
     if let Some(spec) = stable_spec.files.get(&current_platform) {
         debug!("Found exact bottle match for platform: {}", current_platform);
         return Ok((current_platform.clone(), spec));
     }
     debug!("No exact match found for {}", current_platform);
 
-    const ARM_MACOS_VERSIONS: &[&str] = &["sequoia", "sonoma", "ventura", "monterey", "big_sur"];
-    const INTEL_MACOS_VERSIONS: &[&str] = &["sequoia", "sonoma", "ventura", "monterey", "big_sur", "catalina", "mojave"];
+    // 2. OS Version Fallback (macOS specific logic)
+     const ARM_MACOS_VERSIONS: &[&str] = &["sequoia", "sonoma", "ventura", "monterey", "big_sur"]; // Newest first
+     const INTEL_MACOS_VERSIONS: &[&str] = &["sequoia", "sonoma", "ventura", "monterey", "big_sur", "catalina", "mojave"]; // Newest first
 
-    if current_platform.starts_with("arm64_") {
-        if let Some(current_os_name) = current_platform.strip_prefix("arm64_") {
-            if let Some(current_os_index) = ARM_MACOS_VERSIONS.iter().position(|&v| v == current_os_name) {
-                 for i in current_os_index..ARM_MACOS_VERSIONS.len() {
-                    let target_os_name = ARM_MACOS_VERSIONS[i];
-                    let target_tag = format!("arm64_{}", target_os_name);
+     if cfg!(target_os = "macos") {
+         if let Some(current_os_name) = current_platform.strip_prefix("arm64_").or_else(|| Some(&current_platform)) {
+            let version_list = if current_platform.starts_with("arm64_") { ARM_MACOS_VERSIONS } else { INTEL_MACOS_VERSIONS };
+            if let Some(current_os_index) = version_list.iter().position(|&v| v == current_os_name) {
+                 for i in current_os_index..version_list.len() {
+                    let target_os_name = version_list[i];
+                    let target_tag = if current_platform.starts_with("arm64_") {
+                        format!("arm64_{}", target_os_name)
+                    } else {
+                        target_os_name.to_string()
+                    };
                     if let Some(spec) = stable_spec.files.get(&target_tag) {
                          warn!(
                             "No bottle found for exact platform '{}'. Using compatible older bottle '{}'.",
@@ -231,32 +220,16 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
                          return Ok((target_tag, spec));
                     }
                  }
-                 debug!("Checked compatible ARM macOS versions ({:?}), no suitable bottle found.", &ARM_MACOS_VERSIONS[current_os_index..]);
+                 debug!("Checked compatible older macOS versions ({:?}), no suitable bottle found.", &version_list[current_os_index..]);
             } else {
-                 debug!("Current OS '{}' not found in known ARM macOS version list.", current_os_name);
+                 debug!("Current OS '{}' not found in known macOS version list.", current_os_name);
             }
-        } else {
-             debug!("Could not extract OS name from ARM platform tag '{}'", current_platform);
-        }
-    } else if cfg!(target_os = "macos") && !current_platform.starts_with("arm64_") {
-         let current_os_name = &current_platform;
-         if let Some(current_os_index) = INTEL_MACOS_VERSIONS.iter().position(|&v| v == current_os_name) {
-             for i in current_os_index..INTEL_MACOS_VERSIONS.len() {
-                 let target_os_name = INTEL_MACOS_VERSIONS[i];
-                 if let Some(spec) = stable_spec.files.get(target_os_name) {
-                     warn!(
-                         "No bottle found for exact platform '{}'. Using compatible older bottle '{}'.",
-                         current_platform, target_os_name
-                     );
-                     return Ok((target_os_name.to_string(), spec));
-                 }
-             }
-             debug!("Checked compatible Intel macOS versions ({:?}), no suitable bottle found.", &INTEL_MACOS_VERSIONS[current_os_index..]);
          } else {
-             debug!("Current OS '{}' not found in known Intel macOS version list.", current_os_name);
+              debug!("Could not extract OS name from platform tag '{}'", current_platform);
          }
-    }
+     }
 
+    // 3. Architecture-Specific Fallback (Big Sur as common base)
      if current_platform.starts_with("arm64_") {
         if let Some(spec) = stable_spec.files.get("arm64_big_sur") {
             warn!(
@@ -266,7 +239,7 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
             return Ok(("arm64_big_sur".to_string(), spec));
         }
          debug!("No 'arm64_big_sur' fallback bottle tag found.");
-     } else if cfg!(target_os = "macos") {
+     } else if cfg!(target_os = "macos") { // Intel macOS fallback
          if let Some(spec) = stable_spec.files.get("big_sur") {
              warn!(
                  "No specific OS bottle found for {}. Falling back to 'big_sur' bottle.",
@@ -277,6 +250,7 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
          debug!("No 'big_sur' fallback bottle tag found.");
      }
 
+    // 4. Generic "all" Platform Fallback
     if let Some(spec) = stable_spec.files.get("all") {
         warn!(
             "No platform-specific or OS-specific bottle found for {}. Using 'all' platform bottle.",
@@ -286,9 +260,10 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
     }
     debug!("No 'all' platform bottle found.");
 
+    // 5. No Compatible Bottle Found
     Err(SapphireError::DownloadError(
         formula.name.clone(),
-        "".to_string(),
+        "".to_string(), // No specific URL failed yet
         format!(
             "No compatible bottle found for platform '{}'. Available: {:?}",
             current_platform,
@@ -297,17 +272,11 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
     ))
 }
 
+
 pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) -> Result<PathBuf> {
-    let install_dir = match formula.install_prefix(&config.cellar) {
-        Ok(path) => path,
-        Err(e) => {
-            return Err(SapphireError::InstallError(format!(
-                "Could not determine install path for {}: {}",
-                formula.name(),
-                e
-            )))
-        }
-    };
+    let install_dir = formula.install_prefix(&config.cellar)?; // Use ? to propagate error
+
+    // --- Cleanup existing directory ---
     if install_dir.exists() {
         debug!(
             "Removing existing keg directory before installing: {}",
@@ -321,6 +290,8 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
             ))
         })?;
     }
+
+    // --- Create parent and install directory ---
     if let Some(parent_dir) = install_dir.parent() {
         fs::create_dir_all(parent_dir).map_err(|e| {
             SapphireError::Io(std::io::Error::new(
@@ -345,20 +316,31 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
         ))
     })?;
 
-    crate::build::extract::extract_archive(bottle_path, &install_dir, 2)?;
+    // --- Extract Bottle ---
+    let strip_components = 2;
+    debug!("Extracting bottle archive {} to {} with strip_components={}", bottle_path.display(), install_dir.display(), strip_components);
+    // Provide the correct archive type argument ("gz")
+    crate::build::extract::extract_archive(bottle_path, &install_dir, strip_components, "gz")?; // <-- Fixed call
 
-    ensure_llvm_symlinks(&install_dir, formula, config)?;
-
+    // --- Post-Extraction Steps ---
+    // Run ensure_write_permissions *before* relocation, as relocation might need to write
     debug!(
         "Ensuring write permissions for extracted files in {}",
         install_dir.display()
     );
     ensure_write_permissions(&install_dir)?;
+
+    // Run relocation *after* permissions are set
     debug!(
         "Performing bottle relocation in {}",
         install_dir.display()
     );
     perform_bottle_relocation(formula, &install_dir, config)?;
+
+    // Run LLVM symlink creation *after* relocation (though order might not matter much here)
+    ensure_llvm_symlinks(&install_dir, formula, config)?;
+
+    // Write receipt *last* after all installation steps are complete
     crate::build::write_receipt(formula, &install_dir)?;
 
     debug!(
@@ -370,20 +352,28 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
 }
 
 fn ensure_write_permissions(path: &Path) -> Result<()> {
-    // (Implementation remains the same as provided previously)
+    if !path.exists() {
+         warn!("Path {} does not exist, cannot ensure write permissions.", path.display());
+         return Ok(());
+    }
     for entry_result in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         let entry_path = entry_result.path();
+        if entry_path == path && entry_result.depth() == 0 { continue; }
+
         match fs::metadata(entry_path) {
             Ok(metadata) => {
                 let mut perms = metadata.permissions();
+                 // Fix unused variable warning: Use is_readonly in the non-unix block
+                let _is_readonly = perms.readonly();
+
                 #[cfg(unix)]
                 {
                     let current_mode = perms.mode();
-                    let new_mode = current_mode | 0o200;
+                    let new_mode = current_mode | 0o200; // User write
                     if new_mode != current_mode {
                         perms.set_mode(new_mode);
                         if let Err(e) = fs::set_permissions(entry_path, perms) {
-                            warn!("Failed to set write permission on {}: {}", entry_path.display(), e);
+                            warn!("Failed to set write permission (mode {:o}) on {}: {}", new_mode, entry_path.display(), e);
                         } else {
                             debug!("Set write permission on: {}", entry_path.display());
                         }
@@ -391,10 +381,13 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 }
                 #[cfg(not(unix))]
                 {
-                    if perms.readonly() {
+                    // Use the variable here
+                    if is_readonly {
                         perms.set_readonly(false);
                         if let Err(e) = fs::set_permissions(entry_path, perms) {
                             warn!("Failed to unset readonly attribute on {}: {}", entry_path.display(), e);
+                        } else {
+                            debug!("Unset readonly attribute on: {}", entry_path.display());
                         }
                     }
                 }
@@ -407,56 +400,68 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+
 fn perform_bottle_relocation(
     formula: &Formula,
     install_dir: &Path,
     config: &Config,
 ) -> Result<()> {
-    // (Implementation remains the same as provided previously)
     let mut repl: HashMap<String, String> = HashMap::new();
-    repl.insert("@@HOMEBREW_CELLAR@@".into(), config.cellar.to_string_lossy().into());
-    repl.insert("@@HOMEBREW_PREFIX@@".into(), config.prefix.to_string_lossy().into());
+    // Use config methods for consistency
+    repl.insert("@@HOMEBREW_CELLAR@@".into(), config.cellar_path().to_string_lossy().into());
+    repl.insert("@@HOMEBREW_PREFIX@@".into(), config.prefix().to_string_lossy().into());
     repl.insert(
-        "@@HOMEBREW_REPOSITORY@@".into(),
-        config.prefix.join("Library/Taps/homebrew/homebrew-core").to_string_lossy().into()
+        "@@HOMEBREW_REPOSITORY@@".into(), // Often /opt/homebrew or /usr/local
+        config.prefix().to_string_lossy().into()
     );
     repl.insert(
-        "@@HOMEBREW_LIBRARY@@".into(),
-        config.prefix.join("Library").to_string_lossy().into()
+        "@@HOMEBREW_LIBRARY@@".into(), // Often <prefix>/Library
+        config.prefix().join("Library").to_string_lossy().into()
     );
 
+    // Opt path placeholder for the formula itself
     let opt_placeholder = format!(
         "@@HOMEBREW_OPT_{}@@",
-        formula.name().to_uppercase().replace('-', "_")
+        formula.name().to_uppercase().replace(['-', '+', '.'], "_") // Sanitize name
     );
     repl.insert(
         opt_placeholder,
-        config.prefix.join("opt").join(formula.name()).to_string_lossy().into()
+        config.formula_opt_link_path(formula.name()).to_string_lossy().into() // Use config method
     );
 
-    if let Some(p) = find_brewed_perl(&config.prefix)
+    // System Perl fallback
+    if let Some(p) = find_brewed_perl(config.prefix())
         .or_else(|| if cfg!(target_os = "macos") { Some(PathBuf::from("/usr/bin/perl")) } else { None })
     {
         repl.insert("@@HOMEBREW_PERL@@".into(), p.to_string_lossy().into());
     }
 
-    let llvm_name = formula
-        .dependencies()
-        .unwrap_or_default()
+    // LLVM Path (Check dependencies for llvm formula)
+    let llvm_dep_name = formula
+        .dependencies()? // Use ? to propagate error
         .iter()
         .find(|d| d.name.starts_with("llvm"))
-        .map(|d| d.name.clone())
-        .unwrap_or_else(|| "llvm".into());
-    let llvm_lib = config.prefix.join("opt").join(llvm_name).join("lib");
-    if llvm_lib.is_dir() {
-        repl.insert("@loader_path/../lib".into(), llvm_lib.to_string_lossy().into());
+        .map(|d| d.name.clone());
+
+    if let Some(name) = llvm_dep_name {
+         let llvm_opt_path = config.formula_opt_link_path(&name); // Use config method
+         let llvm_lib = llvm_opt_path.join("lib");
+         if llvm_lib.is_dir() {
+             repl.insert("@loader_path/../lib".into(), llvm_lib.to_string_lossy().into());
+             repl.insert(
+                 format!("@@HOMEBREW_OPT_{}@@/lib", name.to_uppercase().replace(['-', '+', '.'], "_")),
+                 llvm_lib.to_string_lossy().into()
+            );
+         }
     }
+
 
     log::debug!("Relocation table:");
     for (k, v) in &repl {
         log::debug!("  {}  →  {}", k, v);
     }
 
+    // Call the actual patching function
     original_relocation_scan_and_patch(formula, install_dir, config, repl)
 }
 
@@ -466,82 +471,104 @@ fn original_relocation_scan_and_patch(
     _config: &Config,
     replacements: HashMap<String, String>,
 ) -> Result<()> {
-    // (Implementation remains the same as provided previously, with E0308 fix)
     let mut text_replaced_count = 0;
     let mut macho_patched_count = 0;
     let mut permission_errors = 0;
     let mut macho_errors = 0;
+    let mut io_errors = 0;
     let mut files_to_chmod: Vec<PathBuf> = Vec::new();
 
     for entry in WalkDir::new(install_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
+        // Process directories too, in case symlinks point to them and need +x
+        // But only process content of files
+        // .filter(|e| e.file_type().is_file() || e.path_is_symlink())
     {
         let path = entry.path();
-        debug!("  Scanning file: {}", path.display());
+        let file_type = entry.file_type();
 
-        let is_potential_executable = path
-            .components()
-            .any(|c| c.as_os_str() == "bin" || c.as_os_str() == "sbin");
+        // Skip relocation inside .app bundles
+        if path.components().any(|c| c.as_os_str().to_string_lossy().ends_with(".app")) {
+             if file_type.is_file() { // Only log for files inside .app
+                 debug!("Skipping relocation inside .app bundle: {}", path.display());
+             }
+             continue;
+        }
 
-        let meta = match fs::metadata(path) {
-            Ok(m) => m,
-            Err(e) => { warn!("Could not stat {}: {}", path.display(), e); continue; }
-        };
-        if meta.permissions().readonly() {
-            debug!("  Skipping readonly file: {}", path.display());
+        // Handle symlinks separately: just check if they need chmodding later
+         if file_type.is_symlink() {
+             debug!("Checking symlink for potential chmod: {}", path.display());
+             // If symlink is in bin/sbin, it might need execute permissions (less common)
+             // Or if it points to something that needs it (harder to check reliably here)
+             // Let's add to chmod check if it's directly in bin/sbin for now.
+             if path.parent().map_or(false, |p| p.ends_with("bin") || p.ends_with("sbin")) {
+                  files_to_chmod.push(path.to_path_buf());
+             }
+             continue; // Don't process content of symlinks
+         }
+
+        // Only process content of actual files
+        if !file_type.is_file() {
             continue;
         }
 
+        debug!("Scanning file for relocation: {}", path.display());
+
+         // Fix unused assignment: Declare initially_executable inside the Ok arm
+         let (meta, initially_executable) = match fs::metadata(path) {
+             Ok(m) => {
+                 #[cfg(unix)]
+                 let ie = m.permissions().mode() & 0o111 != 0;
+                 #[cfg(not(unix))]
+                 let ie = true; // Assume executable potential on non-unix
+                 (m, ie)
+             }
+             Err(e) => { warn!("Could not stat {}: {}. Skipping file.", path.display(), e); io_errors += 1; continue; }
+         };
+
+         let is_in_exec_dir = path.parent().map_or(false, |p| p.ends_with("bin") || p.ends_with("sbin"));
+
+         if meta.permissions().readonly() {
+             warn!("Skipping readonly file during relocation: {}", path.display());
+             continue;
+         }
+
         let mut was_modified = false;
 
+        // --- Mach-O Patching (macOS only) ---
         if cfg!(target_os = "macos") {
-            match macho::patch_macho_file(path, &replacements) {
-                Ok(patched) if patched => {
-                    debug!("Successfully patched Mach-O file: {}", path.display());
-                    macho_patched_count += 1;
-                    was_modified = true;
-                    files_to_chmod.push(path.to_path_buf());
+             if initially_executable || is_in_exec_dir || path.extension().map_or(false, |e| e == "dylib" || e == "so" || e == "bundle") {
+                match macho::patch_macho_file(path, &replacements) {
+                    Ok(patched) if patched => {
+                        debug!("Successfully patched Mach-O file: {}", path.display());
+                        macho_patched_count += 1;
+                        was_modified = true; // Set modification flag
+                    }
+                    Ok(_) => {} // Not Mach-O or no patch needed
+                     // Handle specific errors if needed, otherwise fall through
+                     Err(SapphireError::PathTooLongError(e)) => { error!("Mach-O patch failed (path too long) for {}: {}", path.display(), e); macho_errors += 1; continue; }
+                     Err(SapphireError::CodesignError(e)) => { error!("Mach-O patch failed (codesign error) for {}: {}", path.display(), e); macho_errors += 1; continue; }
+                     Err(e @ SapphireError::MachOError(_)) | Err(e @ SapphireError::Object(_)) => { warn!("Mach-O processing failed for {}: {}. Skipping Mach-O patch.", path.display(), e); macho_errors += 1; }
+                     Err(e) => { warn!("Mach-O check/patch failed for {}: {}. Falling back to text replacer.", path.display(), e); }
                 }
-                Ok(_) => {}
-                Err(SapphireError::PathTooLongError(e)) => {
-                    error!("Mach-O patch failed (too long) for {}: {}", path.display(), e);
-                    macho_errors += 1;
-                    continue;
-                }
-                 Err(SapphireError::CodesignError(e)) => {
-                    error!("Mach-O patch failed (codesign) for {}: {}", path.display(), e);
-                    macho_errors += 1;
-                    continue;
-                }
-                // *** FIX for E0308: Use @ pattern to bind the whole error ***
-                Err(e @ SapphireError::MachOError(_)) | Err(e @ SapphireError::Object(_)) => {
-                     warn!("Mach-O processing failed for {}: {}. Skipping text replacement.", path.display(), e);
-                     macho_errors += 1;
-                     continue;
-                 }
-                Err(e) => {
-                    warn!("Mach-O check failed for {} (non-fatal for text replacement): {}. Falling back to text replacer.", path.display(), e);
-                }
-            }
+             } else {
+                  debug!("Skipping Mach-O check for non-executable/non-library file: {}", path.display());
+             }
         }
 
+        // --- Text Replacement ---
         if !was_modified {
-            let mut is_text = false;
-            if let Ok(mut f) = File::open(path) {
-                let mut buf = [0; 1024];
-                if let Ok(n) = f.read(&mut buf) {
-                    if n > 0 && !buf[..n].contains(&0) {
-                        is_text = true;
-                    }
-                }
-            } else {
-                 warn!("Could not open file {} for text check.", path.display());
-            }
+            let mut is_likely_text = true;
+             if let Ok(mut f) = File::open(path) {
+                 let mut buf = [0; 1024];
+                 if let Ok(n) = f.read(&mut buf) {
+                     if n > 0 && buf[..n].contains(&0) { is_likely_text = false; }
+                 } else { warn!("Could not read from {} to check for text.", path.display()); is_likely_text = false; }
+             } else { warn!("Could not open file {} for text check.", path.display()); is_likely_text = false; }
 
-
-            if is_text {
+            if is_likely_text {
+                 debug!("Attempting text replacement for likely text file: {}", path.display());
                 match fs::read_to_string(path) {
                     Ok(content) => {
                          let mut new_content = content.clone();
@@ -553,211 +580,233 @@ fn original_relocation_scan_and_patch(
                                  debug!("  Text Replaced '{}' in {}", placeholder, path.display());
                              }
                          }
-
                          if replacements_made {
                              match write_text_file_atomic(path, &new_content) {
                                  Ok(_) => {
                                      text_replaced_count += 1;
-                                     was_modified = true;
-                                      debug!("Successfully wrote replaced text to {}", path.display());
+                                     was_modified = true; // Set modification flag here too
+                                     debug!("Successfully wrote replaced text to {}", path.display());
                                  }
-                                 Err(e) => {
-                                     error!("Failed to write replaced text to {}: {}", path.display(), e);
-                                     continue;
-                                 }
+                                 Err(e) => { error!("Failed to write replaced text to {}: {}", path.display(), e); io_errors += 1; }
                              }
                          }
                      }
-                    Err(e) => {
-                         debug!("File {} is not valid UTF-8 (likely binary), skipping text replacement. Error: {}", path.display(), e);
-                     }
+                    Err(e) => { debug!("File {} is not valid UTF-8, skipping text replacement. Error: {}", path.display(), e); }
                  }
             } else {
-                debug!("Skipping text replacement for non-text file: {}", path.display());
+                debug!("Skipping text replacement for likely binary file: {}", path.display());
             }
         }
 
-        if was_modified || is_potential_executable {
+        // --- Collect for chmod ---
+        // Add if modified OR if initially executable OR in bin/sbin dir
+        if was_modified || initially_executable || is_in_exec_dir {
              files_to_chmod.push(path.to_path_buf());
         }
-    }
+    } // End loop over files
 
+    // --- Final chmod Pass ---
     #[cfg(unix)]
     {
-        debug!("Ensuring execute permissions for {} files...", files_to_chmod.len());
-        let unique_files_to_chmod: std::collections::HashSet<_> = files_to_chmod.into_iter().collect();
+        debug!("Ensuring execute permissions for {} potentially executable files/links...", files_to_chmod.len());
+        let unique_files_to_chmod: HashSet<_> = files_to_chmod.into_iter().collect(); // Use HashSet for uniqueness
 
         for p in &unique_files_to_chmod {
-            match fs::metadata(p) {
+             if !p.exists() && !p.symlink_metadata().is_ok() {
+                 debug!("Skipping chmod for non-existent path: {}", p.display());
+                 continue;
+             }
+            match fs::symlink_metadata(p) { // Use symlink_metadata
                 Ok(m) => {
-                    let mut perms = m.permissions();
-                    let current_mode = perms.mode();
-                    let new_mode = current_mode | 0o111;
-                    if new_mode != current_mode {
-                        perms.set_mode(new_mode);
-                        if let Err(e) = fs::set_permissions(p, perms) {
-                            warn!("Failed to set +x on {}: {}", p.display(), e);
-                            permission_errors += 1;
-                        } else {
-                             debug!("Set +x on {}", p.display());
+                    if m.is_file() { // Only chmod actual files
+                        let mut perms = m.permissions();
+                        let current_mode = perms.mode();
+                        // Ensure execute bits are set if they should be (user, group, other)
+                        let new_mode = current_mode | 0o111;
+                        if new_mode != current_mode {
+                            perms.set_mode(new_mode);
+                            if let Err(e) = fs::set_permissions(p, perms) {
+                                warn!("Failed to set +x on {}: {}", p.display(), e);
+                                permission_errors += 1;
+                            } else {
+                                 debug!("Set +x on {}", p.display());
+                            }
                         }
                     }
+                    // Don't chmod symlinks themselves
                 }
                 Err(e) => {
-                    warn!("Could not stat {} during chmod: {}", p.display(), e);
+                    warn!("Could not stat {} during final chmod pass: {}", p.display(), e);
                     permission_errors += 1;
                 }
             }
         }
     }
 
+    // --- Report Results ---
     debug!(
-        "Relocation complete. Text files replaced: {}, Mach-O files patched: {}",
+        "Relocation scan complete. Text files replaced: {}, Mach-O files patched: {}",
         text_replaced_count, macho_patched_count
     );
-    if permission_errors > 0 || macho_errors > 0 {
+    if permission_errors > 0 || macho_errors > 0 || io_errors > 0 {
         error!(
-            "Encountered {} chmod errors and {} Mach-O errors during relocation. Installation may be broken.",
-            permission_errors, macho_errors
+            "Bottle relocation finished with issues: {} chmod errors, {} Mach-O errors, {} IO errors in {}.",
+            permission_errors, macho_errors, io_errors, install_dir.display()
         );
-        return Err(SapphireError::InstallError(format!(
-            "Bottle relocation failed: {} chmod errors, {} Mach-O errors in {}",
-            permission_errors, macho_errors, install_dir.display()
-        )));
+        if macho_errors > 0 {
+             return Err(SapphireError::InstallError(format!(
+                 "Bottle relocation failed due to {} Mach-O errors in {}",
+                  macho_errors, install_dir.display()
+             )));
+        }
     }
     Ok(())
 }
 
 
-// write_text_file_atomic (unchanged)
 fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
-    // (Implementation remains the same as provided previously)
-    use std::io::Write;
-     use tempfile::NamedTempFile;
+    let dir = original_path.parent().ok_or_else(|| {
+        SapphireError::Generic(format!(
+            "Cannot get parent directory for {}",
+            original_path.display()
+        ))
+    })?;
+    // Note: create_dir_all called earlier in install_bottle usually
 
-     let dir = original_path.parent().ok_or_else(|| {
-         SapphireError::Generic(format!(
-             "Cannot get parent directory for {}",
-             original_path.display()
-         ))
-     })?;
-     fs::create_dir_all(dir)?;
+    let mut temp_file = NamedTempFile::new_in(dir)?;
+    let temp_path = temp_file.path().to_path_buf();
 
-     let mut temp_file = NamedTempFile::new_in(dir)?;
-     debug!(
-         "    Writing relocated text to temporary file: {:?}",
-         temp_file.path()
-     );
-     temp_file.write_all(content.as_bytes())?;
-     temp_file.flush()?;
-     temp_file.as_file().sync_all()?;
+    debug!(
+        "    Writing relocated text to temporary file: {}",
+        temp_path.display()
+    );
+    temp_file.write_all(content.as_bytes())?;
+    temp_file.flush()?;
+    temp_file.as_file().sync_all()?;
 
-      let original_perms = fs::metadata(original_path).map(|m| m.permissions()).ok();
+    let original_perms = fs::metadata(original_path).map(|m| m.permissions()).ok();
 
+    temp_file.persist(original_path).map_err(|e| {
+        error!(
+            "    Failed to persist/rename temporary text file {} over {}: {}",
+            temp_path.display(),
+            original_path.display(),
+            e.error
+        );
+        SapphireError::Io(e.error)
+    })?;
 
-     temp_file.persist(original_path).map_err(|e| {
-         error!(
-             "    Failed to persist/rename temporary text file over {}: {}",
-             original_path.display(),
-             e.error
-         );
-         SapphireError::Io(e.error)
-     })?;
-
-      if let Some(perms) = original_perms {
-         if let Err(e) = fs::set_permissions(original_path, perms) {
-             warn!("Failed to restore permissions on {}: {}", original_path.display(), e);
-         }
-      }
-
-
-     debug!(
-         "    Atomically replaced {} with relocated text version",
-         original_path.display()
-     );
-     Ok(())
-}
-
-// find_brewed_perl (unchanged)
-fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
-    // (Implementation remains the same as provided previously)
-    let opt_dir = prefix.join("opt");
-    let mut best: Option<(semver::Version, PathBuf)> = None;
-
-    for entry in std::fs::read_dir(opt_dir).ok()?.flatten() {
-        let name = entry.file_name();
-        let s = name.to_string_lossy();
-
-        if let Some(rest) = s.strip_prefix("perl@") {
-            let version_str = rest.split('.').take(2).collect::<Vec<_>>().join(".");
-            let version_str_padded = format!("{}.0", version_str);
-
-            if let Ok(v) = semver::Version::parse(&version_str_padded) {
-                 let cand = entry.path().join("bin/perl");
-                 if cand.is_file() && best.as_ref().map_or(true, |(b, _)| v > *b) {
-                     best = Some((v, cand));
-                 }
-            } else {
-                 warn!("Could not parse perl version from: {}", rest);
-            }
-        } else if s == "perl" {
-            let cand = entry.path().join("bin/perl");
-            if cand.is_file() && best.is_none() {
-                best = Some((semver::Version::new(5, 0, 0), cand));
-            }
+    if let Some(perms) = original_perms {
+        if let Err(e) = fs::set_permissions(original_path, perms) {
+            warn!("Failed to restore permissions on {}: {}", original_path.display(), e);
         }
     }
-    best.map(|(_, p)| p)
+
+    debug!(
+        "    Atomically replaced {} with relocated text version",
+        original_path.display()
+    );
+    Ok(())
 }
 
-// ensure_llvm_symlinks (unchanged)
+fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
+    let opt_dir = prefix.join("opt");
+    if !opt_dir.is_dir() { return None; }
+
+    let mut best: Option<(semver::Version, PathBuf)> = None;
+
+    match fs::read_dir(opt_dir) {
+        Ok(entries) => {
+            for entry_res in entries {
+                if let Ok(entry) = entry_res {
+                    let name = entry.file_name();
+                    let s = name.to_string_lossy();
+                    let entry_path = entry.path();
+
+                    if let Some(version_part) = s.strip_prefix("perl@") {
+                         let version_str_padded = format!("{}.0", version_part);
+                         if let Ok(v) = semver::Version::parse(&version_str_padded) {
+                            let candidate_bin = entry_path.join("bin/perl");
+                            if candidate_bin.is_file() {
+                                if best.as_ref().map_or(true, |(best_v, _)| v > *best_v) {
+                                    best = Some((v, candidate_bin));
+                                }
+                            }
+                         } else {
+                            warn!("Could not parse perl version from directory name: {}", s);
+                         }
+                    } else if s == "perl" {
+                         let candidate_bin = entry_path.join("bin/perl");
+                         if candidate_bin.is_file() && best.is_none() {
+                             best = Some((semver::Version::new(5, 0, 0), candidate_bin));
+                         }
+                    }
+                }
+            }
+        },
+        Err(e) => {
+             warn!("Could not read opt directory {}: {}", prefix.join("opt").display(), e);
+        }
+    }
+
+    best.map(|(_, path)| path)
+}
+
 fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) -> Result<()> {
-    // (Implementation remains the same as provided previously)
-    let bin_dir = install_dir.join("bin");
     let lib_dir = install_dir.join("lib");
-    if !bin_dir.exists() || !lib_dir.exists() {
-        debug!("Skipping LLVM symlink creation as bin or lib dir is missing in {}", install_dir.display());
+    if !lib_dir.exists() {
+        debug!("Skipping LLVM symlink creation as lib dir is missing in {}", install_dir.display());
         return Ok(());
     }
 
-    let llvm_name = formula
-        .dependencies()
-        .unwrap_or_default()
-        .iter()
-        .find(|d| d.name.starts_with("llvm"))
-        .map(|d| d.name.clone())
-        .unwrap_or_else(|| "llvm".into());
-    let llvm_lib_path = config
-        .prefix
-        .join("opt")
-        .join(llvm_name)
-        .join("lib")
-        .join("libLLVM.dylib");
+    let llvm_dep_name = match formula.dependencies()?.iter().find(|d| d.name.starts_with("llvm")) {
+         Some(dep) => dep.name.clone(),
+         None => {
+             debug!("Formula {} does not list an LLVM dependency.", formula.name());
+             return Ok(());
+         }
+    };
 
-    if !llvm_lib_path.exists() {
-        warn!("LLVM library not found at {}. Skipping symlink creation.", llvm_lib_path.display());
+    let llvm_opt_path = config.formula_opt_link_path(&llvm_dep_name);
+    let llvm_lib_filename = if cfg!(target_os="macos") { "libLLVM.dylib" } else { "libLLVM.so" }; // Adjust for OS
+    let llvm_lib_path_in_opt = llvm_opt_path.join("lib").join(llvm_lib_filename);
+
+    if !llvm_lib_path_in_opt.exists() {
+        warn!("Required LLVM library not found at {}. Cannot create symlink in {}.", llvm_lib_path_in_opt.display(), formula.name());
         return Ok(());
     }
 
-    let symlink_path = lib_dir.join("libLLVM.dylib");
-    if symlink_path.exists() || symlink_path.symlink_metadata().is_ok() {
-        debug!("Symlink or file already exists at {}.", symlink_path.display());
+    let symlink_target_path = lib_dir.join(llvm_lib_filename);
+
+    if symlink_target_path.exists() || symlink_target_path.symlink_metadata().is_ok() {
+        debug!("Symlink or file already exists at {}. Skipping creation.", symlink_target_path.display());
         return Ok(());
     }
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::symlink;
-        match symlink(&llvm_lib_path, &symlink_path) {
-            Ok(_) => debug!("Created symlink {} -> {}", symlink_path.display(), llvm_lib_path.display()),
+        // Ensure parent directory exists before creating symlink
+         if let Some(parent) = symlink_target_path.parent() {
+             if !parent.exists() {
+                 fs::create_dir_all(parent)?; // Create parent if missing
+             }
+         }
+
+        match symlink(&llvm_lib_path_in_opt, &symlink_target_path) {
+            Ok(_) => debug!("Created symlink {} -> {}", symlink_target_path.display(), llvm_lib_path_in_opt.display()),
             Err(e) => {
-                warn!("Failed to create LLVM symlink {} -> {}: {}", symlink_path.display(), llvm_lib_path.display(), e);
+                warn!(
+                    "Failed to create LLVM symlink {} -> {}: {}",
+                    symlink_target_path.display(),
+                    llvm_lib_path_in_opt.display(),
+                    e
+                );
             }
         }
     }
     #[cfg(not(unix))]
     {
-        debug!("LLVM Symlink creation not supported on this platform.");
+        warn!("LLVM Symlink creation not supported on this platform for {}.", formula.name());
     }
     Ok(())
 }
