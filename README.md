@@ -64,7 +64,7 @@ sapphire install <formula/cask>
 sapphire install --build-from-source <formula>
 
 # Uninstall
-sapphire uninstall <app>
+sapphire uninstall <formula/cask>
 
 # (coming soon)
 sapphire upgrade [--all] <name>
