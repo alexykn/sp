@@ -834,30 +834,24 @@ fn install_python_resource(
 
 // --- Single file install ---
 fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path) -> Result<()> {
-    // Special handling for ca-certificates, otherwise install to share/<formula_name>
-    let target_dir = if formula.name == "ca-certificates" {
-        install_dir.join("share").join(&formula.name)
-    } else {
-        install_dir.join("share").join(&formula.name)
-    };
+    let target_dir = install_dir.join("share").join(&formula.name);
     create_dir_all_with_context(&target_dir, "single file target directory")?;
 
-    let target_filename = source_path
-        .file_name()
-        .ok_or_else(|| SapphireError::Generic("Source path has no filename.".to_string()))?;
+    let target_filename = if formula.name == "ca-certificates" {
+         source_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("cacert.pem"))
+    } else {
+         source_path
+            .file_name()
+            .ok_or_else(|| SapphireError::Generic("Source path has no filename.".to_string()))?
+    };
+
     let target_path = target_dir.join(target_filename);
 
-    info!(
-        "Copying {} to {}",
-        source_path.display(),
-        target_path.display()
-    );
+    info!("Copying {} to {}", source_path.display(), target_path.display());
     fs::copy(source_path, &target_path).map_err(|e| {
         SapphireError::IoError(format!(
             "Failed copy {} to {}: {}",
-            source_path.display(),
-            target_path.display(),
-            e
+            source_path.display(), target_path.display(), e
         ))
     })?;
     Ok(())
