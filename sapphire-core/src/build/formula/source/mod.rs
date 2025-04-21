@@ -454,35 +454,33 @@ fn detect_and_build(
             if let Some((marker, _system_name, requires_root)) =
                 markers.iter().find(|(m, _, _)| *m == file_name)
             {
-                // Skip non-root markers if they require root detection
-                if *requires_root && current_depth > 0 {
+                if *requires_root && current_depth > 1 {
                     debug!(
-                        "Skipping marker '{}' found at depth {}, requires root.",
+                        "Skipping root marker '{}' found at depth {}, requires depth 1.",
                         marker, current_depth
                     );
                     continue;
                 }
 
-                // --- Scoring Logic ---
+                // (Adjust scoring to strongly prefer depth 1 for root markers)
                 let mut score = match current_depth {
-                    0 => 3, // Root match is highest preference
-                    1 | 2 => {
-                        // Nested matches (only relevant for CMake/Meson now)
-                        if *marker == "CMakeLists.txt" || *marker == "meson.build" {
+                    1 => { // Directly inside build_dir (this is the expected root)
+                        if *requires_root { 5 } // Highest score for root markers here
+                        else { 3 } // Moderate score for non-root markers (CMake/Meson) found flat
+                    }
+                    2 => { // Inside a subdirectory
+                        if !*requires_root { // Only score non-root markers here
                             let parent_dir_name = parent_dir.file_name().map(|f| f.to_os_string());
-                            if parent_dir_name.is_some_and(|name| preferred_subdirs.contains(&name))
-                            {
-                                2 // Preferred subdirectory
+                            if parent_dir_name.is_some_and(|name| preferred_subdirs.contains(&name)) {
+                                4 // High score for non-root markers in preferred subdirs
                             } else {
-                                1 // Other subdirectory
+                                2 // Lower score for non-root markers in other subdirs
                             }
                         } else {
-                            // Other markers shouldn't be scored if nested due to requires_root
-                            // check above
-                            continue; // Skip scoring this nested non-CMake/Meson marker
+                            continue; // Don't score root markers found deeper than depth 1
                         }
                     }
-                    _ => 0, // Deeper matches ignored by max_depth
+                    _ => continue, // Ignore depth 0 (the directory itself) or > 2
                 };
 
                 // Adjust score based on depth (prefer shallower for same base score)
