@@ -1,10 +1,12 @@
-use crate::build::env::BuildEnvironment;
-use crate::utils::error::{Result, SapphireError};
-use tracing::{debug, info, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use tracing::{debug, info, warn};
+
+use crate::build::env::BuildEnvironment;
+use crate::utils::error::{Result, SapphireError};
 
 /// Build Go project
 pub fn go_build(

@@ -7,6 +7,8 @@ use colored::Colorize;
 use futures::future::{BoxFuture, FutureExt};
 use reqwest::Client;
 use sapphire_core::build;
+use sapphire_core::build::formula::has_bottle_for_current_platform;
+use sapphire_core::build::get_formula_opt_path;
 use sapphire_core::dependency::{
     DependencyResolver, DependencyTag, ResolutionContext, ResolutionStatus,
 };
@@ -17,8 +19,6 @@ use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
-use sapphire_core::build::formula::has_bottle_for_current_platform;
-use sapphire_core::build::get_formula_opt_path;
 use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
 use tracing::{error, info, warn};
@@ -37,7 +37,10 @@ pub struct Install {
     skip_recommended: bool,
     #[arg(long, default_value_t = 4)]
     max_concurrent_installs: usize,
-    #[arg(long, help = "Force building the formula from source, even if a bottle is available")]
+    #[arg(
+        long,
+        help = "Force building the formula from source, even if a bottle is available"
+    )]
     build_from_source: bool,
 }
 impl Install {
@@ -202,7 +205,9 @@ names
                         let _cache_clone = Arc::clone(&cache);
                         let name_clone = name.clone();
                         let force_source_build = self.build_from_source;
-                        let all_paths_for_build = graph.install_plan.iter()
+                        let all_paths_for_build = graph
+                            .install_plan
+                            .iter()
                             .filter_map(|dep| dep.opt_path.clone()) // Get opt paths from resolved graph
                             .collect::<Vec<_>>();
 
@@ -391,29 +396,22 @@ async fn install_formula_task(
             sapphire_core::build::formula::source::download_source(&formula, &cfg).await?;
 
         info!("⚙️ Compiling {}...", name);
-        let install_dir: PathBuf =
-            sapphire_core::build::formula::source::build_from_source(
-                &source_path,
-                &formula,
-                &cfg,
-                &all_installed_paths,
-            )
-            .await?;
+        let install_dir: PathBuf = sapphire_core::build::formula::source::build_from_source(
+            &source_path,
+            &formula,
+            &cfg,
+            &all_installed_paths,
+        )
+        .await?;
 
         info!("🔗 Linking {}...", name);
-        sapphire_core::build::formula::link::link_formula_artifacts(
-            &formula,
-            &install_dir,
-            &cfg,
-        )?;
+        sapphire_core::build::formula::link::link_formula_artifacts(&formula, &install_dir, &cfg)?;
 
         info!("✅ Built and linked {}", name);
-
     } else {
         info!("⬇️ Downloading bottle for {}...", name);
         let bottle_path =
-            sapphire_core::build::formula::bottle::download_bottle(&formula, &cfg, &client)
-                .await?;
+            sapphire_core::build::formula::bottle::download_bottle(&formula, &cfg, &client).await?;
 
         info!("🍺 Pouring bottle for {}...", name);
         let install_dir: PathBuf = tokio::task::spawn_blocking({
@@ -432,11 +430,7 @@ async fn install_formula_task(
         .map_err(join_to_err)??;
 
         info!("🔗 Linking {}...", name);
-        sapphire_core::build::formula::link::link_formula_artifacts(
-            &formula,
-            &install_dir,
-            &cfg,
-        )?;
+        sapphire_core::build::formula::link::link_formula_artifacts(&formula, &install_dir, &cfg)?;
 
         info!("✅ Poured and linked {}", name);
     }

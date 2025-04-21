@@ -1,8 +1,10 @@
-use crate::build::env::BuildEnvironment;
-use crate::utils::error::{Result, SapphireError};
-use tracing::{debug, info};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use tracing::{debug, info};
+
+use crate::build::env::BuildEnvironment;
+use crate::utils::error::{Result, SapphireError};
 
 /// Build Perl using its Configure script
 pub fn perl_build(

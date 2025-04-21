@@ -1,8 +1,10 @@
-use crate::build::env::BuildEnvironment;
-use crate::utils::error::{Result, SapphireError};
-use tracing::{debug, info};
 use std::path::Path;
 use std::process::Command;
+
+use tracing::{debug, info};
+
+use crate::build::env::BuildEnvironment;
+use crate::utils::error::{Result, SapphireError};
 
 /// Build with Meson
 pub fn meson_build(
