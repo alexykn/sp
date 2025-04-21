@@ -713,10 +713,16 @@ pub async fn build_from_source(
     if !install_dir.exists() {
         info!("Creating installation directory: {}", install_dir.display());
         fs::create_dir_all(&install_dir).map_err(|e| {
-           SapphireError::Io(std::io::Error::new(e.kind(), format!("Failed create install dir {}: {}", install_dir.display(), e)))
+            SapphireError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed create install dir {}: {}", install_dir.display(), e),
+            ))
         })?;
     } else {
-        debug!("Installation directory already exists: {}", install_dir.display());
+        debug!(
+            "Installation directory already exists: {}",
+            install_dir.display()
+        );
     }
     crate::build::write_receipt(formula, &install_dir)?; // Ensure write_receipt is available
     info!(
