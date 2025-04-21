@@ -61,7 +61,7 @@ pub fn go_build(
     let output_binary_path = target_bin_dir.join(formula_name);
 
     info!(
-        "==> Running: {} build -o {} -ldflags=\"-s -w\" .",
+        "==> Running: {} build -o {} -ldflags \"-s -w\" .", // Log formatting unchanged
         go_exe.display(),
         output_binary_path.display()
     );
@@ -70,9 +70,14 @@ pub fn go_build(
     cmd.arg("build");
     cmd.arg("-o");
     cmd.arg(&output_binary_path); // Output directly to install bin dir
-    cmd.arg("-ldflags=\"-s -w\"");
-    // Parse for specific Go flags here maybe?
-    cmd.arg("."); // Build the package in the current directory build_dir_dot
+
+    // --- CORRECTED LDFLAGS ARGUMENTS ---
+    cmd.arg("-ldflags"); // Pass the flag name as one argument
+    cmd.arg("-s -w"); // Pass the flag value as the next argument
+    // --- END CORRECTION ---
+
+    // You might need to parse build_env for specific GOFLAGS or CGO flags here if needed
+    cmd.arg("."); // Build the package in the current directory (build_dir_dot)
 
     // Apply the sanitized build environment (PATH, GOPATH, GOBIN etc. if set)
     build_env.apply_to_command(&mut cmd);
