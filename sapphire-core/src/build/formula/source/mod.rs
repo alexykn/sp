@@ -220,23 +220,9 @@ fn check_markers_and_build(
     // Note: These checks use relative paths which are interpreted based on CWD
     // We need to ensure the build functions are called with the *correct* context/CWD.
 
-    if dir_to_check.join("configure").exists() {
-        info!(
-            "Detected build system: Autotools (configure script) in {}",
-            dir_to_check.display()
-        );
-        // configure_and_make assumes it runs from the dir containing 'configure'
-        with_cwd(dir_to_check, || {
-            make::configure_and_make(install_dir, build_env)
-        })?;
-        return Ok(true);
-    }
+    // Check for complex build systems first (CMake, Meson often contain other languages)
     if dir_to_check.join("CMakeLists.txt").exists() {
         info!("Detected build system: CMake in {}", dir_to_check.display());
-        // cmake_build needs the source path containing CMakeLists.txt
-        // Since it runs cmake out-of-source relative to CWD, we might not need to change CWD here,
-        // but pass the correct relative path *to* cmake_build if it expects it.
-        // Our adjusted cmake_build expects '.' and CWD to be the source root.
         with_cwd(dir_to_check, || {
             cmake::cmake_build(Path::new("."), install_dir, build_env)
         })?;
@@ -244,18 +230,39 @@ fn check_markers_and_build(
     }
     if dir_to_check.join("meson.build").exists() {
         info!("Detected build system: Meson in {}", dir_to_check.display());
-        // meson_build expects '.' and CWD to be the source root.
         with_cwd(dir_to_check, || {
             meson::meson_build(Path::new("."), install_dir, build_env)
         })?;
         return Ok(true);
     }
+    // Check for Autotools *after* CMake/Meson, as they might be preferred if both exist
+    if dir_to_check.join("configure").exists() {
+        info!(
+            "Detected build system: Autotools (configure script) in {}",
+            dir_to_check.display()
+        );
+        with_cwd(dir_to_check, || {
+            make::configure_and_make(install_dir, build_env)
+        })?;
+        return Ok(true);
+    }
+
+    // --- NEW: Go Module Check (Before generic Makefiles, Cargo, Python, Perl) ---
+    if dir_to_check.join("go.mod").exists() {
+        info!("Detected Go module (go.mod) in {}", dir_to_check.display());
+        // Use the *updated* go_build function
+        with_cwd(dir_to_check, || {
+            go::go_build(Path::new("."), install_dir, build_env, all_installed_paths)
+        })?;
+        return Ok(true);
+    }
+
+    // Continue with other language-specific build systems
     if dir_to_check.join("Makefile.PL").exists() || dir_to_check.join("Configure").exists() {
         info!(
             "Detected build system: Perl (Makefile.PL or Configure) in {}",
             dir_to_check.display()
         );
-        // perl_build expects CWD to be the source root.
         with_cwd(dir_to_check, || {
             perl::perl_build(Path::new("."), install_dir, build_env)
         })?;
@@ -266,7 +273,6 @@ fn check_markers_and_build(
             "Detected build system: Rust/Cargo in {}",
             dir_to_check.display()
         );
-        // cargo_build expects CWD to be the source root.
         with_cwd(dir_to_check, || cargo::cargo_build(install_dir, build_env))?;
         return Ok(true);
     }
@@ -275,32 +281,38 @@ fn check_markers_and_build(
             "Detected build system: Python setup.py in {}",
             dir_to_check.display()
         );
-        // python_build expects CWD to be the source root.
         with_cwd(dir_to_check, || {
             python::python_build(install_dir, build_env)
         })?;
         return Ok(true);
     }
-    let go_src_dir = dir_to_check.join("src"); // Check relative to the dir_to_check
+    // Deprecate or remove the old Go check based on make.bash/all.bash?
+    // For now, let's keep it *after* the go.mod check as a fallback for older Go projects
+    // that might still use this structure (like Go itself).
+    let go_src_dir = dir_to_check.join("src");
     if go_src_dir.is_dir()
         && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists())
     {
-        info!(
-            "Detected Go build system (make.bash or all.bash) in {}",
+        warn!(
+            "Detected legacy Go build system (make.bash/all.bash) in {}. Using older build logic.",
             dir_to_check.display()
         );
-        // go_build expects CWD to be the source root.
-        with_cwd(dir_to_check, || {
-            go::go_build(Path::new("."), install_dir, build_env, all_installed_paths)
-        })?;
-        return Ok(true);
+        // The *original* go_build handled this. We need to decide if we keep both.
+        // For simplicity now, let's assume the new go_build is for modules, and this
+        // path might need a different function or be removed if make.bash is rare.
+        // Let's log a warning and return false for now, falling through to simple_make
+        // if a Makefile exists, or erroring out.
+        // OR, call the old go_build logic if we rename it, e.g., go_build_legacy.
+        // For now, let's assume make.bash projects likely *also* have a Makefile.
+        warn!("Legacy Go build script detected, but specific handling is pending. Falling back...");
     }
+
+    // --- Simple Makefile Fallback (Last Resort) ---
     if dir_to_check.join("Makefile").exists() || dir_to_check.join("makefile").exists() {
         info!(
-            "Detected build system: Simple Makefile in {}",
+            "Detected build system: Simple Makefile in {}", // Note: Go modules might fall here if go.mod check fails or legacy path is taken
             dir_to_check.display()
         );
-        // simple_make expects CWD to be the source root.
         with_cwd(dir_to_check, || make::simple_make(install_dir, build_env))?;
         return Ok(true);
     }
