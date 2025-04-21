@@ -13,6 +13,8 @@ use crate::model::formula::Formula;
 use crate::utils::config::Config; // Import Config
 use crate::utils::error::{Result, SapphireError};
 
+const STANDARD_KEG_DIRS: [&str; 6] = ["bin", "lib", "share", "include", "etc", "Frameworks"];
+
 /// Link all artifacts from a formula's installation directory.
 // Added Config parameter
 pub fn link_formula_artifacts(
@@ -131,7 +133,6 @@ pub fn link_formula_artifacts(
     Ok(())
 }
 
-// ... (create_wrappers_in_dir, create_wrapper_script, determine_content_root,
 // remove_existing_link_target, write_install_manifest remain mostly unchanged internally) ...
 fn create_wrappers_in_dir(
     source_dir: &Path,
@@ -298,6 +299,7 @@ fn create_wrapper_script(
 
     Ok(())
 }
+
 fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
     let mut potential_subdirs = Vec::new();
     let mut top_level_files_found = false;
@@ -317,28 +319,31 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
                 if let Ok(entry) = entry_res {
                     let path = entry.path();
                     let file_name = entry.file_name();
-                    if file_name.to_string_lossy().starts_with('.')
-                        || file_name == "INSTALL_MANIFEST.json"
-                        || file_name == "INSTALL_RECEIPT.json"
+                    // --- Use OsStr comparison ---
+                    let file_name_osstr = file_name.as_os_str();
+                    if file_name_osstr.to_string_lossy().starts_with('.')
+                        || file_name_osstr == "INSTALL_MANIFEST.json"
+                        || file_name_osstr == "INSTALL_RECEIPT.json"
                     {
                         continue;
                     }
                     if path.is_dir() {
-                        potential_subdirs.push(path);
+                        // Store both path and name for check later
+                        potential_subdirs.push((path, file_name.to_string_lossy().to_string()));
                     } else if path.is_file() {
                         top_level_files_found = true;
                         debug!(
                             "Found file '{}' at top level of keg {}, assuming no intermediate dir.",
-                            file_name.to_string_lossy(),
+                            file_name.to_string_lossy(), // Use lossy for display
                             installed_keg_path.display()
                         );
-                        break;
+                        break; // Stop scanning if top-level files found
                     }
                 } else {
                     warn!(
                         "Failed to read directory entry in {}: {}",
                         installed_keg_path.display(),
-                        entry_res.err().unwrap()
+                        entry_res.err().unwrap() // Safe unwrap as we are in Err path
                     );
                 }
             }
@@ -348,14 +353,31 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
             return Ok(installed_keg_path.to_path_buf());
         }
     }
+
+    // --- MODIFIED LOGIC ---
     if potential_subdirs.len() == 1 && !top_level_files_found {
-        let intermediate_dir = potential_subdirs.remove(0);
-        debug!(
-            "Detected single intermediate content directory: {}",
-            intermediate_dir.display()
-        );
-        Ok(intermediate_dir)
+        // Get the single subdirectory path and name
+        let (intermediate_dir_path, intermediate_dir_name) = potential_subdirs.remove(0); // Use remove
+
+        // Check if the single directory name is one of the standard install dirs
+        if STANDARD_KEG_DIRS.contains(&intermediate_dir_name.as_str()) {
+            debug!(
+                "Single directory found ('{}') is a standard directory. Using main keg directory {} as content root.",
+                intermediate_dir_name,
+                installed_keg_path.display()
+            );
+            Ok(installed_keg_path.to_path_buf()) // Use main keg path
+        } else {
+            // Single dir is NOT a standard name, assume it's an intermediate content root
+            debug!(
+                "Detected single non-standard intermediate content directory: {}",
+                intermediate_dir_path.display()
+            );
+            Ok(intermediate_dir_path) // Use the intermediate dir
+        }
+    // --- END MODIFIED LOGIC ---
     } else {
+        // Handle multiple subdirs or top-level files found case (no change needed here)
         if potential_subdirs.len() > 1 {
             warn!("Multiple potential content directories found under keg {}. Using main keg directory as content root.", installed_keg_path.display());
         } else if top_level_files_found {
@@ -364,11 +386,13 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
                 installed_keg_path.display()
             );
         } else if potential_subdirs.is_empty() {
+             // Changed from else if to else
             debug!("No subdirectories or files found (excluding ignored ones) in keg {}. Using main keg directory as content root.", installed_keg_path.display());
         }
-        Ok(installed_keg_path.to_path_buf())
+        Ok(installed_keg_path.to_path_buf()) // Use main keg path in these cases too
     }
 }
+
 fn remove_existing_link_target(path: &Path) -> Result<()> {
     match path.symlink_metadata() {
         Ok(metadata) => {
@@ -405,6 +429,7 @@ fn remove_existing_link_target(path: &Path) -> Result<()> {
         }
     }
 }
+
 fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]) -> Result<()> {
     let manifest_path = installed_keg_path.join("INSTALL_MANIFEST.json");
     debug!("Writing install manifest to: {}", manifest_path.display());
@@ -825,5 +850,3 @@ fn is_symlink_to(link: &Path, target: &Path) -> Result<bool> {
         }
     }
 }
-
-// REMOVED: get_bin_directory (now in Config)
