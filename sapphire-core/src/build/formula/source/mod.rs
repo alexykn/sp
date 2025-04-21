@@ -298,7 +298,7 @@ pub async fn build_from_source(
     let sapphire_prefix = config.prefix();
     let build_env = BuildEnvironment::new(
         formula,
-        &sapphire_prefix,
+        sapphire_prefix,
         &config.cellar,
         all_installed_paths,
     )?;
@@ -471,7 +471,7 @@ fn detect_and_build(
                         if *marker == "CMakeLists.txt" || *marker == "meson.build" {
                             let parent_dir_name = parent_dir.file_name().map(|f| f.to_os_string());
                             if parent_dir_name
-                                .map_or(false, |name| preferred_subdirs.contains(&name))
+                                .is_some_and(|name| preferred_subdirs.contains(&name))
                             {
                                 2 // Preferred subdirectory
                             } else {
@@ -719,7 +719,7 @@ fn install_perl_resource(
     } else {
         format!("{}:{}", perl5lib_path_str, current_perl5lib) // Prepend target dir
     };
-    cmd_env.insert("PERL5LIB".into(), new_perl5lib.clone().into()); // Use OsString/OsStr
+    cmd_env.insert("PERL5LIB".into(), new_perl5lib.clone()); // Use OsString/OsStr
 
     // Run perl Makefile.PL INSTALL_BASE=<libexec>
     let mut configure_cmd = Command::new(&perl_exe);
@@ -810,7 +810,7 @@ fn install_python_resource(
             std::ffi::OsStr::new(&current_pythonpath).to_string_lossy()
         )
     };
-    cmd_env.insert("PYTHONPATH".into(), new_pythonpath.clone().into());
+    cmd_env.insert("PYTHONPATH".into(), new_pythonpath.clone());
 
     // Run python setup.py install --prefix=<libexec>/vendor
     let mut install_cmd = Command::new(python_exe);

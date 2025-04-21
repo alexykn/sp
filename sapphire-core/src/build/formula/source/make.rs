@@ -80,7 +80,7 @@ pub fn configure_and_make(install_dir: &Path, build_env: &BuildEnvironment) -> R
 
     // *** Conditionally add Autotools flags ***
     if is_autotools {
-        cmd.args(&["--disable-dependency-tracking", "--disable-silent-rules"]);
+        cmd.args(["--disable-dependency-tracking", "--disable-silent-rules"]);
     }
 
     build_env.apply_to_command(&mut cmd);

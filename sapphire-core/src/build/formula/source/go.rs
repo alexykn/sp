@@ -68,7 +68,7 @@ pub fn go_build(
 
     let mut go_build_specific_env = HashMap::new();
     let bootstrap_go_path = all_installed_paths.iter().find(|p| {
-        p.file_name().map_or(false, |n| {
+        p.file_name().is_some_and(|n| {
             n == "go" || n.to_string_lossy().starts_with("go@")
         })
     });

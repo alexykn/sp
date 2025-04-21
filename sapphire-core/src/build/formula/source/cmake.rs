@@ -20,7 +20,7 @@ pub fn cmake_build(
     // Create the build directory *outside* the source_dir_for_build, typically in the CWD
     // which is the root build_dir set by the caller (build_from_source)
     let build_subdir = Path::new(".").join(build_subdir_name); // Relative to CWD
-    fs::create_dir_all(&build_subdir).map_err(|e| SapphireError::Io(e))?;
+    fs::create_dir_all(&build_subdir).map_err(SapphireError::Io)?;
 
     let cmake_exe = which::which_in("cmake", build_env.get_path_string(), Path::new(".")) // Check CWD and PATH
         .map_err(|_| {
@@ -39,7 +39,7 @@ pub fn cmake_build(
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install_dir.display()))
         .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5") // Keep this for compatibility
         .arg("-DCMAKE_BUILD_TYPE=Release") // *** Add recommended build type ***
-        .args(&[
+        .args([
             "-G",
             "Ninja", // *** Specify Ninja generator ***
             "-DCMAKE_FIND_FRAMEWORK=LAST",
