@@ -4,8 +4,9 @@ use std::fs;
 use std::io::Read; // <--- Add Read trait for reading file content
 use std::path::Path;
 use std::process::Command;
+use std::os::unix::fs::PermissionsExt;
 
-use tracing::{debug, info, warn};
+use tracing::{error, debug, info, warn,};
 
 use crate::build::env::BuildEnvironment;
 use crate::utils::error::{Result, SapphireError};
@@ -186,9 +187,10 @@ pub fn configure_and_make(install_dir: &Path, build_env: &BuildEnvironment) -> R
     Ok(())
 }
 
-// --- simple_make function remains unchanged ---
-pub fn simple_make(install_dir: &Path, build_env: &BuildEnvironment) -> Result<()> {
-    // (Implementation remains the same)
+pub fn simple_make(
+    install_dir: &Path, // e.g., /opt/homebrew/Cellar/doggo/1.0.5
+    build_env: &BuildEnvironment,
+) -> Result<()> {
     info!("==> Building with simple Makefile");
     let make_exe = which::which_in("make", build_env.get_path_string(), Path::new("."))
         .or_else(|_| which::which("make")) // Fallback
@@ -201,6 +203,8 @@ pub fn simple_make(install_dir: &Path, build_env: &BuildEnvironment) -> Result<(
     info!("==> Running make");
     let mut cmd_make = Command::new(make_exe.clone());
     build_env.apply_to_command(&mut cmd_make);
+    // Assuming CWD is the build directory (e.g., ./doggo-1.0.5/)
+    // Let's capture the output for potential debugging if needed
     let output_make = cmd_make.output().map_err(|e| {
         SapphireError::CommandExecError(format!("Failed to execute make (simple): {}", e))
     })?;
@@ -221,58 +225,131 @@ pub fn simple_make(install_dir: &Path, build_env: &BuildEnvironment) -> Result<(
         )));
     } else {
         info!("Make completed successfully.");
+        // Optionally log build output if verbose enough
+        debug!("Make stdout:\n{}", String::from_utf8_lossy(&output_make.stdout));
+        debug!("Make stderr:\n{}", String::from_utf8_lossy(&output_make.stderr));
     }
 
+    // --- Attempt make install ---
     info!("==> Running make install PREFIX={}", install_dir.display());
     let mut cmd_install = Command::new(make_exe);
     cmd_install.arg("install");
+    // Pass PREFIX, but be prepared for it to be ignored or incomplete
     cmd_install.arg(format!("PREFIX={}", install_dir.display()));
     build_env.apply_to_command(&mut cmd_install);
     let output_install = cmd_install.output().map_err(|e| {
         SapphireError::CommandExecError(format!("Failed to execute make install (simple): {}", e))
     })?;
 
-    if !output_install.status.success() {
+    let make_install_succeeded = output_install.status.success();
+
+    if !make_install_succeeded {
+        // Log the failure but don't necessarily error out yet
         warn!(
-            "'make install' failed with status {}. Checking install directory...",
+            "'make install' failed with status {}. Will check for manually installable artifacts.",
             output_install.status
         );
+        debug!(
+            "Make install stdout:\n{}",
+            String::from_utf8_lossy(&output_install.stdout)
+        );
+        debug!(
+            "Make install stderr:\n{}",
+            String::from_utf8_lossy(&output_install.stderr)
+        );
+    } else {
+        info!("Make install completed successfully (exit code 0).");
+        debug!(
+            "Make install stdout:\n{}",
+            String::from_utf8_lossy(&output_install.stdout)
+        );
+        debug!(
+            "Make install stderr:\n{}",
+            String::from_utf8_lossy(&output_install.stderr)
+        );
+    }
 
-        let bin_dir = install_dir.join("bin");
-        let lib_dir = install_dir.join("lib");
-        let bin_exists = bin_dir.exists()
-            && fs::read_dir(&bin_dir)
-                .map(|mut d| d.next().is_some())
-                .unwrap_or(false);
-        let lib_exists = lib_dir.exists()
-            && fs::read_dir(&lib_dir)
-                .map(|mut d| d.next().is_some())
-                .unwrap_or(false);
+    // --- Verification and Manual Installation Fallback ---
+    let bin_dir = install_dir.join("bin");
+    let bin_populated = bin_dir.is_dir() && bin_dir.read_dir()?.next().is_some();
 
-        if !bin_exists && !lib_exists {
-            println!(
-                "Make install failed with status: {} and no files found in {}/bin or {}/lib",
-                output_install.status,
-                install_dir.display(),
-                install_dir.display()
+    if !bin_populated {
+        warn!(
+            "Installation directory '{}' is empty or missing after 'make install'. Attempting manual artifact installation.",
+            bin_dir.display()
+        );
+
+        // Try to find the executable in the CWD (build dir, e.g., ./doggo-1.0.5/)
+        // Heuristic: look for a file named like the install dir's base name (e.g., "doggo")
+        let formula_name = install_dir
+            .parent() // Get .../Cellar/doggo
+            .and_then(|p| p.file_name()) // Get "doggo"
+            .and_then(|n| n.to_str())
+            .unwrap_or(""); // Fallback to empty string if path parsing fails
+
+        let potential_binary_path = Path::new(".").join(formula_name); // Assumes CWD is build root
+        let mut found_and_installed_manually = false;
+
+        if !formula_name.is_empty() && potential_binary_path.is_file() {
+            info!(
+                "Found potential binary '{}' in build directory. Manually installing...",
+                potential_binary_path.display()
             );
-            eprintln!(
-                "Make install stdout:\n{}",
-                String::from_utf8_lossy(&output_install.stdout)
+            fs::create_dir_all(&bin_dir)?; // Ensure install_dir/bin exists
+
+            let target_path = bin_dir.join(formula_name);
+            fs::copy(&potential_binary_path, &target_path).map_err(|e| {
+                SapphireError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to copy binary {} to {}: {}",
+                        potential_binary_path.display(),
+                        target_path.display(),
+                        e
+                    ),
+                ))
+            })?;
+
+            // Set executable permissions
+            #[cfg(unix)]
+            {
+                let mut perms = fs::metadata(&target_path)?.permissions();
+                perms.set_mode(0o755); // rwxr-xr-x
+                fs::set_permissions(&target_path, perms)?;
+                info!("Set executable permissions on {}", target_path.display());
+            }
+
+            found_and_installed_manually = true;
+        } else {
+            // Optional: Could add more heuristics here, like searching for any executable file
+            // in the CWD if the named one isn't found.
+            warn!(
+                "Could not find executable named '{}' in build directory for manual installation.",
+                formula_name
             );
-            eprintln!(
-                "Make install stderr:\n{}",
-                String::from_utf8_lossy(&output_install.stderr)
+        }
+
+        // If make install failed AND we couldn't manually install anything, then it's a real error
+        if !make_install_succeeded && !found_and_installed_manually {
+            error!(
+                "make install failed and could not find/install artifacts manually from build directory."
             );
-            return Err(SapphireError::Generic(format!(
-                "Make install failed with status: {} and no files found in relevant install directories",
+            // Return the original make install error context if available
+             return Err(SapphireError::Generic(format!(
+                "Make install failed with status: {} and no artifacts found/installed manually",
                 output_install.status
             )));
-        } else {
-            info!("Proceeding despite 'make install' error as installation directory seems populated.");
+        } else if !found_and_installed_manually {
+            // make install succeeded but didn't populate bin, and we found nothing manually.
+            // This is suspicious, but maybe the formula only installs libraries or other things.
+            // Proceed, but maybe log a higher warning?
+             warn!("make install reported success, but '{}' was not populated and no executable found manually.", bin_dir.display());
         }
     } else {
-        info!("Make install completed successfully.");
+        info!(
+            "Installation directory '{}' appears populated after 'make install'.",
+            bin_dir.display()
+        );
     }
 
     Ok(())
