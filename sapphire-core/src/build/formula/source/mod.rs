@@ -111,6 +111,163 @@ fn create_dir_all_with_context(path: &Path, context: &str) -> Result<()> {
     })
 }
 
+/// Helper function to temporarily change CWD for executing a build function.
+fn with_cwd<F>(target_cwd: &Path, build_func: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
+    let mut must_restore = false;
+
+    // Only change CWD if target_cwd is not the current CWD (".")
+    if target_cwd != Path::new(".") {
+        debug!("Temporarily changing CWD to {}", target_cwd.display());
+        if let Err(e) = std::env::set_current_dir(target_cwd) {
+            error!("Failed to change CWD to {}: {}", target_cwd.display(), e);
+            return Err(SapphireError::Io(e));
+        }
+        must_restore = true;
+    } else {
+        debug!("Executing build function in current CWD.");
+    }
+
+    // Execute the build function
+    let result = build_func();
+
+    // Restore CWD if we changed it
+    if must_restore {
+        if let Err(e) = std::env::set_current_dir(&original_cwd) {
+            error!(
+                "CRITICAL: Failed to restore CWD from {} back to {}: {}. State may be invalid.",
+                target_cwd.display(), original_cwd.display(), e
+            );
+            // If restoration fails, we should probably return the CWD error,
+            // potentially masking the original build result if it was Ok.
+            return Err(SapphireError::Io(e));
+        } else {
+            debug!("Restored CWD to {}", original_cwd.display());
+        }
+    }
+
+    // Return the result of the build function
+    result
+}
+
+/// Returns Ok(true) if build system found and called, Ok(false) if not found, Err on build error.
+fn check_markers_and_build(
+    dir_to_check: &Path,
+    install_dir: &Path,
+    build_env: &BuildEnvironment,
+    all_installed_paths: &[PathBuf],
+) -> Result<bool> {
+
+    // --- Autoreconf Check (specific to the directory being checked) ---
+    // This should happen *before* checking for 'configure' existence
+    if (dir_to_check.join("configure.ac").exists() || dir_to_check.join("configure.in").exists())
+        && !dir_to_check.join("configure").exists()
+    {
+        // Need to run autoreconf *within* dir_to_check if it's not CWD
+        let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
+        let mut must_restore_cwd = false;
+        if dir_to_check != Path::new(".") {
+            debug!("Temporarily changing CWD to {} for autoreconf check", dir_to_check.display());
+            std::env::set_current_dir(dir_to_check).map_err(SapphireError::Io)?;
+            must_restore_cwd = true;
+        }
+
+        match which::which_in("autoreconf", build_env.get_path_string(), Path::new(".")) {
+            Ok(autoreconf_path) => {
+                info!("==> Running autoreconf -fvi (as configure script is missing in {})", dir_to_check.display());
+                let mut cmd = Command::new(autoreconf_path);
+                cmd.args(["-fvi"]);
+                build_env.apply_to_command(&mut cmd);
+                match run_command(&mut cmd, "autoreconf") {
+                    Ok(_) => info!("Autoreconf completed successfully."),
+                    Err(e) => warn!("Autoreconf failed ({}). Continuing build detection...", e),
+                }
+            }
+            Err(_) => {
+                warn!("configure.ac/in found but configure script and autoreconf command are missing.");
+            }
+        }
+
+        // Restore CWD if we changed it
+        if must_restore_cwd {
+             if let Err(e) = std::env::set_current_dir(&original_cwd) {
+                 error!("FATAL: Failed to restore CWD after autoreconf check in {}: {}", dir_to_check.display(), e);
+                 // This is tricky - state is potentially bad. Maybe return a fatal error?
+                 return Err(SapphireError::Io(e));
+             } else {
+                 debug!("Restored CWD after autoreconf check.");
+             }
+        }
+        // After running autoreconf, the 'configure' script might now exist, so we continue detection.
+    }
+
+
+    // --- Marker Checks ---
+    // Note: These checks use relative paths which are interpreted based on CWD
+    // We need to ensure the build functions are called with the *correct* context/CWD.
+
+    if dir_to_check.join("configure").exists() {
+        info!("Detected build system: Autotools (configure script) in {}", dir_to_check.display());
+        // configure_and_make assumes it runs from the dir containing 'configure'
+        with_cwd(dir_to_check, || make::configure_and_make(install_dir, build_env))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("CMakeLists.txt").exists() {
+        info!("Detected build system: CMake in {}", dir_to_check.display());
+        // cmake_build needs the source path containing CMakeLists.txt
+        // Since it runs cmake out-of-source relative to CWD, we might not need to change CWD here,
+        // but pass the correct relative path *to* cmake_build if it expects it.
+        // Our adjusted cmake_build expects '.' and CWD to be the source root.
+        with_cwd(dir_to_check, || cmake::cmake_build(Path::new("."), install_dir, build_env))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("meson.build").exists() {
+        info!("Detected build system: Meson in {}", dir_to_check.display());
+        // meson_build expects '.' and CWD to be the source root.
+         with_cwd(dir_to_check, || meson::meson_build(Path::new("."), install_dir, build_env))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("Makefile.PL").exists() || dir_to_check.join("Configure").exists() {
+        info!("Detected build system: Perl (Makefile.PL or Configure) in {}", dir_to_check.display());
+        // perl_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || perl::perl_build(Path::new("."), install_dir, build_env))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("Cargo.toml").exists() {
+        info!("Detected build system: Rust/Cargo in {}", dir_to_check.display());
+        // cargo_build expects CWD to be the source root.
+         with_cwd(dir_to_check, || cargo::cargo_build(install_dir, build_env))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("setup.py").exists() {
+        info!("Detected build system: Python setup.py in {}", dir_to_check.display());
+        // python_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || python::python_build(install_dir, build_env))?;
+        return Ok(true);
+    }
+    let go_src_dir = dir_to_check.join("src"); // Check relative to the dir_to_check
+    if go_src_dir.is_dir()
+        && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists())
+    {
+        info!("Detected Go build system (make.bash or all.bash) in {}", dir_to_check.display());
+        // go_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || go::go_build(Path::new("."), install_dir, build_env, all_installed_paths))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("Makefile").exists() || dir_to_check.join("makefile").exists() {
+        info!("Detected build system: Simple Makefile in {}", dir_to_check.display());
+        // simple_make expects CWD to be the source root.
+         with_cwd(dir_to_check, || make::simple_make(install_dir, build_env))?;
+        return Ok(true);
+    }
+
+    // No known build system found in this directory
+    Ok(false)
+}
+
 fn run_command(cmd: &mut Command, context: &str) -> Result<std::process::Output> {
     debug!("Running command ({}): {:?}", context, cmd);
     let output = cmd.output().map_err(|e| {
@@ -133,54 +290,69 @@ fn run_command(cmd: &mut Command, context: &str) -> Result<std::process::Output>
 }
 
 /// Detects the build system based on marker files *in the current working directory*
-/// and dispatches to the appropriate build function.
+/// or a single subdirectory, and dispatches to the appropriate build function.
 fn detect_and_build_in_cwd(
-    _formula: &Formula, // <--- Prefixed
+    _formula: &Formula, // Prefixed as it's still not used directly here
     install_dir: &Path,
     build_env: &BuildEnvironment,
     all_installed_paths: &[PathBuf],
 ) -> Result<()> {
     info!("Attempting to detect build system in current directory (CWD)");
 
-    // Order matters for priority (e.g., handle configure before simple Makefile)
-    if Path::new("configure").exists() {
-        info!("Detected build system: Autotools (configure script)");
-        return make::configure_and_make(install_dir, build_env);
-    }
-    if Path::new("CMakeLists.txt").exists() {
-        info!("Detected build system: CMake");
-        return cmake::cmake_build(Path::new("."), install_dir, build_env);
-    }
-    if Path::new("meson.build").exists() {
-        info!("Detected build system: Meson");
-        return meson::meson_build(Path::new("."), install_dir, build_env);
-    }
-    // Check for Perl *before* Python/setup.py as some Perl modules might have setup.py
-    if Path::new("Makefile.PL").exists() || Path::new("Configure").exists() {
-        info!("Detected build system: Perl (Makefile.PL or Configure)");
-        return perl::perl_build(Path::new("."), install_dir, build_env);
-    }
-    if Path::new("Cargo.toml").exists() {
-        info!("Detected build system: Rust/Cargo");
-        return cargo::cargo_build(install_dir, build_env);
-    }
-    if Path::new("setup.py").exists() {
-        info!("Detected build system: Python setup.py");
-        return python::python_build(install_dir, build_env);
-    }
-    let go_src_dir = Path::new("src");
-    if go_src_dir.is_dir()
-        && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists())
-    {
-        info!("Detected Go build system (make.bash or all.bash)");
-        return go::go_build(Path::new("."), install_dir, build_env, all_installed_paths);
-    }
-    if Path::new("Makefile").exists() || Path::new("makefile").exists() {
-        info!("Detected build system: Simple Makefile");
-        return make::simple_make(install_dir, build_env);
+    let cwd = Path::new("."); // Represents the current working directory
+
+    // --- Check for markers directly in CWD first ---
+    if check_markers_and_build(cwd, install_dir, build_env, all_installed_paths)? {
+        return Ok(()); // Build system found and handled in CWD
     }
 
-    error!("Could not determine build system in current directory (CWD)");
+    // --- If not found in CWD, check for a single subdirectory ---
+    let mut subdirs = Vec::new();
+    match fs::read_dir(cwd) {
+        Ok(entries) => {
+            for entry_res in entries {
+                if let Ok(entry) = entry_res {
+                    let path = entry.path();
+                    // Ignore hidden files/dirs and resource staging dir
+                    if path.is_dir() &&
+                       !entry.file_name().to_string_lossy().starts_with('.') &&
+                       entry.file_name() != ".sapphire-resources"
+                    {
+                        subdirs.push(path);
+                    }
+                } else {
+                    warn!("Failed to read directory entry in CWD: {:?}", entry_res.err());
+                }
+            }
+        }
+        Err(e) => {
+            return Err(SapphireError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to read CWD to check for subdirectories: {}", e),
+            )));
+        }
+    }
+
+    if subdirs.len() == 1 {
+        let subdir_path = &subdirs[0];
+        info!(
+            "No build system found in CWD, checking single subdirectory: {}",
+            subdir_path.display()
+        );
+
+        // --- Check for markers inside the subdirectory ---
+        if check_markers_and_build(subdir_path, install_dir, build_env, all_installed_paths)? {
+            return Ok(()); // Build system found and handled in subdirectory
+        }
+    } else if subdirs.len() > 1 {
+        info!("Multiple subdirectories found, cannot automatically determine build root.");
+    } else {
+        info!("No subdirectories found to check.");
+    }
+
+
+    // If no known build system is detected in CWD or single subdirectory
+    error!("Could not determine build system in CWD or its immediate subdirectory.");
     Err(SapphireError::Generic(
         "Could not determine build system in source directory.".to_string(),
     ))
