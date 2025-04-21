@@ -148,8 +148,6 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         matches.len(),
         data_source_name
     );
-    // Filter out formulae without bottles *after* finding matches
-    matches.retain(is_bottle_available);
     tracing::debug!(
         "Filtered down to {} formula matches with available bottles",
         matches.len()
@@ -273,18 +271,6 @@ fn is_cask_match(cask: &Value, query: &str) -> bool {
     }
 
     false
-}
-
-/// Check if a formula has a bottle available
-fn is_bottle_available(formula: &Value) -> bool {
-    if let Some(bottle) = formula.get("bottle").and_then(|b| b.as_object()) {
-        if let Some(stable) = bottle.get("stable").and_then(|s| s.as_object()) {
-            if let Some(files) = stable.get("files").and_then(|f| f.as_object()) {
-                return !files.is_empty(); // True if the files map is not empty
-            }
-        }
-    }
-    false // No bottle, no stable spec, or no files found
 }
 
 /// Truncates to max visible width, adding '…' if cut.

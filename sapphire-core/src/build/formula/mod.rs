@@ -15,6 +15,7 @@ use crate::utils::error::{Result, SapphireError};
 pub mod bottle;
 pub mod link;
 pub mod macho;
+pub mod source;
 
 /// Download formula resources from the internet asynchronously.
 pub async fn download_formula(
