@@ -386,7 +386,7 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
                 installed_keg_path.display()
             );
         } else if potential_subdirs.is_empty() {
-             // Changed from else if to else
+            // Changed from else if to else
             debug!("No subdirectories or files found (excluding ignored ones) in keg {}. Using main keg directory as content root.", installed_keg_path.display());
         }
         Ok(installed_keg_path.to_path_buf()) // Use main keg path in these cases too
