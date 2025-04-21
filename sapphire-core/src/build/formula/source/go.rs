@@ -22,31 +22,51 @@ pub fn go_build(
 
     info!("==> Building Go module (go.mod detected)");
 
-    let go_exe = which::which_in("go", build_env.get_path_string(), Path::new("."))
-        .map_err(|_| SapphireError::BuildEnvError("go command not found in build environment PATH.".to_string()))?;
+    let go_exe =
+        which::which_in("go", build_env.get_path_string(), Path::new(".")).map_err(|_| {
+            SapphireError::BuildEnvError(
+                "go command not found in build environment PATH.".to_string(),
+            )
+        })?;
 
     let formula_name = install_dir
         .parent()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
-        .ok_or_else(|| SapphireError::BuildEnvError(format!("Could not infer formula name from install path: {}", install_dir.display())))?;
+        .ok_or_else(|| {
+            SapphireError::BuildEnvError(format!(
+                "Could not infer formula name from install path: {}",
+                install_dir.display()
+            ))
+        })?;
 
     let cmd_pkg_path = Path::new("cmd").join(formula_name);
     let package_to_build = if cmd_pkg_path.is_dir() {
-        debug!("Found potential command package path: {}", cmd_pkg_path.display());
+        debug!(
+            "Found potential command package path: {}",
+            cmd_pkg_path.display()
+        );
         format!("./{}", cmd_pkg_path.to_string_lossy())
     } else {
-        debug!("Command package path {} not found, building '.'", cmd_pkg_path.display());
+        debug!(
+            "Command package path {} not found, building '.'",
+            cmd_pkg_path.display()
+        );
         ".".to_string()
     };
 
     let target_bin_dir = install_dir.join("bin");
     fs::create_dir_all(&target_bin_dir).map_err(|e| {
-        SapphireError::Io(std::io::Error::new(e.kind(),
-            format!("Failed to create target bin directory {}: {}", target_bin_dir.display(), e)))
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "Failed to create target bin directory {}: {}",
+                target_bin_dir.display(),
+                e
+            ),
+        ))
     })?;
     let output_binary_path = target_bin_dir.join(formula_name);
-
 
     info!(
         "==> Running: {} build -o {} -ldflags \"-s -w\" {}",
