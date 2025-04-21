@@ -17,6 +17,8 @@ use sapphire_core::model::formula::Formula;
 use sapphire_core::utils::cache::Cache;
 use sapphire_core::utils::config::Config;
 use sapphire_core::utils::error::{Result, SapphireError};
+use sapphire_core::build::formula::has_bottle_for_current_platform;
+use sapphire_core::build::get_formula_opt_path;
 use tokio::sync::Semaphore;
 use tokio::task::{JoinError, JoinSet};
 use tracing::{error, info, warn};
@@ -35,6 +37,8 @@ pub struct Install {
     skip_recommended: bool,
     #[arg(long, default_value_t = 4)]
     max_concurrent_installs: usize,
+    #[arg(long, help = "Force building the formula from source, even if a bottle is available")]
+    build_from_source: bool,
 }
 impl Install {
     pub async fn run(&self, cfg: &Config, cache: Arc<Cache>) -> Result<()> {
@@ -68,7 +72,8 @@ impl Install {
                 if any_not_found {
                     info!(
                     "⚠️  No matching formulae found for {:?}; trying to install as casks instead…",
-                    self.names
+                    self.
+names
                 );
                     // retry as casks
                     return install_casks(
@@ -123,11 +128,12 @@ impl Install {
                         .iter()
                         .filter(|d| {
                             nodes.contains_key(&d.name)
-                                && !d.tags.contains(DependencyTag::TEST)
-                                && (!d.tags.contains(DependencyTag::OPTIONAL)
-                                    || self.include_optional)
-                                && !(d.tags.contains(DependencyTag::RECOMMENDED)
-                                    && self.skip_recommended)
+                            && !d.tags.contains(DependencyTag::TEST)
+                             // --- Simplified ---
+                            && (!d.tags.contains(DependencyTag::OPTIONAL) || self.include_optional)
+                             // --- End Simplified ---
+                            && !(d.tags.contains(DependencyTag::RECOMMENDED)
+                                && self.skip_recommended)
                         })
                         .count(),
                     dependents: vec![],
@@ -139,9 +145,11 @@ impl Install {
             let deps = nodes[&name].formula.dependencies()?;
             for d in deps {
                 if nodes.contains_key(&d.name)
-                    && !d.tags.contains(DependencyTag::TEST)
-                    && (!d.tags.contains(DependencyTag::OPTIONAL) || self.include_optional)
-                    && !(d.tags.contains(DependencyTag::RECOMMENDED) && self.skip_recommended)
+                && !d.tags.contains(DependencyTag::TEST)
+                 // --- Simplified ---
+                && (!d.tags.contains(DependencyTag::OPTIONAL) || self.include_optional)
+                 // --- End Simplified ---
+                && !(d.tags.contains(DependencyTag::RECOMMENDED) && self.skip_recommended)
                 {
                     if let Some(dep_node) = nodes.get_mut(&d.name) {
                         dep_node.dependents.push(name.clone());
@@ -191,8 +199,12 @@ impl Install {
                         let formula = node.formula.clone();
                         let task_cfg = cfg.clone();
                         let cli = client.clone();
-                        let cache_clone = Arc::clone(&cache);
+                        let _cache_clone = Arc::clone(&cache);
                         let name_clone = name.clone();
+                        let force_source_build = self.build_from_source;
+                        let all_paths_for_build = graph.install_plan.iter()
+                            .filter_map(|dep| dep.opt_path.clone()) // Get opt paths from resolved graph
+                            .collect::<Vec<_>>();
 
                         js.spawn(async move {
                             let res = install_formula_task(
@@ -200,7 +212,8 @@ impl Install {
                                 formula,
                                 task_cfg,
                                 cli,
-                                cache_clone,
+                                all_paths_for_build,
+                                force_source_build,
                             )
                             .await;
                             drop(permit);
@@ -358,31 +371,77 @@ fn process_task_outcome(
     }
 }
 
+// Complete, corrected install_formula_task function
 async fn install_formula_task(
     name: &str,
     formula: Arc<Formula>,
     cfg: Config,
     client: Arc<Client>,
-    _cache: Arc<Cache>,
+    all_installed_paths: Vec<PathBuf>,
+    force_source_build: bool,
 ) -> Result<PathBuf> {
-    info!("⬇️ Downloading bottle for {}...", name);
-    let bottle_path = build::formula::bottle::download_bottle(&formula, &cfg, &client).await?;
-    info!("🍺 Pouring bottle for {}...", name);
-    let opt_path: PathBuf = tokio::task::spawn_blocking({
-        let formula = formula.clone();
-        let cfg_clone = cfg.clone();
-        let bottle_clone = bottle_path.clone();
-        move || -> Result<PathBuf> {
-            let install_dir =
-                build::formula::bottle::install_bottle(&bottle_clone, &formula, &cfg_clone)?;
-            build::formula::link::link_formula_artifacts(&formula, &install_dir, &cfg_clone)?;
-            Ok(cfg_clone.formula_opt_link_path(formula.name()))
-        }
-    })
-    .await
-    .map_err(join_to_err)??;
-    info!("🔗 Linked {}", name);
-    Ok(opt_path)
+    let should_build_source = force_source_build || !has_bottle_for_current_platform(&formula);
+    let final_opt_path = get_formula_opt_path(&formula, &cfg);
+
+    if should_build_source {
+        info!("🔧 Building {} from source...", name);
+        info!("⬇️ Downloading source for {}...", name);
+
+        let source_path =
+            sapphire_core::build::formula::source::download_source(&formula, &cfg).await?;
+
+        info!("⚙️ Compiling {}...", name);
+        let install_dir: PathBuf =
+            sapphire_core::build::formula::source::build_from_source(
+                &source_path,
+                &formula,
+                &cfg,
+                &all_installed_paths,
+            )
+            .await?;
+
+        info!("🔗 Linking {}...", name);
+        sapphire_core::build::formula::link::link_formula_artifacts(
+            &formula,
+            &install_dir,
+            &cfg,
+        )?;
+
+        info!("✅ Built and linked {}", name);
+
+    } else {
+        info!("⬇️ Downloading bottle for {}...", name);
+        let bottle_path =
+            sapphire_core::build::formula::bottle::download_bottle(&formula, &cfg, &client)
+                .await?;
+
+        info!("🍺 Pouring bottle for {}...", name);
+        let install_dir: PathBuf = tokio::task::spawn_blocking({
+            let formula = formula.clone();
+            let cfg_clone = cfg.clone();
+            let bottle_clone = bottle_path.clone();
+            move || -> Result<PathBuf> {
+                sapphire_core::build::formula::bottle::install_bottle(
+                    &bottle_clone,
+                    &formula,
+                    &cfg_clone,
+                )
+            }
+        })
+        .await
+        .map_err(join_to_err)??;
+
+        info!("🔗 Linking {}...", name);
+        sapphire_core::build::formula::link::link_formula_artifacts(
+            &formula,
+            &install_dir,
+            &cfg,
+        )?;
+
+        info!("✅ Poured and linked {}", name);
+    }
+
+    Ok(final_opt_path)
 }
 
 // Primary async cask installer (non-boxed)
@@ -462,6 +521,7 @@ async fn install_cask_task(token: &str, cache: Arc<Cache>, cfg: &Config) -> Resu
                 include_optional: false,
                 skip_recommended: false,
                 max_concurrent_installs: 4,
+                build_from_source: false,
             };
             dep_args.install_formulae(cfg, Arc::clone(&cache)).await?;
         }
