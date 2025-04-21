@@ -464,14 +464,23 @@ fn detect_and_build(
 
                 // (Adjust scoring to strongly prefer depth 1 for root markers)
                 let mut score = match current_depth {
-                    1 => { // Directly inside build_dir (this is the expected root)
-                        if *requires_root { 5 } // Highest score for root markers here
-                        else { 3 } // Moderate score for non-root markers (CMake/Meson) found flat
+                    1 => {
+                        // Directly inside build_dir (this is the expected root)
+                        if *requires_root {
+                            5
+                        }
+                        // Highest score for root markers here
+                        else {
+                            3
+                        } // Moderate score for non-root markers (CMake/Meson) found flat
                     }
-                    2 => { // Inside a subdirectory
-                        if !*requires_root { // Only score non-root markers here
+                    2 => {
+                        // Inside a subdirectory
+                        if !*requires_root {
+                            // Only score non-root markers here
                             let parent_dir_name = parent_dir.file_name().map(|f| f.to_os_string());
-                            if parent_dir_name.is_some_and(|name| preferred_subdirs.contains(&name)) {
+                            if parent_dir_name.is_some_and(|name| preferred_subdirs.contains(&name))
+                            {
                                 4 // High score for non-root markers in preferred subdirs
                             } else {
                                 2 // Lower score for non-root markers in other subdirs
