@@ -470,8 +470,7 @@ fn detect_and_build(
                         // Nested matches (only relevant for CMake/Meson now)
                         if *marker == "CMakeLists.txt" || *marker == "meson.build" {
                             let parent_dir_name = parent_dir.file_name().map(|f| f.to_os_string());
-                            if parent_dir_name
-                                .is_some_and(|name| preferred_subdirs.contains(&name))
+                            if parent_dir_name.is_some_and(|name| preferred_subdirs.contains(&name))
                             {
                                 2 // Preferred subdirectory
                             } else {
@@ -838,20 +837,28 @@ fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path
     create_dir_all_with_context(&target_dir, "single file target directory")?;
 
     let target_filename = if formula.name == "ca-certificates" {
-         source_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("cacert.pem"))
+        source_path
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("cacert.pem"))
     } else {
-         source_path
+        source_path
             .file_name()
             .ok_or_else(|| SapphireError::Generic("Source path has no filename.".to_string()))?
     };
 
     let target_path = target_dir.join(target_filename);
 
-    info!("Copying {} to {}", source_path.display(), target_path.display());
+    info!(
+        "Copying {} to {}",
+        source_path.display(),
+        target_path.display()
+    );
     fs::copy(source_path, &target_path).map_err(|e| {
         SapphireError::IoError(format!(
             "Failed copy {} to {}: {}",
-            source_path.display(), target_path.display(), e
+            source_path.display(),
+            target_path.display(),
+            e
         ))
     })?;
     Ok(())
