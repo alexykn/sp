@@ -2,11 +2,11 @@
 
 use std::fs;
 use std::io::Read; // <--- Add Read trait for reading file content
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
-use std::os::unix::fs::PermissionsExt;
 
-use tracing::{error, debug, info, warn,};
+use tracing::{debug, error, info, warn};
 
 use crate::build::env::BuildEnvironment;
 use crate::utils::error::{Result, SapphireError};
@@ -226,8 +226,14 @@ pub fn simple_make(
     } else {
         info!("Make completed successfully.");
         // Optionally log build output if verbose enough
-        debug!("Make stdout:\n{}", String::from_utf8_lossy(&output_make.stdout));
-        debug!("Make stderr:\n{}", String::from_utf8_lossy(&output_make.stderr));
+        debug!(
+            "Make stdout:\n{}",
+            String::from_utf8_lossy(&output_make.stdout)
+        );
+        debug!(
+            "Make stderr:\n{}",
+            String::from_utf8_lossy(&output_make.stderr)
+        );
     }
 
     // --- Attempt make install ---
@@ -335,7 +341,7 @@ pub fn simple_make(
                 "make install failed and could not find/install artifacts manually from build directory."
             );
             // Return the original make install error context if available
-             return Err(SapphireError::Generic(format!(
+            return Err(SapphireError::Generic(format!(
                 "Make install failed with status: {} and no artifacts found/installed manually",
                 output_install.status
             )));
@@ -343,7 +349,7 @@ pub fn simple_make(
             // make install succeeded but didn't populate bin, and we found nothing manually.
             // This is suspicious, but maybe the formula only installs libraries or other things.
             // Proceed, but maybe log a higher warning?
-             warn!("make install reported success, but '{}' was not populated and no executable found manually.", bin_dir.display());
+            warn!("make install reported success, but '{}' was not populated and no executable found manually.", bin_dir.display());
         }
     } else {
         info!(
