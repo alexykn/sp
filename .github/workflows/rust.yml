@@ -13,12 +13,19 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v3
 
-      - name: Install Rust nightly toolchain
+      - name: Install Rust toolchain (Nightly for fmt)
         uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly
           components: rustfmt, clippy
           override: true
+
+      - name: Set Stable as Default (MSRV 1.86.0)
+        if: success()
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.86.0
+          components: clippy
 
       - name: Cache cargo registry & build artifacts
         uses: actions/cache@v3
@@ -27,16 +34,16 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-nightly-
+            ${{ runner.os }}-cargo-stable-
             ${{ runner.os }}-cargo-
 
       - name: Verify runner architecture
         run: 'echo "UNAME reports: $(uname -m)"'
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: Run linters
         run: cargo clippy -- -D warnings
