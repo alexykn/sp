@@ -859,7 +859,7 @@ fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)] // find_brewed_perl uses unix-specific paths
+#[cfg(unix)]
 fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
     let opt_dir = prefix.join("opt");
     if !opt_dir.is_dir() {
@@ -871,13 +871,17 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
     match fs::read_dir(opt_dir) {
         Ok(entries) => {
             for entry_res in entries.flatten() {
-                // Use flatten suggested by other warning
                 let name = entry_res.file_name();
                 let s = name.to_string_lossy();
                 let entry_path = entry_res.path();
 
                 if let Some(version_part) = s.strip_prefix("perl@") {
-                    let version_str_padded = format!("{}.0.0", version_part); // Assume major.minor -> major.minor.0
+                    let version_str_padded = if version_part.contains('.') {
+                        format!("{}.0", version_part)
+                    } else {
+                        format!("{}.0.0", version_part)
+                    };
+
                     if let Ok(v) = semver::Version::parse(&version_str_padded) {
                         let candidate_bin = entry_path.join("bin/perl");
                         if candidate_bin.is_file()
@@ -886,13 +890,14 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
                             best = Some((v, candidate_bin));
                         }
                     } else {
-                        warn!("Could not parse perl version from directory name: {}", s);
+                        warn!(
+                            "Could not parse perl version '{}' (tried '{}') from directory name: {}",
+                            version_part, version_str_padded, s
+                        );
                     }
                 } else if s == "perl" {
                     let candidate_bin = entry_path.join("bin/perl");
-                    // Handle the case where 'perl' exists but no versioned perl is better yet
                     if candidate_bin.is_file() && best.is_none() {
-                        // Assign a low version to ensure versioned perls are preferred
                         if let Ok(v_base) = semver::Version::parse("5.0.0") {
                             best = Some((v_base, candidate_bin));
                         }
