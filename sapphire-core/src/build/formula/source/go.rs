@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tracing::{debug, info}; 
+use tracing::{debug, info};
 
 use crate::build::env::BuildEnvironment;
 use crate::utils::error::{Result, SapphireError};
@@ -24,22 +24,37 @@ pub fn go_build(
     info!("==> Building Go module (go.mod detected)");
 
     // Find the 'go' executable using the build environment's PATH
-    let go_exe = which::which_in("go", build_env.get_path_string(), Path::new("."))
-        .map_err(|_| SapphireError::BuildEnvError("go command not found in build environment PATH.".to_string()))?;
+    let go_exe =
+        which::which_in("go", build_env.get_path_string(), Path::new(".")).map_err(|_| {
+            SapphireError::BuildEnvError(
+                "go command not found in build environment PATH.".to_string(),
+            )
+        })?;
 
     // Determine the formula name for the output binary.
     // We infer this from the install_dir structure e.g., /Cellar/doggo/1.0.5 -> "doggo"
     let formula_name = install_dir
         .parent()
-        .and_then(|p| p.file_name()) 
+        .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
-        .ok_or_else(|| SapphireError::BuildEnvError(format!("Could not infer formula name from install path: {}", install_dir.display())))?;
+        .ok_or_else(|| {
+            SapphireError::BuildEnvError(format!(
+                "Could not infer formula name from install path: {}",
+                install_dir.display()
+            ))
+        })?;
 
     // Ensure the target bin directory exists inside the install_dir
     let target_bin_dir = install_dir.join("bin");
     fs::create_dir_all(&target_bin_dir).map_err(|e| {
-        SapphireError::Io(std::io::Error::new(e.kind(),
-            format!("Failed to create target bin directory {}: {}", target_bin_dir.display(), e)))
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "Failed to create target bin directory {}: {}",
+                target_bin_dir.display(),
+                e
+            ),
+        ))
     })?;
 
     // Define the output path for the binary

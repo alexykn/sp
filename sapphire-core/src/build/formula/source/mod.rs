@@ -310,7 +310,9 @@ fn check_markers_and_build(
     // --- Simple Makefile Fallback (Last Resort) ---
     if dir_to_check.join("Makefile").exists() || dir_to_check.join("makefile").exists() {
         info!(
-            "Detected build system: Simple Makefile in {}", // Note: Go modules might fall here if go.mod check fails or legacy path is taken
+            "Detected build system: Simple Makefile in {}", /* Note: Go modules might fall here
+                                                             * if go.mod check fails or legacy
+                                                             * path is taken */
             dir_to_check.display()
         );
         with_cwd(dir_to_check, || make::simple_make(install_dir, build_env))?;
