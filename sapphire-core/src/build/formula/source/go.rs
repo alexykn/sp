@@ -71,7 +71,7 @@ pub fn go_build(
     cmd.arg("-o");
     cmd.arg(&output_binary_path); // Output directly to install bin dir
     cmd.arg("-ldflags"); // Pass the flag name as one argument
-    #[allow(clippy::suspicious_command_arg_space)] 
+    #[allow(clippy::suspicious_command_arg_space)]
     cmd.arg("-s -w"); // Pass the flag value as the next argument
                       // --- END CORRECTION ---
 
