@@ -11,14 +11,21 @@ use crate::utils::error::{Result, SapphireError};
 
 /// Build with CMake, using Ninja as the generator
 pub fn cmake_build(
-    source_dir_for_build: &Path, // Renamed for clarity - path containing main CMakeLists.txt
+    source_dot: &Path, // Parameter represents "." now, as CWD is the source root
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
+    // Ensure source_dot is actually "."
+    if source_dot != Path::new(".") {
+        return Err(SapphireError::BuildEnvError(format!(
+            "cmake_build expected source path '.' but received '{}'",
+            source_dot.display()
+        )));
+    }
+
     info!("==> Building with CMake");
     let build_subdir_name = "sapphire-cmake-build";
-    // Create the build directory *outside* the source_dir_for_build, typically in the CWD
-    // which is the root build_dir set by the caller (build_from_source)
+    // Create the build directory *outside* the source, relative to CWD
     let build_subdir = Path::new(".").join(build_subdir_name); // Relative to CWD
     fs::create_dir_all(&build_subdir).map_err(SapphireError::Io)?;
 
@@ -34,20 +41,19 @@ pub fn cmake_build(
     );
 
     let mut cmd = Command::new(cmake_exe);
-    // Pass the potentially nested source dir containing the main CMakeLists.txt
-    cmd.arg(source_dir_for_build)
+    // Pass ".." as the source directory relative to the build_subdir where cmake runs
+    cmd.arg("..") // <--- CORRECTED LINE
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install_dir.display()))
-        .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5") // Keep this for compatibility
-        .arg("-DCMAKE_BUILD_TYPE=Release") // *** Add recommended build type ***
+        .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+        .arg("-DCMAKE_BUILD_TYPE=Release")
         .args([
             "-G",
-            "Ninja", // *** Specify Ninja generator ***
+            "Ninja",
             "-DCMAKE_FIND_FRAMEWORK=LAST",
-            "-DCMAKE_VERBOSE_MAKEFILE=ON", // Verbose output helpful for debugging
-            "-Wno-dev",                    // Suppress developer warnings if needed
+            "-DCMAKE_VERBOSE_MAKEFILE=ON",
+            "-Wno-dev",
         ])
-        // Run from the newly created build subdir
-        .current_dir(&build_subdir);
+        .current_dir(&build_subdir); // Run from the build subdir
 
     build_env.apply_to_command(&mut cmd);
     let output = cmd
@@ -55,6 +61,7 @@ pub fn cmake_build(
         .map_err(|e| SapphireError::CommandExecError(format!("Failed to execute cmake: {}", e)))?;
 
     if !output.status.success() {
+        // (Error handling code from your original file)
         println!("CMake configure failed with status: {}", output.status);
         eprintln!(
             "CMake configure stdout:\n{}",
@@ -64,15 +71,6 @@ pub fn cmake_build(
             "CMake configure stderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        // Attempt to read CMakeCache.txt for more clues on failure
-        let cache_log = build_subdir.join("CMakeCache.txt");
-        if cache_log.exists() {
-            eprintln!("--- CMakeCache.txt ---");
-            if let Ok(content) = fs::read_to_string(&cache_log) {
-                eprintln!("{}", content);
-            }
-            eprintln!("--- End CMakeCache.txt ---");
-        }
         let error_log = build_subdir.join("CMakeFiles/CMakeError.log");
         if error_log.exists() {
             eprintln!("--- CMakeFiles/CMakeError.log ---");
@@ -116,6 +114,7 @@ pub fn cmake_build(
     })?;
 
     if !output_install.status.success() {
+        // (Error handling code from your original file)
         println!(
             "Ninja install failed with status: {}",
             output_install.status

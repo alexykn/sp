@@ -2,18 +2,16 @@
 
 // --- Imports ---
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 
 use futures::future::try_join_all;
 use infer;
 use tracing::{debug, error, info, warn};
-use walkdir::WalkDir;
 
 use crate::build::env::BuildEnvironment;
-use crate::build::extract::extract_archive;
+use crate::build::extract;
 use crate::fetch::http as http_fetch;
 use crate::model::formula::{Formula, FormulaDependencies, ResourceSpec};
 use crate::utils::config::Config;
@@ -41,119 +39,6 @@ pub use python::python_build;
 const SUPPORTED_ARCHIVE_EXTENSIONS: [&str; 5] = ["gz", "bz2", "xz", "tar", "zip"];
 const RECOGNISED_SINGLE_FILE_EXTENSIONS: [&str; 9] =
     ["tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zip"];
-
-// --- Helper Functions ---
-
-/// Creates a directory and all its parents, mapping IO errors with context.
-fn create_dir_all_with_context(path: &Path, context: &str) -> Result<()> {
-    fs::create_dir_all(path).map_err(|e| {
-        SapphireError::Io(std::io::Error::new(
-            e.kind(),
-            format!("Failed to create {} {}: {}", context, path.display(), e),
-        ))
-    })
-}
-
-/// Executes a command, checks status, and returns a detailed error on failure.
-fn run_command(cmd: &mut Command, context: &str) -> Result<Output> {
-    debug!("Running command ({}): {:?}", context, cmd);
-    let output = cmd.output().map_err(|e| {
-        SapphireError::CommandExecError(format!("Failed to execute command for {}: {}", context, e))
-    })?;
-
-    if !output.status.success() {
-        error!("Command failed for {}. Status: {}", context, output.status);
-        error!("Stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        error!("Stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-        Err(SapphireError::CommandExecError(format!(
-            "Command failed during {} stage. Status: {}",
-            context, output.status
-        )))
-    } else {
-        debug!("Command successful for {}", context);
-        debug!("Stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        debug!("Stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-        Ok(output)
-    }
-}
-
-/// Tries to infer archive type, falls back to extension, and validates.
-fn determine_archive_type(archive_path: &Path, context: &str) -> Result<&'static str> {
-    match infer::get_from_path(archive_path)? {
-        // Handles infer's IO error
-        Some(kind) => {
-            let ext = kind.extension();
-            debug!("Inferred archive type for {}: {}", context, ext);
-            if SUPPORTED_ARCHIVE_EXTENSIONS.contains(&ext) {
-                Ok(ext)
-            } else {
-                error!(
-                    "Unsupported inferred archive type '{}' for {}: {}",
-                    ext,
-                    context,
-                    archive_path.display()
-                );
-                Err(SapphireError::Generic(format!(
-                    "Unsupported inferred archive type '{}' for {}: {}",
-                    ext,
-                    context,
-                    archive_path.display()
-                )))
-            }
-        }
-        None => {
-            // Fallback to extension if infer fails
-            let fallback_ext = archive_path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            warn!(
-                "Could not infer archive type for {}, falling back to extension '{}'.",
-                archive_path.display(),
-                fallback_ext
-            );
-            if fallback_ext.is_empty() {
-                error!(
-                    "Cannot determine archive type for {}: {}",
-                    context,
-                    archive_path.display()
-                );
-                return Err(SapphireError::Generic(format!(
-                    "Cannot determine archive type for {}: {}",
-                    context,
-                    archive_path.display()
-                )));
-            }
-            // Check if fallback is supported
-            if SUPPORTED_ARCHIVE_EXTENSIONS.contains(&fallback_ext) {
-                // We need to return a &'static str. Find the matching static string.
-                SUPPORTED_ARCHIVE_EXTENSIONS
-                    .iter()
-                    .find(|&&s| s == fallback_ext)
-                    .copied()
-                    .ok_or_else(|| {
-                        SapphireError::Generic(format!(
-                            "Internal error: Matched extension '{}' not found in static list",
-                            fallback_ext
-                        ))
-                    }) // Should not happen
-            } else {
-                error!(
-                    "Unsupported fallback archive type '{}' for {}: {}",
-                    fallback_ext,
-                    context,
-                    archive_path.display()
-                );
-                Err(SapphireError::Generic(format!(
-                    "Unsupported fallback archive type '{}' for {}: {}",
-                    fallback_ext,
-                    context,
-                    archive_path.display()
-                )))
-            }
-        }
-    }
-}
 
 // --- download_source ---
 pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathBuf> {
@@ -190,9 +75,433 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
     .await
 }
 
+/// Restores the original working directory when dropped (RAII).
+struct CurrentWorkingDirectoryGuard {
+    original_cwd: PathBuf,
+}
+impl CurrentWorkingDirectoryGuard {
+    fn new(original_cwd: PathBuf) -> Self {
+        Self { original_cwd }
+    }
+}
+impl Drop for CurrentWorkingDirectoryGuard {
+    fn drop(&mut self) {
+        if let Err(e) = std::env::set_current_dir(&self.original_cwd) {
+            error!(
+                "Failed to restore original working directory to {}: {}",
+                self.original_cwd.display(),
+                e
+            );
+        } else {
+            debug!(
+                "Restored working directory to: {}",
+                self.original_cwd.display()
+            );
+        }
+    }
+}
+
+// --- Helper Functions (ensure these are present or imported) ---
+fn create_dir_all_with_context(path: &Path, context: &str) -> Result<()> {
+    fs::create_dir_all(path).map_err(|e| {
+        SapphireError::Io(std::io::Error::new(
+            e.kind(),
+            format!("Failed to create {} {}: {}", context, path.display(), e),
+        ))
+    })
+}
+
+/// Helper function to temporarily change CWD for executing a build function.
+fn with_cwd<F>(target_cwd: &Path, build_func: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
+    let mut must_restore = false;
+
+    // Only change CWD if target_cwd is not the current CWD (".")
+    if target_cwd != Path::new(".") {
+        debug!("Temporarily changing CWD to {}", target_cwd.display());
+        if let Err(e) = std::env::set_current_dir(target_cwd) {
+            error!("Failed to change CWD to {}: {}", target_cwd.display(), e);
+            return Err(SapphireError::Io(e));
+        }
+        must_restore = true;
+    } else {
+        debug!("Executing build function in current CWD.");
+    }
+
+    // Execute the build function
+    let result = build_func();
+
+    // Restore CWD if we changed it
+    if must_restore {
+        if let Err(e) = std::env::set_current_dir(&original_cwd) {
+            error!(
+                "CRITICAL: Failed to restore CWD from {} back to {}: {}. State may be invalid.",
+                target_cwd.display(),
+                original_cwd.display(),
+                e
+            );
+            // If restoration fails, we should probably return the CWD error,
+            // potentially masking the original build result if it was Ok.
+            return Err(SapphireError::Io(e));
+        } else {
+            debug!("Restored CWD to {}", original_cwd.display());
+        }
+    }
+
+    // Return the result of the build function
+    result
+}
+
+/// Returns Ok(true) if build system found and called, Ok(false) if not found, Err on build error.
+fn check_markers_and_build(
+    dir_to_check: &Path,
+    install_dir: &Path,
+    build_env: &BuildEnvironment,
+    all_installed_paths: &[PathBuf],
+) -> Result<bool> {
+    // --- Autoreconf Check (specific to the directory being checked) ---
+    // This should happen *before* checking for 'configure' existence
+    if (dir_to_check.join("configure.ac").exists() || dir_to_check.join("configure.in").exists())
+        && !dir_to_check.join("configure").exists()
+    {
+        // Need to run autoreconf *within* dir_to_check if it's not CWD
+        let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
+        let mut must_restore_cwd = false;
+        if dir_to_check != Path::new(".") {
+            debug!(
+                "Temporarily changing CWD to {} for autoreconf check",
+                dir_to_check.display()
+            );
+            std::env::set_current_dir(dir_to_check).map_err(SapphireError::Io)?;
+            must_restore_cwd = true;
+        }
+
+        match which::which_in("autoreconf", build_env.get_path_string(), Path::new(".")) {
+            Ok(autoreconf_path) => {
+                info!(
+                    "==> Running autoreconf -fvi (as configure script is missing in {})",
+                    dir_to_check.display()
+                );
+                let mut cmd = Command::new(autoreconf_path);
+                cmd.args(["-fvi"]);
+                build_env.apply_to_command(&mut cmd);
+                match run_command(&mut cmd, "autoreconf") {
+                    Ok(_) => info!("Autoreconf completed successfully."),
+                    Err(e) => warn!("Autoreconf failed ({}). Continuing build detection...", e),
+                }
+            }
+            Err(_) => {
+                warn!("configure.ac/in found but configure script and autoreconf command are missing.");
+            }
+        }
+
+        // Restore CWD if we changed it
+        if must_restore_cwd {
+            if let Err(e) = std::env::set_current_dir(&original_cwd) {
+                error!(
+                    "FATAL: Failed to restore CWD after autoreconf check in {}: {}",
+                    dir_to_check.display(),
+                    e
+                );
+                // This is tricky - state is potentially bad. Maybe return a fatal error?
+                return Err(SapphireError::Io(e));
+            } else {
+                debug!("Restored CWD after autoreconf check.");
+            }
+        }
+        // After running autoreconf, the 'configure' script might now exist, so we continue
+        // detection.
+    }
+
+    // --- Marker Checks ---
+    // Note: These checks use relative paths which are interpreted based on CWD
+    // We need to ensure the build functions are called with the *correct* context/CWD.
+
+    if dir_to_check.join("configure").exists() {
+        info!(
+            "Detected build system: Autotools (configure script) in {}",
+            dir_to_check.display()
+        );
+        // configure_and_make assumes it runs from the dir containing 'configure'
+        with_cwd(dir_to_check, || {
+            make::configure_and_make(install_dir, build_env)
+        })?;
+        return Ok(true);
+    }
+    if dir_to_check.join("CMakeLists.txt").exists() {
+        info!("Detected build system: CMake in {}", dir_to_check.display());
+        // cmake_build needs the source path containing CMakeLists.txt
+        // Since it runs cmake out-of-source relative to CWD, we might not need to change CWD here,
+        // but pass the correct relative path *to* cmake_build if it expects it.
+        // Our adjusted cmake_build expects '.' and CWD to be the source root.
+        with_cwd(dir_to_check, || {
+            cmake::cmake_build(Path::new("."), install_dir, build_env)
+        })?;
+        return Ok(true);
+    }
+    if dir_to_check.join("meson.build").exists() {
+        info!("Detected build system: Meson in {}", dir_to_check.display());
+        // meson_build expects '.' and CWD to be the source root.
+        with_cwd(dir_to_check, || {
+            meson::meson_build(Path::new("."), install_dir, build_env)
+        })?;
+        return Ok(true);
+    }
+    if dir_to_check.join("Makefile.PL").exists() || dir_to_check.join("Configure").exists() {
+        info!(
+            "Detected build system: Perl (Makefile.PL or Configure) in {}",
+            dir_to_check.display()
+        );
+        // perl_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || {
+            perl::perl_build(Path::new("."), install_dir, build_env)
+        })?;
+        return Ok(true);
+    }
+    if dir_to_check.join("Cargo.toml").exists() {
+        info!(
+            "Detected build system: Rust/Cargo in {}",
+            dir_to_check.display()
+        );
+        // cargo_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || cargo::cargo_build(install_dir, build_env))?;
+        return Ok(true);
+    }
+    if dir_to_check.join("setup.py").exists() {
+        info!(
+            "Detected build system: Python setup.py in {}",
+            dir_to_check.display()
+        );
+        // python_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || {
+            python::python_build(install_dir, build_env)
+        })?;
+        return Ok(true);
+    }
+    let go_src_dir = dir_to_check.join("src"); // Check relative to the dir_to_check
+    if go_src_dir.is_dir()
+        && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists())
+    {
+        info!(
+            "Detected Go build system (make.bash or all.bash) in {}",
+            dir_to_check.display()
+        );
+        // go_build expects CWD to be the source root.
+        with_cwd(dir_to_check, || {
+            go::go_build(Path::new("."), install_dir, build_env, all_installed_paths)
+        })?;
+        return Ok(true);
+    }
+    if dir_to_check.join("Makefile").exists() || dir_to_check.join("makefile").exists() {
+        info!(
+            "Detected build system: Simple Makefile in {}",
+            dir_to_check.display()
+        );
+        // simple_make expects CWD to be the source root.
+        with_cwd(dir_to_check, || make::simple_make(install_dir, build_env))?;
+        return Ok(true);
+    }
+
+    // No known build system found in this directory
+    Ok(false)
+}
+
+fn run_command(cmd: &mut Command, context: &str) -> Result<std::process::Output> {
+    debug!("Running command ({}): {:?}", context, cmd);
+    let output = cmd.output().map_err(|e| {
+        SapphireError::CommandExecError(format!("Failed to execute command for {}: {}", context, e))
+    })?;
+
+    if !output.status.success() {
+        error!("Command failed for {}. Status: {}", context, output.status);
+        error!("Stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        error!("Stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        Err(SapphireError::CommandExecError(format!(
+            "Command failed during {} stage. Status: {}",
+            context, output.status
+        )))
+    } else {
+        debug!("Command successful for {}", context);
+        // Optionally log stdout/stderr on success if needed at debug level
+        Ok(output)
+    }
+}
+
+/// Detects the build system based on marker files *in the current working directory*
+/// or a single subdirectory, and dispatches to the appropriate build function.
+fn detect_and_build_in_cwd(
+    _formula: &Formula, // Prefixed as it's still not used directly here
+    install_dir: &Path,
+    build_env: &BuildEnvironment,
+    all_installed_paths: &[PathBuf],
+) -> Result<()> {
+    info!("Attempting to detect build system in current directory (CWD)");
+
+    let cwd = Path::new("."); // Represents the current working directory
+
+    // --- Check for markers directly in CWD first ---
+    if check_markers_and_build(cwd, install_dir, build_env, all_installed_paths)? {
+        return Ok(()); // Build system found and handled in CWD
+    }
+
+    // --- If not found in CWD, check for a single subdirectory ---
+    let mut subdirs = Vec::new();
+    match fs::read_dir(cwd) {
+        Ok(entries) => {
+            for entry_res in entries {
+                if let Ok(entry) = entry_res {
+                    let path = entry.path();
+                    // Ignore hidden files/dirs and resource staging dir
+                    if path.is_dir()
+                        && !entry.file_name().to_string_lossy().starts_with('.')
+                        && entry.file_name() != ".sapphire-resources"
+                    {
+                        subdirs.push(path);
+                    }
+                } else {
+                    warn!(
+                        "Failed to read directory entry in CWD: {:?}",
+                        entry_res.err()
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            return Err(SapphireError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to read CWD to check for subdirectories: {}", e),
+            )));
+        }
+    }
+
+    if subdirs.len() == 1 {
+        let subdir_path = &subdirs[0];
+        info!(
+            "No build system found in CWD, checking single subdirectory: {}",
+            subdir_path.display()
+        );
+
+        // --- Check for markers inside the subdirectory ---
+        if check_markers_and_build(subdir_path, install_dir, build_env, all_installed_paths)? {
+            return Ok(()); // Build system found and handled in subdirectory
+        }
+    } else if subdirs.len() > 1 {
+        info!("Multiple subdirectories found, cannot automatically determine build root.");
+    } else {
+        info!("No subdirectories found to check.");
+    }
+
+    // If no known build system is detected in CWD or single subdirectory
+    error!("Could not determine build system in CWD or its immediate subdirectory.");
+    Err(SapphireError::Generic(
+        "Could not determine build system in source directory.".to_string(),
+    ))
+}
+
+fn determine_archive_type(archive_path: &Path, _context: &str) -> Result<&'static str> {
+    // <-- Prefixed
+    match infer::get_from_path(archive_path)? {
+        Some(kind) => {
+            let ext = kind.extension();
+            // Use the constant defined earlier
+            if SUPPORTED_ARCHIVE_EXTENSIONS.contains(&ext) {
+                SUPPORTED_ARCHIVE_EXTENSIONS
+                    .iter()
+                    .find(|&&s| s == ext)
+                    .copied()
+                    .ok_or_else(|| {
+                        SapphireError::Generic(format!(
+                            "Internal error matching inferred extension {}",
+                            ext
+                        ))
+                    })
+            } else {
+                Err(SapphireError::Generic(format!(
+                    "Unsupported inferred archive type '{}' for {}",
+                    ext,
+                    archive_path.display() // Add path for context
+                )))
+            }
+        }
+        None => {
+            let ext = archive_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if SUPPORTED_ARCHIVE_EXTENSIONS.contains(&ext) {
+                SUPPORTED_ARCHIVE_EXTENSIONS
+                    .iter()
+                    .find(|&&s| s == ext)
+                    .copied()
+                    .ok_or_else(|| {
+                        SapphireError::Generic(format!(
+                            "Internal error matching file extension {}",
+                            ext
+                        ))
+                    })
+            } else {
+                Err(SapphireError::Generic(format!(
+                    "Unsupported file extension '{}' for {}",
+                    ext,
+                    archive_path.display() // Add path for context
+                )))
+            }
+        }
+    }
+}
+
+fn install_resource(
+    resource: &ResourceSpec,
+    stage_path: &Path,   // Directory where resource was extracted
+    libexec_path: &Path, // Base libexec path (e.g., <prefix>/libexec)
+    build_env: &BuildEnvironment,
+) -> Result<()> {
+    let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
+    debug!(
+        "Changing CWD for resource '{}' install: {}",
+        resource.name,
+        stage_path.display()
+    );
+    std::env::set_current_dir(stage_path).map_err(SapphireError::Io)?;
+    // Use RAII guard to ensure CWD restoration even on errors
+    let _cwd_guard = CurrentWorkingDirectoryGuard::new(original_cwd);
+
+    // Check for build files within the staged resource directory
+    // Prioritize Perl check if both Makefile.PL and setup.py might exist
+    if stage_path.join("Makefile.PL").exists() {
+        // Check for Perl first
+        info!(
+            "   -> Detected Perl resource '{}', installing...",
+            resource.name
+        );
+        // Call the function to handle Perl resource installation
+        install_perl_resource(resource, libexec_path, build_env)?;
+    } else if stage_path.join("setup.py").exists() {
+        // Check for Python next
+        info!(
+            "   -> Detected Python resource '{}', installing...",
+            resource.name
+        );
+        // Call the function to handle Python resource installation
+        install_python_resource(resource, libexec_path, build_env)?;
+    } else {
+        // We could potentially add more resource build system detections here
+        // (e.g., simple make install)
+        warn!(
+            "   -> Could not detect known build system (Perl/Python) for resource '{}' in {}. Skipping install.",
+            resource.name,
+            stage_path.display()
+        );
+    }
+    Ok(()) // CWD is restored when _cwd_guard goes out of scope
+}
+
 // --- build_from_source ---
 pub async fn build_from_source(
-    source_path: &Path,
+    source_path: &Path, // Path to the downloaded archive
     formula: &Formula,
     config: &Config,
     all_installed_paths: &[PathBuf],
@@ -200,20 +509,42 @@ pub async fn build_from_source(
     let install_dir = formula.install_prefix(&config.cellar)?;
     let formula_name = formula.name();
 
-    // Single file installation check
     let source_extension = source_path
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("");
+
+    // Check if the extension indicates it's NOT a recognized archive type
+    // If it's not a known archive, assume it's a single file to be installed directly.
     if !RECOGNISED_SINGLE_FILE_EXTENSIONS.contains(&source_extension) {
         info!("==> Installing single file formula: {}", formula_name);
         create_dir_all_with_context(&install_dir, "install directory")?;
+        // Call the function that handles copying the single file
         install_single_file(source_path, formula, &install_dir)?;
+        // Write the receipt and finish early for single files
         crate::build::write_receipt(formula, &install_dir)?;
         return Ok(install_dir);
     }
 
-    // Archive Installation Setup
+    // --- Determine Archive Type and Infer Root ---
+    // (Assuming source_path is guaranteed to be an archive now,
+    // single file check might be moved before calling build_from_source if needed)
+    let source_archive_type_str = determine_archive_type(source_path, "main source archive")?; // Use existing helper
+
+    // Infer the root directory *before* extraction
+    let inferred_root_dir = extract::infer_archive_root_dir(source_path, source_archive_type_str)?;
+
+    let strip_components = if inferred_root_dir.is_some() {
+        // If a single root dir exists, strip it during extraction
+        tracing::debug!("Detected single root dir in archive, will use strip_components=1.");
+        1
+    } else {
+        // If archive is flat or has multiple roots, don't strip
+        tracing::debug!("Archive is flat or has multiple roots, using strip_components=0.");
+        0
+    };
+
+    // --- Staging Area Setup ---
     let temp_dir_base = config.cache_dir.join("build-temp");
     create_dir_all_with_context(&temp_dir_base, "build temp base")?;
     let temp_build_dir = tempfile::Builder::new()
@@ -226,19 +557,27 @@ pub async fn build_from_source(
                 e
             ))
         })?;
-    let build_dir = temp_build_dir.path();
+    let build_dir = temp_build_dir.path(); // This is where files will land after stripping
 
+    // --- Extract with calculated strip_components ---
     info!(
-        "==> Extracting main source {} to {}",
+        "==> Extracting main source {} to {} (strip_components={})",
         source_path.display(),
-        build_dir.display()
+        build_dir.display(),
+        strip_components
     );
-    let source_archive_type_str = determine_archive_type(source_path, "main source")?;
-    extract_archive(source_path, build_dir, 1, source_archive_type_str)?; // strip_components = 1
+    // Call the existing extract_archive function (ensure it's in scope, maybe
+    // crate::build::extract::extract_archive)
+    crate::build::extract::extract_archive(
+        source_path,
+        build_dir,
+        strip_components,
+        source_archive_type_str,
+    )?;
     debug!("==> Extracted main source to {}", build_dir.display());
 
-    // Resource Handling
-    let resources = formula.resources()?;
+    // --- Resource Handling (remains the same) ---
+    let resources = formula.resources()?; // Assume this returns Vec<ResourceSpec>
     let mut resource_stage_paths = HashMap::new();
 
     if !resources.is_empty() {
@@ -277,12 +616,13 @@ pub async fn build_from_source(
                 &resource_archive_path,
                 &format!("resource '{}'", res_name),
             )?;
-            extract_archive(
+            // Resources are typically extracted without stripping components
+            crate::build::extract::extract_archive(
                 &resource_archive_path,
                 &stage_path,
-                0,
+                0, // strip_components = 0 for resources
                 resource_archive_type_str,
-            )?; // strip_components = 0
+            )?;
             resource_stage_paths.insert(res_name, stage_path);
         }
     }
@@ -290,10 +630,10 @@ pub async fn build_from_source(
     info!(
         "==> Building {} from source in {}",
         formula_name,
-        build_dir.display()
+        build_dir.display() // Build happens directly in the temp dir now
     );
 
-    // Build Environment Setup
+    // --- Build Environment Setup (remains the same) ---
     info!("==> Setting up build environment");
     let sapphire_prefix = config.prefix();
     let build_env = BuildEnvironment::new(
@@ -303,16 +643,38 @@ pub async fn build_from_source(
         all_installed_paths,
     )?;
 
-    // Build Process (with CWD management)
+    // --- Build Process (with CWD management) ---
     let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
     info!(
         "Changing working directory to build dir: {}",
         build_dir.display()
     );
     std::env::set_current_dir(build_dir).map_err(SapphireError::Io)?;
-    let _cwd_guard = CurrentWorkingDirectoryGuard::new(original_cwd.clone()); // RAII guard
+    // RAII guard ensures CWD is restored even if subsequent steps panic or return Err
+    let _cwd_guard = CurrentWorkingDirectoryGuard::new(original_cwd.clone());
 
-    // Install Resources First (if any)
+    // --- Autoreconf Check (remains the same) ---
+    if (Path::new("configure.ac").exists() || Path::new("configure.in").exists())
+        && !Path::new("configure").exists()
+    {
+        match which::which_in("autoreconf", build_env.get_path_string(), Path::new(".")) {
+            Ok(autoreconf_path) => {
+                info!("==> Running autoreconf -fvi (as configure script is missing)");
+                let mut cmd = Command::new(autoreconf_path);
+                cmd.args(["-fvi"]);
+                build_env.apply_to_command(&mut cmd);
+                match run_command(&mut cmd, "autoreconf") {
+                    Ok(_) => info!("Autoreconf completed successfully."),
+                    Err(e) => warn!("Autoreconf failed ({}). Continuing build detection...", e),
+                }
+            }
+            Err(_) => {
+                warn!("configure.ac/in found but configure script and autoreconf command are missing.");
+            }
+        }
+    }
+
+    // --- Install Resources First (remains the same) ---
     if !resources.is_empty() {
         info!("==> Installing {} resources into libexec", resources.len());
         let libexec_path = install_dir.join("libexec");
@@ -322,13 +684,11 @@ pub async fn build_from_source(
             if let Some(stage_path) = resource_stage_paths.get(&resource.name) {
                 info!(" --> Installing resource: {}", resource.name);
                 // install_resource changes CWD, ensure build_dir is restored afterward
-                let build_dir_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
+                // let build_dir_cwd = std::env::current_dir().map_err(SapphireError::Io)?; // Not
+                // needed due to guard install_resource needs to be called within
+                // the context of the _cwd_guard
                 install_resource(resource, stage_path, &libexec_path, &build_env)?;
-                info!(
-                    "Restoring working directory after resource install: {}",
-                    build_dir_cwd.display()
-                );
-                std::env::set_current_dir(build_dir_cwd).map_err(SapphireError::Io)?;
+                // No need to manually restore CWD here, the guard handles it.
             } else {
                 warn!(
                     "Could not find stage path for resource '{}'. Skipping installation.",
@@ -338,360 +698,26 @@ pub async fn build_from_source(
         }
     }
 
-    // Build Main Formula
-    info!("==> Building main formula: {}", formula_name);
-    detect_and_build(
+    // --- Build Main Formula using simplified detection ---
+    info!(
+        "==> Detecting build system and building main formula: {}",
+        formula_name
+    );
+    // CWD is now guaranteed to be the source root directory
+    detect_and_build_in_cwd(
         formula,
-        build_dir, // Pass the root build dir
         &install_dir,
         &build_env,
-        all_installed_paths,
+        all_installed_paths, // Keep passing this for Go build
     )?;
 
-    // Post-Install (CWD restored by _cwd_guard dropping)
-    // No need to set CWD back manually here if _cwd_guard is used correctly.
-    // std::env::set_current_dir(original_cwd).map_err(SapphireError::Io)?; // This is redundant
-    crate::build::write_receipt(formula, &install_dir)?;
+    // --- Post-Install (CWD restored by _cwd_guard dropping) ---
+    crate::build::write_receipt(formula, &install_dir)?; // Ensure write_receipt is available
     info!(
         "Build completed, temporary directory {} will be cleaned up.",
         build_dir.display()
     );
     Ok(install_dir)
-}
-
-// --- detect_and_build ---
-fn detect_and_build(
-    formula: &Formula,
-    build_dir: &Path, // Root of extracted source (e.g., .../llvm@19-Vrwnv2/)
-    install_dir: &Path,
-    build_env: &BuildEnvironment,
-    all_installed_paths: &[PathBuf],
-) -> Result<()> {
-    info!(
-        "Attempting to detect build system in: {}",
-        build_dir.display()
-    );
-
-    // Marker format: (filename, system_name, requires_root_dir_detection)
-    // requires_root_dir_detection: true if we generally expect this marker ONLY at the root.
-    let markers: &[(&str, &str, bool)] = &[
-        ("configure", "Autotools (configure script)", true), // Must be at root
-        ("CMakeLists.txt", "CMake", false),                  // Can be nested
-        ("meson.build", "Meson", false),                     // Can be nested
-        ("Makefile.PL", "Perl (Makefile.PL)", true),         // Must be at root
-        ("Configure", "Perl (Configure)", true),             // Must be at root
-        ("Cargo.toml", "Rust/Cargo", true),                  // Must be at root
-        ("setup.py", "Python setup.py", true),               // Must be at root
-        ("Makefile", "Makefile", true),                      // Must be at root
-        ("makefile", "Makefile", true),                      // Must be at root
-    ];
-
-    // --- Special case checks first ---
-
-    // Handle autoreconf possibility if configure script is missing but .ac/.in exists
-    if (build_dir.join("configure.ac").exists() || build_dir.join("configure.in").exists())
-        && !build_dir.join("configure").exists()
-    {
-        match which::which_in("autoreconf", build_env.get_path_string(), build_dir) {
-            Ok(autoreconf_path) => {
-                info!("==> Running autoreconf -fvi (as configure script is missing)");
-                let mut cmd = Command::new(autoreconf_path);
-                cmd.args(["-fvi"]);
-                build_env.apply_to_command(&mut cmd);
-                // Use helper, but only warn on failure, don't stop detection
-                match run_command(&mut cmd, "autoreconf") {
-                    Ok(_) => info!("Autoreconf completed successfully."),
-                    Err(e) => warn!("Autoreconf failed ({}). Continuing detection...", e),
-                }
-            }
-            Err(_) => {
-                warn!("configure.ac/in found but configure script and autoreconf command are missing.");
-            }
-        }
-    }
-
-    // Handle Go structure (special case not based on single marker file)
-    let go_src_dir = build_dir.join("src");
-    if go_src_dir.is_dir()
-        && (go_src_dir.join("make.bash").exists() || go_src_dir.join("all.bash").exists())
-    {
-        info!("Detected Go build system (make.bash or all.bash)");
-        // Go build usually expects to run from the root of the extracted source
-        return go::go_build(build_dir, install_dir, build_env, all_installed_paths);
-    }
-
-    // --- Search for markers ---
-    // Stores best match: (marker_filename, marker_containing_dir_path, depth, score)
-    let mut best_match: Option<(String, PathBuf, usize, i32)> = None;
-    let base_formula_name = formula
-        .name()
-        .split('@')
-        .next()
-        .unwrap_or_else(|| formula.name());
-    let preferred_subdirs: Vec<OsString> = vec![
-        OsString::from("src"),
-        OsString::from("source"),
-        OsString::from(base_formula_name), // e.g., "llvm" for "llvm@19"
-    ];
-
-    // Iterate through directories using WalkDir, limiting depth
-    for entry_result in WalkDir::new(build_dir)
-        .min_depth(0) // Start from root
-        .max_depth(2) // Check root, depth 1, depth 2
-        .into_iter()
-        .filter_map(|e| e.ok())
-    // Filter out errors during walk
-    {
-        let current_path = entry_result.path(); // Path to the file/directory entry
-        let current_depth = entry_result.depth();
-
-        if current_path.is_file() {
-            let file_name_os = entry_result.file_name();
-            let file_name = file_name_os.to_str().unwrap_or("");
-            let parent_dir = current_path.parent().unwrap_or(build_dir); // Dir containing the file
-
-            // Find if this filename is a known marker
-            if let Some((marker, _system_name, requires_root)) =
-                markers.iter().find(|(m, _, _)| *m == file_name)
-            {
-                if *requires_root && current_depth > 1 {
-                    debug!(
-                        "Skipping root marker '{}' found at depth {}, requires depth 1.",
-                        marker, current_depth
-                    );
-                    continue;
-                }
-
-                // (Adjust scoring to strongly prefer depth 1 for root markers)
-                let mut score = match current_depth {
-                    1 => {
-                        // Directly inside build_dir (this is the expected root)
-                        if *requires_root {
-                            5
-                        }
-                        // Highest score for root markers here
-                        else {
-                            3
-                        } // Moderate score for non-root markers (CMake/Meson) found flat
-                    }
-                    2 => {
-                        // Inside a subdirectory
-                        if !*requires_root {
-                            // Only score non-root markers here
-                            let parent_dir_name = parent_dir.file_name().map(|f| f.to_os_string());
-                            if parent_dir_name.is_some_and(|name| preferred_subdirs.contains(&name))
-                            {
-                                4 // High score for non-root markers in preferred subdirs
-                            } else {
-                                2 // Lower score for non-root markers in other subdirs
-                            }
-                        } else {
-                            continue; // Don't score root markers found deeper than depth 1
-                        }
-                    }
-                    _ => continue, // Ignore depth 0 (the directory itself) or > 2
-                };
-
-                // Adjust score based on depth (prefer shallower for same base score)
-                score -= current_depth as i32;
-
-                // Marker list priority (lower index = higher priority)
-                let current_priority = markers
-                    .iter()
-                    .position(|(m, _, _)| m == marker)
-                    .unwrap_or(usize::MAX);
-
-                // --- Update best match ---
-                let is_better = match best_match {
-                    None => true,
-                    Some((_, _, _, existing_score)) if score > existing_score => true,
-                    Some((ref existing_marker, _, _, existing_score))
-                        if score == existing_score =>
-                    {
-                        let existing_priority = markers
-                            .iter()
-                            .position(|(m, _, _)| m == existing_marker)
-                            .unwrap_or(usize::MAX);
-                        current_priority < existing_priority // Better priority at same score
-                    }
-                    _ => false, // Not better
-                };
-
-                if is_better {
-                    debug!(
-                        "Updating best match: '{}' in {} (depth {}, score {}, priority {})",
-                        marker,
-                        parent_dir.display(),
-                        current_depth,
-                        score,
-                        current_priority
-                    );
-                    best_match = Some((
-                        marker.to_string(),
-                        parent_dir.to_path_buf(), // Store dir *containing* marker
-                        current_depth,
-                        score,
-                    ));
-                }
-            }
-        }
-    }
-
-    // --- Dispatch based on the best match found ---
-    if let Some((marker_name, marker_dir, depth, score)) = best_match {
-        let system_name = markers
-            .iter()
-            .find(|(m, _, _)| m == &marker_name)
-            .map(|(_, sn, _)| *sn)
-            .unwrap_or("Unknown");
-
-        info!(
-            "Detected build system '{}' (marker: '{}', score: {}) in {} (depth: {})",
-            system_name,
-            marker_name,
-            score,
-            marker_dir.display(), // Log the directory *containing* the marker
-            depth
-        );
-
-        // Determine the effective source directory for the build command
-        // Most build systems run from the root of the extracted archive.
-        // CMake and Meson are exceptions; they need the directory containing the marker file.
-        let source_path_for_build =
-            if depth > 0 && (marker_name == "CMakeLists.txt" || marker_name == "meson.build") {
-                info!(
-                    "Using nested marker directory for build: {}",
-                    marker_dir.display()
-                );
-                marker_dir.as_path()
-            } else {
-                // Default to the root build directory for root markers or other (unexpected) nested
-                // ones.
-                info!(
-                    "Using root build directory for build: {}",
-                    build_dir.display()
-                );
-                build_dir
-            };
-
-        return dispatch_build(
-            &marker_name,
-            source_path_for_build, // Pass the determined source path
-            install_dir,
-            build_env,
-            all_installed_paths,
-        );
-    }
-
-    // --- If no build system detected ---
-    error!(
-        "Could not determine build system for {}",
-        build_dir.display()
-    );
-    Err(SapphireError::Generic(format!(
-        "Could not determine build system for {}",
-        build_dir.display()
-    )))
-}
-
-// --- dispatch_build ---
-fn dispatch_build(
-    marker_filename: &str,
-    source_dir_for_build: &Path, // Path build func should use (might be root or nested)
-    install_dir: &Path,
-    build_env: &BuildEnvironment,
-    _all_installed_paths: &[PathBuf], /* Keep in case Go needs it, though it's handled
-                                       * separately now */
-) -> Result<()> {
-    // Remember: The *current working directory* for dispatch_build is still the root `build_dir`.
-    // The build functions themselves might change CWD or operate relative to
-    // `source_dir_for_build`.
-    match marker_filename {
-        "configure" => {
-            info!("Dispatching to Autotools (configure script)");
-            // configure_and_make assumes it runs ./configure from the CWD (which is root build_dir)
-            make::configure_and_make(install_dir, build_env)
-        }
-        "CMakeLists.txt" => {
-            info!("Dispatching to CMake");
-            // cmake_build needs the path containing CMakeLists.txt
-            cmake::cmake_build(source_dir_for_build, install_dir, build_env)
-        }
-        "meson.build" => {
-            info!("Dispatching to Meson");
-            // meson_build needs the path containing meson.build
-            meson::meson_build(source_dir_for_build, install_dir, build_env)
-        }
-        "Makefile.PL" | "Configure" => {
-            info!("Dispatching to Perl build");
-            // perl_build likely expects to run from the CWD (root build_dir)
-            // It might internally use source_dir_for_build if needed, but typically runs `perl
-            // Makefile.PL` in CWD
-            perl::perl_build(source_dir_for_build, install_dir, build_env) // Pass root source dir
-        }
-        "Cargo.toml" => {
-            info!("Dispatching to Rust/Cargo");
-            // cargo_build runs `cargo build --release` from CWD (root build_dir)
-            cargo::cargo_build(install_dir, build_env)
-        }
-        "setup.py" => {
-            info!("Dispatching to Python setup.py");
-            // python_build runs `python setup.py install` from CWD (root build_dir)
-            python::python_build(install_dir, build_env)
-        }
-        "Makefile" | "makefile" => {
-            info!("Dispatching to simple Makefile");
-            // simple_make runs `make install` from CWD (root build_dir)
-            make::simple_make(install_dir, build_env)
-        }
-        // Note: Go is handled earlier as a special case.
-        _ => {
-            error!(
-                "Internal error: Unknown marker file dispatched: {}",
-                marker_filename
-            );
-            Err(SapphireError::Generic(format!(
-                "Internal error: Unknown build system marker '{}'",
-                marker_filename
-            )))
-        }
-    }
-}
-
-// --- Resource installation helpers ---
-fn install_resource(
-    resource: &ResourceSpec,
-    stage_path: &Path,   // Directory where resource was extracted
-    libexec_path: &Path, // Base libexec path (e.g., <prefix>/libexec)
-    build_env: &BuildEnvironment,
-) -> Result<()> {
-    let original_cwd = std::env::current_dir().map_err(SapphireError::Io)?;
-    debug!(
-        "Changing CWD for resource '{}' install: {}",
-        resource.name,
-        stage_path.display()
-    );
-    std::env::set_current_dir(stage_path).map_err(SapphireError::Io)?;
-    // Use RAII guard to ensure CWD restoration even on errors
-    let _cwd_guard = CurrentWorkingDirectoryGuard::new(original_cwd);
-
-    // Check for build files within the staged resource directory
-    if stage_path.join("Makefile.PL").exists() {
-        info!("   -> Detected Perl resource '{}'", resource.name);
-        install_perl_resource(resource, libexec_path, build_env)?;
-    } else if stage_path.join("setup.py").exists() {
-        info!("   -> Detected Python resource '{}'", resource.name);
-        install_python_resource(resource, libexec_path, build_env)?;
-    } else {
-        // We could potentially add more resource build system detections here (e.g., simple make
-        // install)
-        warn!(
-            "   -> Could not detect known build system (Perl/Python) for resource '{}' in {}. Skipping install.",
-            resource.name,
-            stage_path.display()
-        );
-    }
-    Ok(()) // CWD is restored when _cwd_guard goes out of scope
 }
 
 fn install_perl_resource(
@@ -869,32 +895,4 @@ fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path
         ))
     })?;
     Ok(())
-}
-
-// --- CurrentWorkingDirectoryGuard ---
-/// Restores the original working directory when dropped (RAII).
-struct CurrentWorkingDirectoryGuard {
-    original_cwd: PathBuf,
-}
-impl CurrentWorkingDirectoryGuard {
-    fn new(original_cwd: PathBuf) -> Self {
-        Self { original_cwd }
-    }
-}
-impl Drop for CurrentWorkingDirectoryGuard {
-    fn drop(&mut self) {
-        if let Err(e) = std::env::set_current_dir(&self.original_cwd) {
-            // Use tracing::error! for consistency if tracing is the standard logger
-            error!(
-                "Failed to restore original working directory to {}: {}",
-                self.original_cwd.display(),
-                e
-            );
-        } else {
-            debug!(
-                "Restored working directory to: {}",
-                self.original_cwd.display()
-            );
-        }
-    }
 }
