@@ -41,20 +41,19 @@ pub fn cmake_build(
     );
 
     let mut cmd = Command::new(cmake_exe);
-    // Pass "." as the source directory relative to the CWD (which is the actual source root)
-    cmd.arg(".") // <--- CHANGED FROM source_dir_for_build (which was previously passed here)
+    // Pass ".." as the source directory relative to the build_subdir where cmake runs
+    cmd.arg("..") // <--- CORRECTED LINE
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install_dir.display()))
-        .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5") // Keep this for compatibility
-        .arg("-DCMAKE_BUILD_TYPE=Release") // Add recommended build type
+        .arg("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+        .arg("-DCMAKE_BUILD_TYPE=Release")
         .args([
             "-G",
-            "Ninja", // Specify Ninja generator
+            "Ninja",
             "-DCMAKE_FIND_FRAMEWORK=LAST",
-            "-DCMAKE_VERBOSE_MAKEFILE=ON", // Verbose output helpful for debugging
-            "-Wno-dev",                    // Suppress developer warnings if needed
+            "-DCMAKE_VERBOSE_MAKEFILE=ON",
+            "-Wno-dev",
         ])
-        // Run from the newly created build subdir
-        .current_dir(&build_subdir);
+        .current_dir(&build_subdir); // Run from the build subdir
 
     build_env.apply_to_command(&mut cmd);
     let output = cmd
