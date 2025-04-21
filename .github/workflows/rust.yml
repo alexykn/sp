@@ -1,14 +1,20 @@
-name: CI
+name: Rust CI
 
 on:
   push:
     branches:
       - main
   pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   rust-macos-arm64:
     runs-on: macos-latest
+
     steps:
       - name: Check out code
         uses: actions/checkout@v3
