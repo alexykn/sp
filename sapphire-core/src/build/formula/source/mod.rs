@@ -521,7 +521,6 @@ pub async fn build_from_source(
         create_dir_all_with_context(&install_dir, "install directory")?;
         // Call the function that handles copying the single file
         install_single_file(source_path, formula, &install_dir)?;
-        // Write the receipt and finish early for single files
         crate::build::write_receipt(formula, &install_dir)?;
         return Ok(install_dir);
     }
@@ -711,7 +710,14 @@ pub async fn build_from_source(
         all_installed_paths, // Keep passing this for Go build
     )?;
 
-    // --- Post-Install (CWD restored by _cwd_guard dropping) ---
+    if !install_dir.exists() {
+        info!("Creating installation directory: {}", install_dir.display());
+        fs::create_dir_all(&install_dir).map_err(|e| {
+           SapphireError::Io(std::io::Error::new(e.kind(), format!("Failed create install dir {}: {}", install_dir.display(), e)))
+        })?;
+    } else {
+        debug!("Installation directory already exists: {}", install_dir.display());
+    }
     crate::build::write_receipt(formula, &install_dir)?; // Ensure write_receipt is available
     info!(
         "Build completed, temporary directory {} will be cleaned up.",
