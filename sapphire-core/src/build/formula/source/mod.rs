@@ -40,7 +40,6 @@ const SUPPORTED_ARCHIVE_EXTENSIONS: [&str; 5] = ["gz", "bz2", "xz", "tar", "zip"
 const RECOGNISED_SINGLE_FILE_EXTENSIONS: [&str; 9] =
     ["tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zip"];
 
-
 // --- download_source ---
 pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathBuf> {
     let url = if !formula.url.is_empty() {
@@ -187,22 +186,28 @@ fn detect_and_build_in_cwd(
     ))
 }
 
-fn determine_archive_type(archive_path: &Path, _context: &str) -> Result<&'static str> { // <-- Prefixed
+fn determine_archive_type(archive_path: &Path, _context: &str) -> Result<&'static str> {
+    // <-- Prefixed
     match infer::get_from_path(archive_path)? {
         Some(kind) => {
             let ext = kind.extension();
             // Use the constant defined earlier
             if SUPPORTED_ARCHIVE_EXTENSIONS.contains(&ext) {
-                SUPPORTED_ARCHIVE_EXTENSIONS.iter().find(|&&s| s == ext).copied().ok_or_else(|| {
-                    SapphireError::Generic(format!(
-                        "Internal error matching inferred extension {}",
-                        ext
-                    ))
-                })
+                SUPPORTED_ARCHIVE_EXTENSIONS
+                    .iter()
+                    .find(|&&s| s == ext)
+                    .copied()
+                    .ok_or_else(|| {
+                        SapphireError::Generic(format!(
+                            "Internal error matching inferred extension {}",
+                            ext
+                        ))
+                    })
             } else {
                 Err(SapphireError::Generic(format!(
                     "Unsupported inferred archive type '{}' for {}",
-                    ext, archive_path.display() // Add path for context
+                    ext,
+                    archive_path.display() // Add path for context
                 )))
             }
         }
@@ -212,16 +217,21 @@ fn determine_archive_type(archive_path: &Path, _context: &str) -> Result<&'stati
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
             if SUPPORTED_ARCHIVE_EXTENSIONS.contains(&ext) {
-                 SUPPORTED_ARCHIVE_EXTENSIONS.iter().find(|&&s| s == ext).copied().ok_or_else(|| {
-                    SapphireError::Generic(format!(
-                        "Internal error matching file extension {}",
-                        ext
-                    ))
-                })
+                SUPPORTED_ARCHIVE_EXTENSIONS
+                    .iter()
+                    .find(|&&s| s == ext)
+                    .copied()
+                    .ok_or_else(|| {
+                        SapphireError::Generic(format!(
+                            "Internal error matching file extension {}",
+                            ext
+                        ))
+                    })
             } else {
                 Err(SapphireError::Generic(format!(
                     "Unsupported file extension '{}' for {}",
-                    ext, archive_path.display() // Add path for context
+                    ext,
+                    archive_path.display() // Add path for context
                 )))
             }
         }
@@ -246,13 +256,21 @@ fn install_resource(
 
     // Check for build files within the staged resource directory
     // Prioritize Perl check if both Makefile.PL and setup.py might exist
-    if stage_path.join("Makefile.PL").exists() { // Check for Perl first
-        info!("   -> Detected Perl resource '{}', installing...", resource.name);
+    if stage_path.join("Makefile.PL").exists() {
+        // Check for Perl first
+        info!(
+            "   -> Detected Perl resource '{}', installing...",
+            resource.name
+        );
         // Call the function to handle Perl resource installation
         install_perl_resource(resource, libexec_path, build_env)?;
-    } else if stage_path.join("setup.py").exists() { // Check for Python next
-        info!("   -> Detected Python resource '{}', installing...", resource.name);
-         // Call the function to handle Python resource installation
+    } else if stage_path.join("setup.py").exists() {
+        // Check for Python next
+        info!(
+            "   -> Detected Python resource '{}', installing...",
+            resource.name
+        );
+        // Call the function to handle Python resource installation
         install_python_resource(resource, libexec_path, build_env)?;
     } else {
         // We could potentially add more resource build system detections here
@@ -277,31 +295,29 @@ pub async fn build_from_source(
     let formula_name = formula.name();
 
     let source_extension = source_path
-    .extension()
-    .and_then(|s| s.to_str())
-    .unwrap_or("");
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
 
     // Check if the extension indicates it's NOT a recognized archive type
     // If it's not a known archive, assume it's a single file to be installed directly.
     if !RECOGNISED_SINGLE_FILE_EXTENSIONS.contains(&source_extension) {
-    info!("==> Installing single file formula: {}", formula_name);
-    create_dir_all_with_context(&install_dir, "install directory")?;
-    // Call the function that handles copying the single file
-    install_single_file(source_path, formula, &install_dir)?;
-    // Write the receipt and finish early for single files
-    crate::build::write_receipt(formula, &install_dir)?;
-    return Ok(install_dir);
-}
+        info!("==> Installing single file formula: {}", formula_name);
+        create_dir_all_with_context(&install_dir, "install directory")?;
+        // Call the function that handles copying the single file
+        install_single_file(source_path, formula, &install_dir)?;
+        // Write the receipt and finish early for single files
+        crate::build::write_receipt(formula, &install_dir)?;
+        return Ok(install_dir);
+    }
 
     // --- Determine Archive Type and Infer Root ---
     // (Assuming source_path is guaranteed to be an archive now,
     // single file check might be moved before calling build_from_source if needed)
-    let source_archive_type_str =
-        determine_archive_type(source_path, "main source archive")?; // Use existing helper
+    let source_archive_type_str = determine_archive_type(source_path, "main source archive")?; // Use existing helper
 
     // Infer the root directory *before* extraction
-    let inferred_root_dir =
-        extract::infer_archive_root_dir(source_path, source_archive_type_str)?;
+    let inferred_root_dir = extract::infer_archive_root_dir(source_path, source_archive_type_str)?;
 
     let strip_components = if inferred_root_dir.is_some() {
         // If a single root dir exists, strip it during extraction
@@ -335,7 +351,8 @@ pub async fn build_from_source(
         build_dir.display(),
         strip_components
     );
-    // Call the existing extract_archive function (ensure it's in scope, maybe crate::build::extract::extract_archive)
+    // Call the existing extract_archive function (ensure it's in scope, maybe
+    // crate::build::extract::extract_archive)
     crate::build::extract::extract_archive(
         source_path,
         build_dir,
@@ -343,7 +360,6 @@ pub async fn build_from_source(
         source_archive_type_str,
     )?;
     debug!("==> Extracted main source to {}", build_dir.display());
-
 
     // --- Resource Handling (remains the same) ---
     let resources = formula.resources()?; // Assume this returns Vec<ResourceSpec>
@@ -386,12 +402,12 @@ pub async fn build_from_source(
                 &format!("resource '{}'", res_name),
             )?;
             // Resources are typically extracted without stripping components
-             crate::build::extract::extract_archive(
-                 &resource_archive_path,
-                 &stage_path,
-                 0, // strip_components = 0 for resources
-                 resource_archive_type_str,
-             )?;
+            crate::build::extract::extract_archive(
+                &resource_archive_path,
+                &stage_path,
+                0, // strip_components = 0 for resources
+                resource_archive_type_str,
+            )?;
             resource_stage_paths.insert(res_name, stage_path);
         }
     }
@@ -453,10 +469,11 @@ pub async fn build_from_source(
             if let Some(stage_path) = resource_stage_paths.get(&resource.name) {
                 info!(" --> Installing resource: {}", resource.name);
                 // install_resource changes CWD, ensure build_dir is restored afterward
-                // let build_dir_cwd = std::env::current_dir().map_err(SapphireError::Io)?; // Not needed due to guard
-                 // install_resource needs to be called within the context of the _cwd_guard
+                // let build_dir_cwd = std::env::current_dir().map_err(SapphireError::Io)?; // Not
+                // needed due to guard install_resource needs to be called within
+                // the context of the _cwd_guard
                 install_resource(resource, stage_path, &libexec_path, &build_env)?;
-                 // No need to manually restore CWD here, the guard handles it.
+                // No need to manually restore CWD here, the guard handles it.
             } else {
                 warn!(
                     "Could not find stage path for resource '{}'. Skipping installation.",
@@ -467,7 +484,10 @@ pub async fn build_from_source(
     }
 
     // --- Build Main Formula using simplified detection ---
-    info!("==> Detecting build system and building main formula: {}", formula_name);
+    info!(
+        "==> Detecting build system and building main formula: {}",
+        formula_name
+    );
     // CWD is now guaranteed to be the source root directory
     detect_and_build_in_cwd(
         formula,

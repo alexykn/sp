@@ -64,8 +64,8 @@ pub fn perl_build(
         }
     } else if makefile_pl.exists() {
         info!("==> Building with Perl Makefile.PL...");
-        let perl_exe =
-            which::which_in("perl", build_env.get_path_string(), Path::new(".")).map_err(|_| {
+        let perl_exe = which::which_in("perl", build_env.get_path_string(), Path::new("."))
+            .map_err(|_| {
                 SapphireError::BuildEnvError(
                     "perl command not found in build environment PATH.".to_string(),
                 )
@@ -158,7 +158,10 @@ pub fn perl_build(
 
     if !output_install.status.success() {
         // (Error handling remains the same)
-        println!("Perl make install failed with status: {}", output_install.status);
+        println!(
+            "Perl make install failed with status: {}",
+            output_install.status
+        );
         eprintln!(
             "Perl make install stdout:\n{}",
             String::from_utf8_lossy(&output_install.stdout)

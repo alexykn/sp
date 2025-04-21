@@ -36,7 +36,8 @@ pub fn go_build(
         (all_bash, src_dir.clone())
     } else {
         return Err(SapphireError::Generic(
-            "Go build script (src/make.bash or src/all.bash) not found relative to CWD.".to_string(),
+            "Go build script (src/make.bash or src/all.bash) not found relative to CWD."
+                .to_string(),
         ));
     };
 
@@ -51,8 +52,14 @@ pub fn go_build(
         "==> Running {} {} in {}",
         bash_exe.display(),
         // Display the script path relative to CWD for clarity
-        script_to_run.strip_prefix(build_dir_dot).unwrap_or(&script_to_run).display(),
-        run_in_dir.strip_prefix(build_dir_dot).unwrap_or(&run_in_dir).display()
+        script_to_run
+            .strip_prefix(build_dir_dot)
+            .unwrap_or(&script_to_run)
+            .display(),
+        run_in_dir
+            .strip_prefix(build_dir_dot)
+            .unwrap_or(&run_in_dir)
+            .display()
     );
 
     // Ensure script is executable
@@ -64,11 +71,12 @@ pub fn go_build(
                 let original_mode = perms.mode();
                 // Set user execute bit if not already set
                 if original_mode & 0o100 == 0 {
-                   perms.set_mode(original_mode | 0o100); // Add u+x
+                    perms.set_mode(original_mode | 0o100); // Add u+x
                     if let Err(e) = fs::set_permissions(&script_to_run, perms) {
                         warn!(
                             "Warning: Failed to set executable permission on {}: {}",
-                            script_to_run.display(), e
+                            script_to_run.display(),
+                            e
                         );
                     } else {
                         debug!("Set {} executable.", script_to_run.display());
@@ -77,7 +85,8 @@ pub fn go_build(
             }
             Err(e) => warn!(
                 "Warning: Failed to read metadata for {}: {}",
-                script_to_run.display(), e
+                script_to_run.display(),
+                e
             ),
         }
     }
@@ -100,7 +109,11 @@ pub fn go_build(
 
     let mut cmd = Command::new(bash_exe);
     // Pass the relative script path ./src/make.bash etc.
-    cmd.arg(script_to_run.strip_prefix(build_dir_dot).unwrap_or(&script_to_run));
+    cmd.arg(
+        script_to_run
+            .strip_prefix(build_dir_dot)
+            .unwrap_or(&script_to_run),
+    );
     cmd.current_dir(&run_in_dir); // Run the script from within the src directory
     build_env.apply_to_command(&mut cmd);
     cmd.envs(&go_build_specific_env);
@@ -190,20 +203,19 @@ pub fn go_build(
     // Only copy src if it exists *outside* the install dir already
     // This prevents recursion if install_dir is inside build_dir_dot somehow
     if go_output_src_dir.is_dir() && go_output_src_dir != install_dir.join("src") {
-         info!(
-             "Copying contents from {} to {}",
-             go_output_src_dir.display(),
-             target_src_dir.display()
-         );
-         fs::create_dir_all(&target_src_dir).map_err(SapphireError::Io)?;
-         copy_directory_contents(&go_output_src_dir, &target_src_dir)?;
+        info!(
+            "Copying contents from {} to {}",
+            go_output_src_dir.display(),
+            target_src_dir.display()
+        );
+        fs::create_dir_all(&target_src_dir).map_err(SapphireError::Io)?;
+        copy_directory_contents(&go_output_src_dir, &target_src_dir)?;
     } else if !go_output_src_dir.is_dir() {
-         debug!(
-             "Go output src directory not found: {}",
-             go_output_src_dir.display()
-         );
+        debug!(
+            "Go output src directory not found: {}",
+            go_output_src_dir.display()
+        );
     }
-
 
     Ok(())
 }

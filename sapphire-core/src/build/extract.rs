@@ -3,19 +3,19 @@
 // Compatible with tar v0.4.40+: `Entry::unpack` returns `io::Result<tar::Unpacked>`
 // and `Entry::path` returns `io::Result<Cow<Path>>`.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
+use tar::Archive;
 use tracing::{debug, error, warn};
 use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
 
 use crate::utils::error::{Result, SapphireError};
-use std::collections::HashSet;
-use tar::Archive;
 
 /// Infers the single top-level directory within an archive, if one exists.
 /// Returns Ok(Some(PathBuf)) if a single root dir is found (e.g., "foo-1.2/").
@@ -32,11 +32,7 @@ pub(crate) fn infer_archive_root_dir(
     let file = File::open(archive_path).map_err(|e| {
         SapphireError::Io(std::io::Error::new(
             e.kind(),
-            format!(
-                "Failed to open archive {}: {}",
-                archive_path.display(),
-                e
-            ),
+            format!("Failed to open archive {}: {}", archive_path.display(), e),
         ))
     })?;
 
@@ -120,10 +116,10 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
                 return Ok(None); // Archive is not structured under a single root dir
             }
         } else {
-             // Path is empty or unusual, treat as non-standard structure
-             tracing::debug!(
-                 "Empty or unusual path found in TAR {}, cannot infer single root.",
-                  archive_path_for_log.display()
+            // Path is empty or unusual, treat as non-standard structure
+            tracing::debug!(
+                "Empty or unusual path found in TAR {}, cannot infer single root.",
+                archive_path_for_log.display()
             );
             return Ok(None);
         }
@@ -131,24 +127,26 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
 
     // After checking all entries:
     if unique_roots.len() == 1 && non_empty_entry_found {
-         let inferred_root = first_component_name.unwrap(); // Safe unwrap as len == 1
-         tracing::debug!(
+        let inferred_root = first_component_name.unwrap(); // Safe unwrap as len == 1
+        tracing::debug!(
             "Inferred single root directory in TAR {}: {}",
-             archive_path_for_log.display(), inferred_root.display()
+            archive_path_for_log.display(),
+            inferred_root.display()
         );
         Ok(Some(inferred_root))
     } else if !non_empty_entry_found {
         tracing::warn!(
             "TAR archive {} appears to be empty or contain only metadata.",
-            archive_path_for_log.display());
+            archive_path_for_log.display()
+        );
         Ok(None) // Empty archive doesn't have a root dir
-    }
-     else {
+    } else {
         // This case (len == 0 but non_empty_entry_found is true) shouldn't happen
         // If len > 1, it was handled in the loop
         tracing::debug!(
             "No single common root directory found in TAR {}. unique_roots count: {}",
-            archive_path_for_log.display(), unique_roots.len()
+            archive_path_for_log.display(),
+            unique_roots.len()
         );
         Ok(None) // Flat archive or multiple roots
     }
@@ -171,7 +169,8 @@ fn infer_zip_root<R: Read + Seek>(
     let mut first_component_name: Option<PathBuf> = None;
 
     for i in 0..archive.len() {
-        let file = archive.by_index_raw(i).map_err(|e| { // Use by_index_raw to avoid full decompression
+        let file = archive.by_index_raw(i).map_err(|e| {
+            // Use by_index_raw to avoid full decompression
             SapphireError::Generic(format!(
                 "Error reading ZIP index {} in {}: {}",
                 i,
@@ -184,32 +183,37 @@ fn infer_zip_root<R: Read + Seek>(
         let path_str = file.name();
         let path = PathBuf::from(path_str); // Convert raw string to PathBuf
 
-         // Ignore metadata-only entries if they have no components
+        // Ignore metadata-only entries if they have no components
         if path.components().next().is_none() {
             continue;
         }
 
-
         if let Some(first_comp) = path.components().next() {
             if let Component::Normal(name) = first_comp {
-                 non_empty_entry_found = true;
-                 let current_root = PathBuf::from(name);
-                 if first_component_name.is_none() {
-                     first_component_name = Some(current_root.clone());
-                 }
-                 unique_roots.insert(current_root);
-
+                non_empty_entry_found = true;
+                let current_root = PathBuf::from(name);
+                if first_component_name.is_none() {
+                    first_component_name = Some(current_root.clone());
+                }
+                unique_roots.insert(current_root);
 
                 if unique_roots.len() > 1 {
-                     tracing::debug!("Multiple top-level items found in ZIP {}, cannot infer single root.", archive_path_for_log.display());
+                    tracing::debug!(
+                        "Multiple top-level items found in ZIP {}, cannot infer single root.",
+                        archive_path_for_log.display()
+                    );
                     return Ok(None);
                 }
             } else {
-                 tracing::debug!("Non-standard top-level component ({:?}) found in ZIP {}, cannot infer single root.", first_comp, archive_path_for_log.display());
+                tracing::debug!("Non-standard top-level component ({:?}) found in ZIP {}, cannot infer single root.", first_comp, archive_path_for_log.display());
                 return Ok(None);
             }
         } else {
-             tracing::debug!("Empty or unusual path ('{}') found in ZIP {}, cannot infer single root.", path_str, archive_path_for_log.display());
+            tracing::debug!(
+                "Empty or unusual path ('{}') found in ZIP {}, cannot infer single root.",
+                path_str,
+                archive_path_for_log.display()
+            );
             return Ok(None);
         }
     }
@@ -217,14 +221,24 @@ fn infer_zip_root<R: Read + Seek>(
     // After checking all entries:
     if unique_roots.len() == 1 && non_empty_entry_found {
         let inferred_root = first_component_name.unwrap(); // Safe unwrap
-         tracing::debug!("Inferred single root directory in ZIP {}: {}", archive_path_for_log.display(), inferred_root.display());
+        tracing::debug!(
+            "Inferred single root directory in ZIP {}: {}",
+            archive_path_for_log.display(),
+            inferred_root.display()
+        );
         Ok(Some(inferred_root))
     } else if !non_empty_entry_found {
-         tracing::warn!("ZIP archive {} appears to be empty or contain only metadata.", archive_path_for_log.display());
+        tracing::warn!(
+            "ZIP archive {} appears to be empty or contain only metadata.",
+            archive_path_for_log.display()
+        );
         Ok(None)
-    }
-    else {
-        tracing::debug!("No single common root directory found in ZIP {}. unique_roots count: {}", archive_path_for_log.display(), unique_roots.len());
+    } else {
+        tracing::debug!(
+            "No single common root directory found in ZIP {}. unique_roots count: {}",
+            archive_path_for_log.display(),
+            unique_roots.len()
+        );
         Ok(None) // Flat archive or multiple roots
     }
 }

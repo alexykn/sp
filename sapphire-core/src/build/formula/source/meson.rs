@@ -36,7 +36,7 @@ pub fn meson_build(
         meson_exe.display(),
         install_dir.display(),
         build_subdir.display(), // Build directory
-        "." // Source directory (CWD) <-- CHANGED from source_dir
+        "."                     // Source directory (CWD) <-- CHANGED from source_dir
     );
 
     let mut cmd_setup = Command::new(&meson_exe);
