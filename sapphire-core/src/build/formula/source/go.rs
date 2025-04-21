@@ -74,7 +74,7 @@ pub fn go_build(
     // --- CORRECTED LDFLAGS ARGUMENTS ---
     cmd.arg("-ldflags"); // Pass the flag name as one argument
     cmd.arg("-s -w"); // Pass the flag value as the next argument
-    // --- END CORRECTION ---
+                      // --- END CORRECTION ---
 
     // You might need to parse build_env for specific GOFLAGS or CGO flags here if needed
     cmd.arg("."); // Build the package in the current directory (build_dir_dot)
