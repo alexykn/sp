@@ -74,9 +74,8 @@ impl Install {
 
                 if any_not_found {
                     info!(
-                    "⚠️  No matching formulae found for {:?}; trying to install as casks instead…",
-                    self.
-names
+                    "No matching formulae found for {:?}; trying to install as casks instead…",
+                    self.names
                 );
                     // retry as casks
                     return install_casks(
@@ -95,7 +94,7 @@ names
     }
 
     async fn install_formulae(&self, cfg: &Config, cache: Arc<Cache>) -> Result<()> {
-        info!("{}", "📦 Beginning bottle installation…".blue().bold());
+        info!("{}", "Beginning bottle installation…".blue().bold());
 
         // Phase 1: Dependency Resolution
         let formulary = Formulary::new(cfg.clone());
@@ -275,7 +274,7 @@ names
             .collect();
 
         if failures.is_empty() {
-            info!("{}", "✅ All bottles installed".green().bold());
+            info!("{}", "All bottles installed".green().bold());
             Ok(())
         } else {
             error!("Installation failed for:");
@@ -389,13 +388,13 @@ async fn install_formula_task(
     let final_opt_path = get_formula_opt_path(&formula, &cfg);
 
     if should_build_source {
-        info!("🔧 Building {} from source...", name);
-        info!("⬇️ Downloading source for {}...", name);
+        info!("Building {} from source...", name);
+        info!("Downloading source for {}...", name);
 
         let source_path =
             sapphire_core::build::formula::source::download_source(&formula, &cfg).await?;
 
-        info!("⚙️ Compiling {}...", name);
+        info!("Compiling {}...", name);
         let install_dir: PathBuf = sapphire_core::build::formula::source::build_from_source(
             &source_path,
             &formula,
@@ -404,16 +403,16 @@ async fn install_formula_task(
         )
         .await?;
 
-        info!("🔗 Linking {}...", name);
+        info!("Linking {}...", name);
         sapphire_core::build::formula::link::link_formula_artifacts(&formula, &install_dir, &cfg)?;
 
-        info!("✅ Built and linked {}", name);
+        info!("Built and linked {}", name);
     } else {
-        info!("⬇️ Downloading bottle for {}...", name);
+        info!("Downloading bottle for {}...", name);
         let bottle_path =
             sapphire_core::build::formula::bottle::download_bottle(&formula, &cfg, &client).await?;
 
-        info!("🍺 Pouring bottle for {}...", name);
+        info!("Pouring bottle for {}...", name);
         let install_dir: PathBuf = tokio::task::spawn_blocking({
             let formula = formula.clone();
             let cfg_clone = cfg.clone();
@@ -429,10 +428,10 @@ async fn install_formula_task(
         .await
         .map_err(join_to_err)??;
 
-        info!("🔗 Linking {}...", name);
+        info!("Linking {}...", name);
         sapphire_core::build::formula::link::link_formula_artifacts(&formula, &install_dir, &cfg)?;
 
-        info!("✅ Poured and linked {}", name);
+        info!("Poured and linked {}", name);
     }
 
     Ok(final_opt_path)
@@ -445,7 +444,7 @@ async fn install_casks(
     cfg: &Config,
     cache: Arc<Cache>,
 ) -> Result<()> {
-    info!("{}", "🍹 Beginning cask installation…".blue().bold());
+    info!("{}", "Beginning cask installation…".blue().bold());
     let sem = Arc::new(Semaphore::new(max_parallel));
     let mut js: JoinSet<(String, Result<()>)> = JoinSet::new();
     for token in tokens.iter().cloned() {
@@ -477,7 +476,7 @@ async fn install_casks(
         }
     }
     if failures.is_empty() {
-        info!("{}", "✅ All casks installed".green().bold());
+        info!("{}", "All casks installed".green().bold());
         Ok(())
     } else {
         Err(SapphireError::InstallError(format!(
@@ -498,14 +497,14 @@ fn install_casks_boxed(
 }
 
 async fn install_cask_task(token: &str, cache: Arc<Cache>, cfg: &Config) -> Result<()> {
-    info!("🔎 Fetching info for cask {}...", token);
+    info!("Fetching info for cask {}...", token);
     let cask: Cask = sapphire_core::fetch::api::get_cask(token).await?;
 
     if let Some(deps) = &cask.depends_on {
         // Formula dependencies
         if !deps.formula.is_empty() {
             info!(
-                "⚙️ Installing formula dependencies for cask {}: {:?}",
+                "Installing formula dependencies for cask {}: {:?}",
                 token, deps.formula
             );
             let dep_args = Install {
@@ -523,7 +522,7 @@ async fn install_cask_task(token: &str, cache: Arc<Cache>, cfg: &Config) -> Resu
         // Cask‐to‐cask dependencies
         if !deps.cask.is_empty() {
             info!(
-                "🍹 Installing cask dependencies for cask {}: {:?}",
+                "Installing cask dependencies for cask {}: {:?}",
                 token, deps.cask
             );
             let casks_to_install = deps.cask.clone();
@@ -541,14 +540,14 @@ async fn install_cask_task(token: &str, cache: Arc<Cache>, cfg: &Config) -> Resu
     }
 
     if cask.is_installed(cfg) {
-        info!("✅ Cask {} already installed – skipping.", token);
+        info!("Cask {} already installed – skipping.", token);
         return Ok(());
     }
 
-    info!("⬇️ Downloading cask {}...", token);
+    info!("Downloading cask {}...", token);
     let dl = build::cask::download_cask(&cask, cache.as_ref()).await?;
 
-    info!("🍺 Installing cask {}...", token);
+    info!("Installing cask {}...", token);
     tokio::task::spawn_blocking({
         let cask_clone = cask.clone();
         let dl_clone = dl.clone();
@@ -558,6 +557,6 @@ async fn install_cask_task(token: &str, cache: Arc<Cache>, cfg: &Config) -> Resu
     .await
     .map_err(join_to_err)??;
 
-    info!("✅ Cask {} installed successfully", token);
+    info!("Cask {} installed successfully", token);
     Ok(())
 }
