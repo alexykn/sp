@@ -25,7 +25,7 @@ bitflags! {
 impl Default for DependencyTag {
     // By default, a dependency is considered runtime unless specified otherwise.
     fn default() -> Self {
-        DependencyTag::RUNTIME
+        Self::RUNTIME
     }
 }
 

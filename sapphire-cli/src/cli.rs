@@ -51,11 +51,11 @@ pub enum Command {
 impl Command {
     pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
         match self {
-            Command::Search(command) => command.run(config, cache).await,
-            Command::Info(command) => command.run(config, cache).await,
-            Command::Update(command) => command.run(config, cache).await,
-            Command::Install(command) => command.run(config, cache).await,
-            Command::Uninstall(command) => command.run(config, cache).await,
+            Self::Search(command) => command.run(config, cache).await,
+            Self::Info(command) => command.run(config, cache).await,
+            Self::Update(command) => command.run(config, cache).await,
+            Self::Install(command) => command.run(config, cache).await,
+            Self::Uninstall(command) => command.run(config, cache).await,
         }
     }
 }

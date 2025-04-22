@@ -37,7 +37,7 @@ impl Version {
 impl FromStr for Version {
     type Err = SapphireError;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Version::parse(s)
+        Self::parse(s)
     }
 }
 
@@ -59,8 +59,8 @@ impl Serialize for Version {
     }
 }
 
-impl AsRef<Version> for Version {
-    fn as_ref(&self) -> &Version {
+impl AsRef<Self> for Version {
+    fn as_ref(&self) -> &Self {
         self
     }
 }
@@ -79,7 +79,7 @@ impl<'de> Deserialize<'de> for Version {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Version::from_str(&s).map_err(serde::de::Error::custom)
+        Self::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
