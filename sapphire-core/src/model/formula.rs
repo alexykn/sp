@@ -279,7 +279,7 @@ impl<'de> Deserialize<'de> for Formula {
             }
         }
 
-        Ok(Formula {
+        Ok(Self {
             name: raw.name,
             stable_version_str,
             version_semver,
@@ -455,7 +455,7 @@ impl<'de> Deserialize<'de> for ResourceSpec {
         let helper = Helper::deserialize(deserializer)?;
         // Note: The actual resource name comes from the key in the map during Formula
         // deserialization
-        Ok(ResourceSpec {
+        Ok(Self {
             name: helper.name,
             url: helper.url,
             sha256: helper.sha256,
