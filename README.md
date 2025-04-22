@@ -95,7 +95,7 @@ Sapphire lives and grows by your feedback and code\! We’re particularly lookin
   - Testing and bug reports for Cask & Bottle installation + `--build-from-source`
   - Test coverage for core and cask modules
   - CLI UI/UX improvements
-  - See [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md)
+  - See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 Feel free to open issues or PRs. Every contribution helps\!
 
