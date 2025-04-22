@@ -74,9 +74,9 @@ impl Install {
 
                 if any_not_found {
                     info!(
-                    "No matching formulae found for {:?}; trying to install as casks instead…",
-                    self.names
-                );
+                        "No matching formulae found for {:?}; trying to install as casks instead…",
+                        self.names
+                    );
                     // retry as casks
                     return install_casks(
                         &self.names,
