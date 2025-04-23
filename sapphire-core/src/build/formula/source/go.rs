@@ -1,3 +1,5 @@
+// FILE: sapphire-core/src/build/formula/source/go.rs
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -5,29 +7,20 @@ use std::process::Command;
 use tracing::{debug, info};
 
 use crate::build::env::BuildEnvironment;
+use crate::build::formula::source::run_command_in_dir;
 use crate::utils::error::{Result, SapphireError};
 
 pub fn go_build(
-    build_dir_dot: &Path,
+    source_dir: &Path,
     install_dir: &Path,
     build_env: &BuildEnvironment,
-    _all_installed_paths: &[PathBuf],
+    _all_installed_paths: &[PathBuf], // Keep if needed later, currently unused
 ) -> Result<()> {
-    if build_dir_dot != Path::new(".") {
-        return Err(SapphireError::BuildEnvError(format!(
-            "go_build expected build path '.' but received '{}'",
-            build_dir_dot.display()
-        )));
-    }
+    info!("==> Building Go module in {}", source_dir.display());
 
-    info!("==> Building Go module (go.mod detected)");
-
-    let go_exe =
-        which::which_in("go", build_env.get_path_string(), Path::new(".")).map_err(|_| {
-            SapphireError::BuildEnvError(
-                "go command not found in build environment PATH.".to_string(),
-            )
-        })?;
+    let go_exe = which::which_in("go", build_env.get_path_string(), source_dir).map_err(|_| {
+        SapphireError::BuildEnvError("go command not found in build environment PATH.".to_string())
+    })?;
 
     let formula_name = install_dir
         .parent()
@@ -40,18 +33,15 @@ pub fn go_build(
             ))
         })?;
 
-    let cmd_pkg_path = Path::new("cmd").join(formula_name);
+    let cmd_pkg_path = source_dir.join("cmd").join(formula_name);
     let package_to_build = if cmd_pkg_path.is_dir() {
         debug!(
             "Found potential command package path: {}",
             cmd_pkg_path.display()
         );
-        format!("./{}", cmd_pkg_path.to_string_lossy())
+        format!("./cmd/{}", formula_name) // Relative to source_dir
     } else {
-        debug!(
-            "Command package path {} not found, building '.'",
-            cmd_pkg_path.display()
-        );
+        debug!("Command package path not found, building '.'");
         ".".to_string()
     };
 
@@ -59,66 +49,40 @@ pub fn go_build(
     fs::create_dir_all(&target_bin_dir).map_err(|e| {
         SapphireError::Io(std::io::Error::new(
             e.kind(),
-            format!(
-                "Failed to create target bin directory {}: {}",
-                target_bin_dir.display(),
-                e
-            ),
+            format!("Failed create target bin dir: {}", e),
         ))
     })?;
     let output_binary_path = target_bin_dir.join(formula_name);
 
     info!(
-        "==> Running: {} build -o {} -ldflags \"-s -w\" {}",
-        go_exe.display(),
+        "==> Running: go build -o {} -ldflags \"-s -w\" {}",
         output_binary_path.display(),
         package_to_build
     );
 
     let mut cmd = Command::new(go_exe);
-    cmd.arg("build");
-    cmd.arg("-o");
-    cmd.arg(&output_binary_path);
-    cmd.arg("-ldflags");
     #[allow(clippy::suspicious_command_arg_space)]
-    cmd.arg("-s -w");
-    cmd.arg(&package_to_build);
+    cmd.arg("build")
+        .arg("-o")
+        .arg(&output_binary_path)
+        .arg("-ldflags")
+        .arg("-s -w")
+        .arg(&package_to_build);
 
-    build_env.apply_to_command(&mut cmd);
+    let build_output = run_command_in_dir(&mut cmd, source_dir, build_env, "go build")?;
 
-    let output = cmd.output().map_err(|e| {
-        SapphireError::CommandExecError(format!("Failed to execute go build: {}", e))
-    })?;
-
-    if !output.status.success() {
-        println!("Go build failed with status: {}", output.status);
-        eprintln!(
-            "Go build stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        eprintln!(
-            "Go build stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let _ = fs::remove_file(&output_binary_path);
-        return Err(SapphireError::Generic(format!(
-            "Go build failed with status: {}",
-            output.status
-        )));
-    } else {
-        debug!(
-            "Go build stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        debug!(
-            "Go build stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        info!(
-            "Go build successful, binary placed at: {}",
-            output_binary_path.display()
-        );
-    }
+    debug!(
+        "Go build stdout:\n{}",
+        String::from_utf8_lossy(&build_output.stdout)
+    );
+    debug!(
+        "Go build stderr:\n{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    info!(
+        "Go build successful, binary placed at: {}",
+        output_binary_path.display()
+    );
 
     Ok(())
 }

@@ -1,20 +1,28 @@
+// FILE: sapphire-core/src/build/formula/source/python.rs
+
 use std::path::Path;
 use std::process::Command;
 
 use tracing::{debug, info};
 
 use crate::build::env::BuildEnvironment;
+use crate::build::formula::source::run_command_in_dir; // Ensure helper is imported if used
 use crate::utils::error::{Result, SapphireError};
 
-/// Build with Python setup.py
-pub fn python_build(install_dir: &Path, build_env: &BuildEnvironment) -> Result<()> {
-    info!("==> Building with Python setup.py");
-    let python_exe = which::which_in("python3", build_env.get_path_string(), Path::new("."))
-        .or_else(|_| which::which_in("python", build_env.get_path_string(), Path::new(".")))
+// Corrected signature: Added source_dir argument
+pub fn python_build(
+    source_dir: &Path,
+    install_dir: &Path,
+    build_env: &BuildEnvironment,
+) -> Result<()> {
+    info!(
+        "==> Building with Python setup.py in {}",
+        source_dir.display()
+    );
+    let python_exe = which::which_in("python3", build_env.get_path_string(), source_dir)
+        .or_else(|_| which::which_in("python", build_env.get_path_string(), source_dir))
         .map_err(|_| {
-            SapphireError::BuildEnvError(
-                "python3 or python command not found in build environment PATH.".to_string(),
-            )
+            SapphireError::BuildEnvError("python3 or python command not found.".to_string())
         })?;
 
     info!(
@@ -26,31 +34,10 @@ pub fn python_build(install_dir: &Path, build_env: &BuildEnvironment) -> Result<
     cmd.arg("setup.py")
         .arg("install")
         .arg(format!("--prefix={}", install_dir.display()));
-    build_env.apply_to_command(&mut cmd);
-    let output = cmd.output().map_err(|e| {
-        SapphireError::CommandExecError(format!("Failed to execute python setup.py install: {}", e))
-    })?;
 
-    if !output.status.success() {
-        println!(
-            "Python setup.py install failed with status: {}",
-            output.status
-        );
-        eprintln!(
-            "Python install stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        eprintln!(
-            "Python install stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return Err(SapphireError::Generic(format!(
-            "Python setup.py install failed with status: {}",
-            output.status
-        )));
-    } else {
-        debug!("Python install completed successfully.");
-    }
+    // Use the helper function to run the command in the correct directory
+    run_command_in_dir(&mut cmd, source_dir, build_env, "python setup.py install")?;
+    debug!("Python install completed successfully.");
 
     Ok(())
 }
