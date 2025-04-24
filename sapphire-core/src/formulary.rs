@@ -55,7 +55,7 @@ impl Formulary {
 
         // 3. Parse the entire JSON array
         // This could be expensive, hence the parsed_cache above.
-        debug!("Parsing full formula list...");
+        debug!("Parsing full formula list");
         let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data).map_err(|e| {
             SapphireError::Cache(format!("Failed to parse cached formula data: {e}"))
         })?;

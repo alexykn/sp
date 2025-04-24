@@ -69,7 +69,7 @@ pub fn configure_and_make(
 
     debug!("Running ./configure --prefix={}", install_dir.display());
     if is_autotools {
-        debug!("    (Detected Autotools flags)");
+        debug!("(Detected Autotools flags)");
     }
 
     let mut cmd_configure = Command::new("./configure");
@@ -192,7 +192,7 @@ pub fn simple_make(
 
         if !formula_name.is_empty() && potential_binary_path.is_file() {
             debug!(
-                "Found potential binary '{}'. Manually installing...",
+                "Found potential binary '{}'. Manually installing",
                 potential_binary_path.display()
             );
             fs::create_dir_all(&bin_dir)?;

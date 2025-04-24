@@ -58,7 +58,7 @@ fn get_current_platform() -> String {
             std::env::consts::ARCH
         };
 
-        debug!("Attempting to determine macOS version using /usr/bin/sw_vers -productVersion...");
+        debug!("Attempting to determine macOS version using /usr/bin/sw_vers -productVersion");
         match Command::new("/usr/bin/sw_vers")
             .arg("-productVersion")
             .output()

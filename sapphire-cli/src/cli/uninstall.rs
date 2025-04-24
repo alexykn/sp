@@ -315,11 +315,11 @@ impl Uninstall {
                     .push(error.to_string());
             }
             for (pkg_name, error_list) in errors_by_pkg {
-                eprintln!("  Package '{}':", pkg_name.cyan());
+                eprintln!("Package '{}':", pkg_name.cyan());
                 // Deduplicate errors for the same package
                 let unique_errors: std::collections::HashSet<_> = error_list.into_iter().collect();
                 for error_str in unique_errors {
-                    eprintln!("    - {}", error_str.red());
+                    eprintln!("- {}", error_str.red());
                 }
             }
 
@@ -381,7 +381,7 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
                     && (e.kind() == std::io::ErrorKind::PermissionDenied
                         || e.kind() == std::io::ErrorKind::DirectoryNotEmpty)
                 {
-                    tracing::warn!("Direct removal failed ({}). Trying with sudo rm -rf...", e);
+                    tracing::warn!("Direct removal failed ({}). Trying with sudo rm -rf", e);
                     let output = Command::new("sudo").arg("rm").arg("-rf").arg(path).output();
                     match output {
                         Ok(out) if out.status.success() => {

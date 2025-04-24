@@ -54,7 +54,7 @@ pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         debug!(
-            "hdiutil detach failed ({}): {}. Trying diskutil...",
+            "hdiutil detach failed ({}): {}. Trying diskutil",
             output.status, stderr
         );
         // Add logging for fallback
@@ -160,7 +160,7 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
     }
 
     debug!(
-        "Copying contents from DMG mount {} to stage {} using ditto...",
+        "Copying contents from DMG mount {} to stage {} using ditto",
         mount_point.display(),
         stage_dir.display()
     );

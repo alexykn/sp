@@ -63,7 +63,7 @@ pub fn install_app_from_staged(
             if e.kind() == std::io::ErrorKind::PermissionDenied
                 || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
             {
-                debug!("Direct removal failed ({}). Trying with sudo rm -rf...", e);
+                debug!("Direct removal failed ({}). Trying with sudo rm -rf", e);
                 debug!("Executing: sudo rm -rf {}", final_app_destination.display());
                 let output = Command::new("sudo")
                     .arg("rm")
@@ -110,7 +110,7 @@ pub fn install_app_from_staged(
             || stderr.contains("operation not permitted")
             || stderr.contains("permission denied")
         {
-            debug!("Direct mv failed ({}), trying cp -R...", stderr);
+            debug!("Direct mv failed ({}), trying cp -R", stderr);
             debug!(
                 "Executing: cp -R {} {}",
                 staged_app_path.display(),

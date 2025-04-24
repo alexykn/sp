@@ -159,7 +159,7 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
         )));
     }
 
-    tracing::debug!("Cache file is valid. Loading...");
+    tracing::debug!("Cache file is valid. Loading");
     let file = fs::File::open(&path)?;
     let data: T = serde_json::from_reader(file)?;
     Ok(data)

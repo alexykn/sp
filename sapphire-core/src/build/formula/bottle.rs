@@ -514,7 +514,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
 
     tracing::debug!("Relocation table:");
     for (k, v) in &repl {
-        tracing::debug!("  {}  →  {}", k, v);
+        tracing::debug!("{}  →  {}", k, v);
     }
 
     // Call the actual patching function
@@ -695,7 +695,7 @@ fn original_relocation_scan_and_patch(
                             if new_content.contains(placeholder) {
                                 new_content = new_content.replace(placeholder, replacement);
                                 replacements_made = true;
-                                debug!("  Text Replaced '{}' in {}", placeholder, path.display());
+                                debug!("Text Replaced '{}' in {}", placeholder, path.display());
                             }
                         }
                         if replacements_made {
@@ -746,7 +746,7 @@ fn original_relocation_scan_and_patch(
     #[cfg(unix)]
     {
         debug!(
-            "Ensuring execute permissions for {} potentially executable files/links...",
+            "Ensuring execute permissions for {} potentially executable files/links",
             files_to_chmod.len()
         );
         let unique_files_to_chmod: HashSet<_> = files_to_chmod.into_iter().collect(); // Use HashSet for uniqueness

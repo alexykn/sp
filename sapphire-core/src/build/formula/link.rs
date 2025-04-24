@@ -168,7 +168,7 @@ fn create_wrappers_in_dir(
                             match is_executable(&source_item_path) {
                                 Ok(true) => {
                                     let wrapper_path = target_bin_dir.join(&file_name);
-                                    debug!("  Found executable: {}", source_item_path.display());
+                                    debug!("Found executable: {}", source_item_path.display());
                                     if remove_existing_link_target(&wrapper_path).is_ok() {
                                         debug!(
                                             "    Creating wrapper script: {} -> {}",
@@ -191,7 +191,12 @@ fn create_wrappers_in_dir(
                                                 );
                                             }
                                             Err(e) => {
-                                                error!("    Failed to create wrapper script {} -> {}: {}", wrapper_path.display(), source_item_path.display(), e);
+                                                error!(
+                                                    "Failed to create wrapper script {} -> {}: {}",
+                                                    wrapper_path.display(),
+                                                    source_item_path.display(),
+                                                    e
+                                                );
                                             }
                                         }
                                     }
@@ -549,21 +554,25 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
                         }
                     }
                     Err(e) => {
-                        error!("Failed to parse formula install manifest {}: {}. Falling back to legacy unlink...", manifest_path.display(), e);
+                        error!("Failed to parse formula install manifest {}: {}. Falling back to legacy unlink", manifest_path.display(), e);
                         unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
                         // Pass config
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to read formula install manifest {}: {}. Falling back to legacy unlink...", manifest_path.display(), e);
+                error!(
+                    "Failed to read formula install manifest {}: {}. Falling back to legacy unlink",
+                    manifest_path.display(),
+                    e
+                );
                 unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
                 // Pass config
             }
         }
     } else {
         debug!(
-            "Warning: No install manifest found at {}. Falling back to legacy unlink...",
+            "Warning: No install manifest found at {}. Falling back to legacy unlink",
             manifest_path.display()
         );
         unlink_formula_binaries_legacy(formula, &expected_keg_path, config)

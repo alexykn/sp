@@ -216,7 +216,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
 
     // --- Handle PKG directly (before staging) ---
     if detected_extension == "pkg" || detected_extension == "mpkg" {
-        debug!("Detected PKG installer, running directly...");
+        debug!("Detected PKG installer, running directly");
         match artifacts::pkg::install_pkg_from_path(
             cask,
             download_path,
@@ -225,9 +225,9 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         ) {
             Ok(installed_artifacts) => {
                 // PKG install succeeded, write manifest and return early
-                debug!("Writing PKG install manifest...");
+                debug!("Writing PKG install manifest");
                 write_cask_manifest(cask, &cask_version_install_path, installed_artifacts)?;
-                debug!("✅ Successfully installed PKG cask: {}", cask.token);
+                debug!("Successfully installed PKG cask: {}", cask.token);
                 return Ok(()); // Success!
             }
             Err(e) => {
@@ -588,7 +588,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     // Write potentially empty installable manifest
     } else {
-        debug!("Writing cask installation manifest...");
+        debug!("Writing cask installation manifest");
         // Use the new function with the detailed artifact list
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     }
@@ -596,7 +596,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     // Staging directory cleanup happens automatically when `stage_dir` goes out of scope
     // Ensure temp_dir crate cleans up correctly
 
-    debug!("✅ Successfully installed cask: {}", cask.token);
+    debug!("Successfully installed cask: {}", cask.token);
     Ok(())
 }
 

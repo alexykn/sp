@@ -1,65 +1,62 @@
+// FILE: sapphire-core/src/dependency/resolver.rs
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::dependency::{Dependency, DependencyTag};
 use crate::formulary::Formulary;
 use crate::keg::KegRegistry;
 use crate::model::formula::Formula;
-use crate::utils::error::{Result, SapphireError}; // Use log crate
+use crate::utils::error::{Result, SapphireError};
 
-/// Represents a fully resolved dependency, including its load status and path.
 #[derive(Debug, Clone)]
 pub struct ResolvedDependency {
     pub formula: Arc<Formula>,
-    /// Path to the specific installed version (e.g., /opt/homebrew/Cellar/foo/1.2.3)
     pub keg_path: Option<PathBuf>,
-    /// Path to the linked 'opt' directory (e.g., /opt/homebrew/opt/foo)
     pub opt_path: Option<PathBuf>,
     pub status: ResolutionStatus,
-    pub tags: DependencyTag, // Track tags relevant for this resolution path
+    pub tags: DependencyTag,
+    pub failure_reason: Option<String>,
 }
 
-/// Status of a dependency during resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionStatus {
     Installed,
     Missing,
     Requested,
     SkippedOptional,
+    NotFound,
+    Failed,
 }
 
-/// Holds the results of dependency resolution.
 #[derive(Debug, Clone)]
 pub struct ResolvedGraph {
-    /// The topologically sorted list of dependencies to be installed/ensured.
     pub install_plan: Vec<ResolvedDependency>,
-    /// The resolved 'opt' paths for all *build* dependencies required by the target(s).
     pub build_dependency_opt_paths: Vec<PathBuf>,
-    /// The resolved 'opt' paths for all *runtime* dependencies required by the target(s).
     pub runtime_dependency_opt_paths: Vec<PathBuf>,
+    pub resolution_details: HashMap<String, ResolvedDependency>,
 }
 
-/// Context for dependency resolution, holding options and shared resources.
 pub struct ResolutionContext<'a> {
     pub formulary: &'a Formulary,
     pub keg_registry: &'a KegRegistry,
-    pub sapphire_prefix: &'a Path, // Add prefix for calculating opt paths
+    pub sapphire_prefix: &'a Path,
     pub include_optional: bool,
     pub include_test: bool,
     pub skip_recommended: bool,
     pub force_build: bool,
 }
 
-/// Resolves the dependency graph for a given set of target formulas.
 pub struct DependencyResolver<'a> {
     context: ResolutionContext<'a>,
     formula_cache: HashMap<String, Arc<Formula>>,
     visiting: HashSet<String>,
-    // Make resolved accessible within the crate (for install.rs)
-    pub resolved: HashMap<String, ResolvedDependency>, // Tracks the final state of each node
+    resolution_details: HashMap<String, ResolvedDependency>,
+    // Store Arc<SapphireError> instead of SapphireError
+    errors: HashMap<String, Arc<SapphireError>>,
 }
 
 impl<'a> DependencyResolver<'a> {
@@ -68,75 +65,89 @@ impl<'a> DependencyResolver<'a> {
             context,
             formula_cache: HashMap::new(),
             visiting: HashSet::new(),
-            resolved: HashMap::new(),
+            resolution_details: HashMap::new(),
+            errors: HashMap::new(),
         }
     }
 
-    /// Resolves dependencies for the targets and returns the installation plan and build dependency
-    /// paths.
     pub fn resolve_targets(&mut self, targets: &[String]) -> Result<ResolvedGraph> {
         debug!("Starting dependency resolution for targets: {:?}", targets);
         self.visiting.clear();
-        self.resolved.clear();
-        let mut initial_deps = Vec::new();
+        self.resolution_details.clear();
+        self.errors.clear();
+
         for target_name in targets {
-            initial_deps.push(Dependency::new_runtime(target_name)); // Treat targets as runtime
-                                                                     // deps initially
+            if let Err(e) = self.resolve_recursive(target_name, DependencyTag::RUNTIME, true) {
+                // Wrap error in Arc for storage
+                self.errors.insert(target_name.clone(), Arc::new(e));
+                warn!(
+                    "Resolution failed for target '{}', but continuing for others.",
+                    target_name
+                );
+            }
         }
 
-        for dep in initial_deps {
-            self.resolve_recursive(&dep.name, dep.tags, true)?;
-        }
-        // Corrected collect type to Vec<_> for debug printing
         debug!(
             "Raw resolved map after initial pass: {:?}",
-            self.resolved
+            self.resolution_details
                 .iter()
-                .map(|(k, v)| (k.clone(), v.status.clone(), v.tags))
+                .map(|(k, v)| (k.clone(), v.status, v.tags))
                 .collect::<Vec<_>>()
         );
 
-        let sorted_list = self.topological_sort()?;
+        let sorted_list = match self.topological_sort() {
+            Ok(list) => list,
+            Err(e @ SapphireError::DependencyError(_)) => {
+                error!("Topological sort failed due to dependency cycle: {}", e);
+                return Err(e);
+            }
+            Err(e) => {
+                error!("Topological sort failed: {}", e);
+                return Err(e);
+            }
+        };
+
         let install_plan: Vec<ResolvedDependency> = sorted_list
             .into_iter()
-            .filter(|dep| dep.status != ResolutionStatus::SkippedOptional)
+            .filter(|dep| {
+                matches!(
+                    dep.status,
+                    ResolutionStatus::Missing | ResolutionStatus::Requested
+                )
+            })
             .collect();
 
-        // Collect build and runtime dependency paths from the *entire* resolved graph
         let mut build_paths = Vec::new();
         let mut runtime_paths = Vec::new();
         let mut seen_build_paths = HashSet::new();
         let mut seen_runtime_paths = HashSet::new();
 
-        for dep in self.resolved.values() {
-            // Only consider installed or requested dependencies for path collection
-            if dep.status == ResolutionStatus::Installed
-                || dep.status == ResolutionStatus::Requested
-            {
+        for dep in self.resolution_details.values() {
+            if matches!(
+                dep.status,
+                ResolutionStatus::Installed
+                    | ResolutionStatus::Requested
+                    | ResolutionStatus::Missing
+            ) {
                 if let Some(opt_path) = &dep.opt_path {
-                    if opt_path.exists() {
-                        // Check path existence
-                        if dep.tags.contains(DependencyTag::BUILD)
-                            && seen_build_paths.insert(opt_path.clone())
-                        {
-                            debug!("Adding build dep path: {}", opt_path.display());
-                            build_paths.push(opt_path.clone());
-                        }
-                        // A dependency can be both build and runtime
-                        if dep.tags.intersects(
-                            DependencyTag::RUNTIME
-                                | DependencyTag::RECOMMENDED
-                                | DependencyTag::OPTIONAL,
-                        ) && seen_runtime_paths.insert(opt_path.clone())
-                        {
-                            debug!("Adding runtime dep path: {}", opt_path.display());
-                            runtime_paths.push(opt_path.clone());
-                        }
-                    } else {
-                        debug!("Opt path {} for dependency {} does not exist, skipping for path collection.", opt_path.display(), dep.formula.name());
+                    if dep.tags.contains(DependencyTag::BUILD)
+                        && seen_build_paths.insert(opt_path.clone())
+                    {
+                        debug!("Adding build dep path: {}", opt_path.display());
+                        build_paths.push(opt_path.clone());
                     }
-                } else if dep.status != ResolutionStatus::Missing {
-                    // Don't warn for missing deps
+                    if dep.tags.intersects(
+                        DependencyTag::RUNTIME
+                            | DependencyTag::RECOMMENDED
+                            | DependencyTag::OPTIONAL,
+                    ) && seen_runtime_paths.insert(opt_path.clone())
+                    {
+                        debug!("Adding runtime dep path: {}", opt_path.display());
+                        runtime_paths.push(opt_path.clone());
+                    }
+                } else if dep.status != ResolutionStatus::NotFound
+                    && dep.status != ResolutionStatus::Failed
+                {
                     debug!(
                         "Warning: No opt_path found for resolved dependency {} ({:?})",
                         dep.formula.name(),
@@ -146,11 +157,21 @@ impl<'a> DependencyResolver<'a> {
             }
         }
 
+        if !self.errors.is_empty() {
+            warn!(
+                "Resolution encountered errors for specific targets: {:?}",
+                self.errors
+                    .iter()
+                    .map(|(k, v)| (k, v.to_string()))
+                    .collect::<HashMap<_, _>>()
+            );
+        }
+
         debug!(
-            "Final installation plan (sorted): {:?}",
+            "Final installation plan (needs install/build): {:?}",
             install_plan
                 .iter()
-                .map(|d| (d.formula.name(), d.status.clone()))
+                .map(|d| (d.formula.name(), d.status))
                 .collect::<Vec<_>>()
         );
         debug!(
@@ -169,10 +190,11 @@ impl<'a> DependencyResolver<'a> {
             install_plan,
             build_dependency_opt_paths: build_paths,
             runtime_dependency_opt_paths: runtime_paths,
+            resolution_details: self.resolution_details.clone(),
         })
     }
 
-    /// Recursively resolves a dependency.
+    /// Walk a dependency node, collecting status and propagating errors
     fn resolve_recursive(
         &mut self,
         name: &str,
@@ -184,6 +206,7 @@ impl<'a> DependencyResolver<'a> {
             name, tags_from_parent, is_target
         );
 
+        // -------- cycle guard -------------------------------------------------------------
         if self.visiting.contains(name) {
             error!("Dependency cycle detected involving: {}", name);
             return Err(SapphireError::DependencyError(format!(
@@ -191,75 +214,112 @@ impl<'a> DependencyResolver<'a> {
             )));
         }
 
-        // Check if already resolved and update tags/status if necessary
-        if let Some(existing_dep) = self.resolved.get_mut(name) {
-            let mut needs_re_evaluation = false;
-            let original_tags = existing_dep.tags;
-            let original_status = existing_dep.status.clone();
+        // -------- if we have a previous entry, maybe promote status / tags -----------------
+        if let Some(existing) = self.resolution_details.get_mut(name) {
+            let original_status = existing.status;
+            let original_tags = existing.tags;
 
-            // Promote to requested if it's a target and wasn't already
-            if is_target
-                && (existing_dep.status == ResolutionStatus::Missing
-                    || existing_dep.status == ResolutionStatus::SkippedOptional)
-            {
-                debug!(
-                    "Marking '{}' as requested (was {:?})",
-                    name, existing_dep.status
-                );
-                existing_dep.status = ResolutionStatus::Requested;
-                needs_re_evaluation = true;
+            // status promotion rules -------------------------------------------------------
+            let mut new_status = original_status;
+            if is_target && new_status == ResolutionStatus::Missing {
+                new_status = ResolutionStatus::Requested;
             }
-            // Add tags from the current resolution path
-            existing_dep.tags |= tags_from_parent;
-            if existing_dep.tags != original_tags {
-                debug!(
-                    "Updated tags for '{}' from {:?} to {:?}",
-                    name, original_tags, existing_dep.tags
-                );
-                needs_re_evaluation = true;
-            }
-            // If status changed from Skipped to something else, needs re-eval
-            if original_status == ResolutionStatus::SkippedOptional
-                && existing_dep.status != ResolutionStatus::SkippedOptional
+            if new_status == ResolutionStatus::SkippedOptional
+                && (tags_from_parent.contains(DependencyTag::RUNTIME)
+                    || tags_from_parent.contains(DependencyTag::BUILD)
+                    || (tags_from_parent.contains(DependencyTag::RECOMMENDED)
+                        && !self.context.skip_recommended)
+                    || (is_target && self.context.include_optional))
             {
-                debug!(
-                    "Dependency '{}' was previously skipped, now required. Re-evaluating.",
-                    name
-                );
-                needs_re_evaluation = true;
+                new_status = if existing.keg_path.is_some() {
+                    ResolutionStatus::Installed
+                } else if is_target {
+                    ResolutionStatus::Requested
+                } else {
+                    ResolutionStatus::Missing
+                };
             }
 
-            if !needs_re_evaluation {
+            // apply any changes ------------------------------------------------------------
+            let mut needs_revisit = false;
+            if new_status != original_status {
+                debug!(
+                    "Updating status for '{name}' from {:?} to {:?}",
+                    original_status, new_status
+                );
+                existing.status = new_status;
+                needs_revisit = true;
+            }
+
+            let combined_tags = original_tags | tags_from_parent;
+            if combined_tags != original_tags {
+                debug!(
+                    "Updating tags for '{name}' from {:?} to {:?}",
+                    original_tags, combined_tags
+                );
+                existing.tags = combined_tags;
+                needs_revisit = true;
+            }
+
+            // nothing else to do
+            if !needs_revisit {
                 debug!("'{}' already resolved with compatible status/tags.", name);
                 return Ok(());
             }
+
             debug!(
                 "Re-evaluating dependencies for '{}' due to status/tag update",
                 name
             );
-            // Fall through to process dependencies again
-        } else {
-            // First time encountering this dependency
-            // Load formula
-            let formula = match self.formula_cache.get(name) {
+        }
+        // -------- first time we see this node ---------------------------------------------
+        else {
+            self.visiting.insert(name.to_string());
+
+            // load / cache the formula -----------------------------------------------------
+            let formula: Arc<Formula> = match self.formula_cache.get(name) {
                 Some(f) => f.clone(),
                 None => {
                     debug!("Loading formula definition for '{}'", name);
-                    let loaded_formula = self.context.formulary.load_formula(name)?;
-                    let formula_arc = Arc::new(loaded_formula);
-                    self.formula_cache
-                        .insert(name.to_string(), formula_arc.clone());
-                    formula_arc
+                    match self.context.formulary.load_formula(name) {
+                        Ok(f) => {
+                            let arc = Arc::new(f);
+                            self.formula_cache.insert(name.to_string(), arc.clone());
+                            arc
+                        }
+                        Err(e) => {
+                            error!("Failed to load formula definition for '{}': {}", name, e);
+
+                            let msg = e.to_string();
+                            self.resolution_details.insert(
+                                name.to_string(),
+                                ResolvedDependency {
+                                    formula: Arc::new(Formula::placeholder(name)),
+                                    keg_path: None,
+                                    opt_path: None,
+                                    status: ResolutionStatus::NotFound,
+                                    tags: tags_from_parent,
+                                    failure_reason: Some(msg.clone()),
+                                },
+                            );
+                            self.visiting.remove(name);
+
+                            self.errors
+                                .insert(name.to_string(), Arc::new(SapphireError::NotFound(msg)));
+
+                            return Ok(()); // treat “not found” as a soft failure
+                        }
+                    }
                 }
             };
 
-            // Check if installed
+            // work out installation state --------------------------------------------------
             let installed_keg = if self.context.force_build {
                 None
             } else {
                 self.context.keg_registry.get_installed_keg(name)?
             };
-            let opt_path = self.context.keg_registry.get_opt_path(name); // Calculate opt path regardless
+            let opt_path = self.context.keg_registry.get_opt_path(name);
 
             let (status, keg_path) = match installed_keg {
                 Some(keg) => (ResolutionStatus::Installed, Some(keg.path)),
@@ -274,159 +334,187 @@ impl<'a> DependencyResolver<'a> {
             };
 
             debug!(
-                "Initial status for '{}': {:?}, Keg Path: {:?}, Opt Path: {}",
+                "Initial status for '{}': {:?}, keg: {:?}, opt: {}",
                 name,
                 status,
                 keg_path,
                 opt_path.display()
             );
 
-            self.resolved.insert(
+            self.resolution_details.insert(
                 name.to_string(),
                 ResolvedDependency {
-                    formula: formula.clone(),
-                    keg_path: keg_path.clone(),
+                    formula,
+                    keg_path,
                     opt_path: Some(opt_path),
-                    status: status.clone(),
+                    status,
                     tags: tags_from_parent,
+                    failure_reason: None,
                 },
             );
-            // Fall through to process dependencies
         }
 
-        // Add self back to visiting set before recursing to detect cycles correctly
-        self.visiting.insert(name.to_string());
+        // --------------------------------------------------------------------- recurse ----
+        let dep_snapshot = self
+            .resolution_details
+            .get(name)
+            .expect("just inserted")
+            .clone();
 
-        // Get the formula again (might have been updated)
-        let formula = self.resolved.get(name).unwrap().formula.clone();
+        // if this node is already irrecoverably broken, stop here
+        if matches!(
+            dep_snapshot.status,
+            ResolutionStatus::Failed | ResolutionStatus::NotFound
+        ) {
+            self.visiting.remove(name);
+            return Ok(());
+        }
 
-        // Process dependencies declared *within* the current formula
-        let dependencies = formula.dependencies()?;
-        for dep in dependencies {
+        // iterate its declared dependencies -----------------------------------------------
+        for dep in dep_snapshot.formula.dependencies()? {
             let dep_name = &dep.name;
-            let dep_tags = dep.tags; // Tags defined *in the formula*
+            let dep_tags = dep.tags;
+
             debug!(
-                "Processing dependency '{}' for '{}' with tags: {:?}",
+                "Processing dependency '{}' for '{}' with tags {:?}",
                 dep_name, name, dep_tags
             );
 
-            // Skip based on flags and context
+            // optional / test filtering
             if !self.should_consider_dependency(&dep) {
-                // Mark as skipped *if not already resolved otherwise*
-                if !self.resolved.contains_key(dep_name.as_str()) {
-                    debug!("Marking dependency '{}' as SkippedOptional", dep_name);
-                    match self.context.formulary.load_formula(dep_name) {
-                        Ok(skipped_formula) => {
-                            let skipped_opt_path = self.context.keg_registry.get_opt_path(dep_name);
-                            let skipped_arc = Arc::new(skipped_formula);
-                            self.formula_cache
-                                .insert(dep_name.to_string(), skipped_arc.clone());
-                            self.resolved.insert(
-                                dep_name.to_string(),
-                                ResolvedDependency {
-                                    formula: skipped_arc,
-                                    keg_path: None,
-                                    opt_path: Some(skipped_opt_path),
-                                    status: ResolutionStatus::SkippedOptional,
-                                    tags: dep_tags,
-                                },
-                            );
-                        }
-                        Err(e) => debug!(
-                            "Could not load skipped dependency '{}' to mark it: {}",
-                            dep_name, e
-                        ),
+                if !self.resolution_details.contains_key(dep_name.as_str()) {
+                    debug!("Marking '{}' as SkippedOptional", dep_name);
+
+                    if let Ok(f) = self.context.formulary.load_formula(dep_name) {
+                        let arc = Arc::new(f);
+                        let opt = self.context.keg_registry.get_opt_path(dep_name);
+
+                        self.formula_cache.insert(dep_name.to_string(), arc.clone());
+                        self.resolution_details.insert(
+                            dep_name.to_string(),
+                            ResolvedDependency {
+                                formula: arc,
+                                keg_path: None,
+                                opt_path: Some(opt),
+                                status: ResolutionStatus::SkippedOptional,
+                                tags: dep_tags,
+                                failure_reason: None,
+                            },
+                        );
                     }
-                } else {
-                    debug!(
-                        "Dependency '{}' already resolved, not marking as skipped.",
-                        dep_name
-                    );
                 }
-                continue; // Skip recursion
+                continue;
             }
 
-            // Recurse: Pass the tags defined *in the formula* (`dep_tags`)
-            self.resolve_recursive(dep_name, dep_tags, false)?; // is_target is false for
-                                                                // dependencies
+            // --- real recursion -----------------------------------------------------------
+            if let Err(e) = self.resolve_recursive(dep_name, dep_tags, false) {
+                warn!(
+                    "Recursive resolution for '{}' (child of '{}') failed: {}",
+                    dep_name, name, e
+                );
+
+                // we’ll need the details after moving `e`, so harvest now
+                let is_cycle = matches!(e, SapphireError::DependencyError(_));
+                let msg = e.to_string();
+
+                // move `e` into the error map
+                self.errors
+                    .entry(dep_name.to_string())
+                    .or_insert_with(|| Arc::new(e));
+
+                // mark the node as failed
+                if let Some(node) = self.resolution_details.get_mut(dep_name.as_str()) {
+                    node.status = ResolutionStatus::Failed;
+                    node.failure_reason = Some(msg);
+                }
+
+                // propagate cycles upward
+                if is_cycle {
+                    self.visiting.remove(name);
+                    return Err(SapphireError::DependencyError(
+                        "Circular dependency detected".into(),
+                    ));
+                }
+            }
         }
-        self.visiting.remove(name); // Remove after processing all children
-        debug!("Finished resolving: {}", name);
+
+        self.visiting.remove(name);
+        debug!("Finished resolving '{}'", name);
         Ok(())
     }
 
-    // Inside impl DependencyResolver
     fn topological_sort(&self) -> Result<Vec<ResolvedDependency>> {
-        debug!("Starting topological sort...");
+        debug!("Starting topological sort");
         let mut in_degree: HashMap<String, usize> = HashMap::new();
-        let mut adj: HashMap<String, HashSet<String>> = HashMap::new(); // Use HashSet for neighbors
+        let mut adj: HashMap<String, HashSet<String>> = HashMap::new();
         let mut sorted_list = Vec::new();
         let mut queue = VecDeque::new();
 
-        // Initialize graph structure from resolved dependencies (only include non-skipped)
-        for (name, resolved_dep) in &self.resolved {
-            if resolved_dep.status != ResolutionStatus::SkippedOptional {
-                in_degree.entry(name.clone()).or_insert(0);
-                adj.entry(name.clone()).or_default(); // Use or_default for HashSet
-            }
+        let relevant_nodes: Vec<_> = self
+            .resolution_details
+            .iter()
+            .filter(|(_, dep)| {
+                matches!(
+                    dep.status,
+                    ResolutionStatus::Installed
+                        | ResolutionStatus::Missing
+                        | ResolutionStatus::Requested
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        for name in &relevant_nodes {
+            in_degree.entry(name.clone()).or_insert(0);
+            adj.entry(name.clone()).or_default();
         }
 
-        // Build adjacency list and calculate in-degrees
-        for (name, resolved_dep) in &self.resolved {
-            if resolved_dep.status != ResolutionStatus::SkippedOptional {
-                match resolved_dep.formula.dependencies() {
-                    Ok(dependencies) => {
-                        for dep in dependencies {
-                            // Use is_some_and suggested by other warning
-                            if self
-                                .resolved
-                                .get(&dep.name)
-                                .is_some_and(|rd| rd.status != ResolutionStatus::SkippedOptional)
-                                && self.should_consider_dependency(&dep)
-                            {
-                                // Add edge from dependency `dep.name` to current formula `name`
-                                if adj
-                                    .entry(dep.name.clone())
-                                    .or_default()
-                                    .insert(name.clone())
-                                {
-                                    debug!("Adding edge from {} -> {}", dep.name, name);
-                                    *in_degree.entry(name.clone()).or_insert(0) += 1;
-                                }
-                            }
+        for name in &relevant_nodes {
+            let resolved_dep = self.resolution_details.get(name).unwrap();
+            match resolved_dep.formula.dependencies() {
+                Ok(dependencies) => {
+                    for dep in dependencies {
+                        if relevant_nodes.contains(&dep.name)
+                            && self.should_consider_dependency(&dep)
+                            && adj
+                                .entry(dep.name.clone())
+                                .or_default()
+                                .insert(name.clone())
+                        {
+                            *in_degree.entry(name.clone()).or_insert(0) += 1;
                         }
                     }
-                    Err(e) => {
-                        error!(
-                            "Failed to get dependencies for '{}' during sort: {}",
-                            name, e
-                        );
-                        return Err(e);
-                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to get dependencies for '{}' during sort: {}",
+                        name, e
+                    );
+                    return Err(e);
                 }
             }
         }
 
-        debug!("In-degrees: {:?}", in_degree);
+        debug!("In-degrees (relevant nodes only): {:?}", in_degree);
 
-        // Initialize queue with nodes having in-degree 0
-        for (name, degree) in &in_degree {
-            // --- Collapsed If ---
-            if *degree == 0 && self.resolved.contains_key(name) {
-                // Ensure it exists
-                debug!("Adding node with in-degree 0 to queue: {}", name);
+        for name in &relevant_nodes {
+            if *in_degree.get(name).unwrap_or(&1) == 0 {
                 queue.push_back(name.clone());
             }
-            // --- End Collapsed If ---
         }
 
         debug!("Initial queue: {:?}", queue);
 
-        // Process the queue
         while let Some(u_name) = queue.pop_front() {
-            debug!("Processing node from queue: {}", u_name);
-            if let Some(resolved_dep) = self.resolved.get(&u_name) {
-                sorted_list.push(resolved_dep.clone());
+            if let Some(resolved_dep) = self.resolution_details.get(&u_name) {
+                if matches!(
+                    resolved_dep.status,
+                    ResolutionStatus::Installed
+                        | ResolutionStatus::Missing
+                        | ResolutionStatus::Requested
+                ) {
+                    sorted_list.push(resolved_dep.clone());
+                }
             } else {
                 error!(
                     "Error: Node '{}' from queue not found in resolved map!",
@@ -437,48 +525,33 @@ impl<'a> DependencyResolver<'a> {
                 )));
             }
 
-            // Decrease in-degree of neighbors
             if let Some(neighbors) = adj.get(&u_name) {
-                debug!("Neighbors of {}: {:?}", u_name, neighbors);
                 for v_name in neighbors {
-                    if let Some(degree) = in_degree.get_mut(v_name) {
-                        *degree = degree.saturating_sub(1); // Use saturating_sub
-                        debug!("Decremented in-degree of {} to {}", v_name, *degree);
-                        if *degree == 0 {
-                            debug!("Adding neighbor {} to queue", v_name);
-                            queue.push_back(v_name.clone());
+                    if relevant_nodes.contains(v_name) {
+                        if let Some(degree) = in_degree.get_mut(v_name) {
+                            *degree = degree.saturating_sub(1);
+                            if *degree == 0 {
+                                queue.push_back(v_name.clone());
+                            }
                         }
-                    } else {
-                        debug!(
-                            "Warning: Neighbor '{}' of '{}' not found in in_degree map.",
-                            v_name, u_name
-                        );
                     }
                 }
-            } else {
-                debug!("Node {} has no neighbors in adj list.", u_name);
             }
         }
 
-        // Check for cycles
-        let non_skipped_count = self
-            .resolved
-            .values()
-            .filter(|d| d.status != ResolutionStatus::SkippedOptional)
-            .count();
-        if sorted_list.len() != non_skipped_count {
+        if sorted_list.len() != relevant_nodes.len() {
             error!(
-                "Cycle detected! Sorted count ({}) != Non-skipped node count ({}).",
+                "Cycle detected! Sorted count ({}) != Relevant node count ({}).",
                 sorted_list.len(),
-                non_skipped_count
+                relevant_nodes.len()
             );
-            let cyclic_nodes: Vec<_> = in_degree
+            let cyclic_nodes: Vec<_> = relevant_nodes
                 .iter()
-                .filter(|(_, &d)| d > 0)
-                .map(|(n, _)| n.clone())
+                .filter(|n| in_degree.get(*n).unwrap_or(&0) > &0)
+                .cloned()
                 .collect();
             error!(
-                "Nodes potentially involved in cycle (in-degree > 0): {:?}",
+                "Nodes potentially involved in cycle (relevant, in-degree > 0): {:?}",
                 cyclic_nodes
             );
             return Err(SapphireError::DependencyError(
@@ -487,13 +560,12 @@ impl<'a> DependencyResolver<'a> {
         }
 
         debug!(
-            "Topological sort successful. {} nodes in sorted list.",
+            "Topological sort successful. {} relevant nodes in sorted list.",
             sorted_list.len()
         );
         Ok(sorted_list)
     }
 
-    /// Helper to determine if a dependency should be considered based on context flags.
     fn should_consider_dependency(&self, dep: &Dependency) -> bool {
         let tags = dep.tags;
         if tags.contains(DependencyTag::TEST) && !self.context.include_test {
@@ -506,5 +578,26 @@ impl<'a> DependencyResolver<'a> {
             return false;
         }
         true
+    }
+}
+
+impl Formula {
+    fn placeholder(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            stable_version_str: "0.0.0".to_string(),
+            version_semver: semver::Version::new(0, 0, 0),
+            revision: 0,
+            desc: Some("Placeholder for unresolved formula".to_string()),
+            homepage: None,
+            url: String::new(),
+            sha256: String::new(),
+            mirrors: Vec::new(),
+            bottle: Default::default(),
+            dependencies: Vec::new(),
+            requirements: Vec::new(),
+            resources: Vec::new(),
+            install_keg_path: None,
+        }
     }
 }

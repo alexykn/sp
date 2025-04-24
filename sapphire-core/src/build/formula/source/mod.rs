@@ -134,7 +134,7 @@ fn check_and_run_autoreconf(source_dir: &Path, build_env: &BuildEnvironment) -> 
                 cmd.args(["-fvi"]);
                 match run_command_in_dir(&mut cmd, source_dir, build_env, "autoreconf") {
                     Ok(_) => debug!("Autoreconf completed successfully."),
-                    Err(e) => debug!("Autoreconf failed ({}). Continuing build detection...", e),
+                    Err(e) => debug!("Autoreconf failed ({}). Continuing build detection", e),
                 }
             }
             Err(_) => {
@@ -260,13 +260,13 @@ fn install_resource(
 
     if stage_path.join("Makefile.PL").exists() {
         debug!(
-            "   -> Detected Perl resource '{}', installing...",
+            "   -> Detected Perl resource '{}', installing",
             resource.name
         );
         install_perl_resource(resource, stage_path, libexec_path, build_env)?;
     } else if stage_path.join("setup.py").exists() {
         debug!(
-            "   -> Detected Python resource '{}', installing...",
+            "   -> Detected Python resource '{}', installing",
             resource.name
         );
         install_python_resource(resource, stage_path, libexec_path, build_env)?;

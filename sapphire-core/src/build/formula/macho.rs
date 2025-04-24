@@ -76,14 +76,14 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     let mut buffer = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            debug!("  Failed to read {}: {}. Skipping.", path.display(), e);
+            debug!("Failed to read {}: {}. Skipping.", path.display(), e);
             return Ok(false);
         }
     };
 
     // 2) Quick size check: skip anything too small
     if buffer.len() < MACHO_HEADER32_SIZE {
-        debug!("  Skipping too‑small file: {}", path.display());
+        debug!("Skipping too‑small file: {}", path.display());
         return Ok(false);
     }
 
@@ -91,7 +91,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     let file_kind = match FileKind::parse(buffer.as_slice()) {
         Ok(kind) => kind,
         Err(_) => {
-            debug!("  Not an object file: {}", path.display());
+            debug!("Not an object file: {}", path.display());
             return Ok(false);
         }
     };
@@ -106,7 +106,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
             );
         }
         FileKind::Archive => {
-            debug!("  Skipping static archive (not Mach‑O): {}", path.display());
+            debug!("Skipping static archive (not Mach‑O): {}", path.display());
             return Ok(false);
         }
         other => {
@@ -122,12 +122,12 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     // 5) Phase 1/2: collect all needed patches (immutable)
     let patches = collect_macho_patches(&buffer, file_kind, replacements, path)?;
     if patches.is_empty() {
-        debug!("  No patches needed for {}", path.display());
+        debug!("No patches needed for {}", path.display());
         return Ok(false);
     }
 
     // 6) Phase 3: apply each patch to the buffer (mutable)
-    debug!("  Applying {} patches to {}", patches.len(), path.display());
+    debug!("Applying {} patches to {}", patches.len(), path.display());
     for patch in patches {
         patch_path_in_buffer(
             &mut buffer,
@@ -140,13 +140,13 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
 
     // 7) Write the modified buffer back to disk atomically
     write_patched_buffer(path, &buffer)?;
-    debug!("  Wrote patched Mach-O: {}", path.display());
+    debug!("Wrote patched Mach-O: {}", path.display());
 
     // 8) Re‑sign on Apple Silicon
     #[cfg(target_arch = "aarch64")]
     {
         resign_binary(path)?;
-        debug!("  Re‑signed patched binary: {}", path.display());
+        debug!("Re‑signed patched binary: {}", path.display());
     }
 
     Ok(true)
@@ -198,7 +198,7 @@ fn collect_macho_patches(
 
                 /* short‑circuit: static .a archive inside FAT ---------- */
                 if slice.starts_with(AR_MAGIC) {
-                    debug!("    [slice {}] static archive – skipped", idx);
+                    debug!("[slice {}] static archive – skipped", idx);
                     continue;
                 }
 
@@ -237,7 +237,7 @@ fn collect_macho_patches(
                 let slice = &buffer[off as usize..(off + sz) as usize];
 
                 if slice.starts_with(AR_MAGIC) {
-                    debug!("    [slice {}] static archive – skipped", idx);
+                    debug!("[slice {}] static archive – skipped", idx);
                     continue;
                 }
 
@@ -459,7 +459,7 @@ fn write_patched_buffer(original_path: &Path, buffer: &[u8]) -> Result<()> {
 /// This is typically necessary on Apple Silicon (aarch64) after modifying executables.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn resign_binary(path: &Path) -> Result<()> {
-    // Suppressed: debug!("    Re-signing patched binary: {}", path.display());
+    // Suppressed: debug!("Re-signing patched binary: {}", path.display());
     let status = StdCommand::new("codesign")
         .args([
             "-s",
@@ -480,7 +480,7 @@ fn resign_binary(path: &Path) -> Result<()> {
             SapphireError::Io(e)
         })?;
     if status.success() {
-        // Suppressed: debug!("    Successfully re-signed {}", path.display());
+        // Suppressed: debug!("Successfully re-signed {}", path.display());
         Ok(())
     } else {
         error!(

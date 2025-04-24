@@ -209,7 +209,7 @@ impl BuildEnvironment {
         let mut cmake_prefix_paths = Vec::new();
         let mut cmake_framework_paths = Vec::new();
 
-        debug!("Processing provided dependency paths for environment...");
+        debug!("Processing provided dependency paths for environment");
         for dep_opt_path in all_installed_opt_paths {
             debug!("Adding paths for dependency: {}", dep_opt_path.display());
             let bin_path = dep_opt_path.join("bin");
@@ -469,7 +469,7 @@ impl BuildEnvironment {
             command.get_program()
         );
         // Avoid logging args verbosely unless needed
-        // debug!("  Arguments: {:?}", command.get_args().collect::<Vec<_>>());
+        // debug!("Arguments: {:?}", command.get_args().collect::<Vec<_>>());
     }
 
     /// Gets the configured PATH string.

@@ -124,7 +124,7 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         Ok(formula_data) => serde_json::from_str(&formula_data)?,
         Err(e) => {
             // If cache fails, fetch from API
-            tracing::debug!("Formula cache load failed ({}), fetching from API...", e);
+            tracing::debug!("Formula cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_formulas = api::fetch_all_formulas().await?; // This fetches String
                                                                  // Try to cache the fetched data
@@ -169,7 +169,7 @@ async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
         Ok(cask_data) => serde_json::from_str(&cask_data)?,
         Err(e) => {
             // If cache fails, fetch from API
-            tracing::debug!("Cask cache load failed ({}), fetching from API...", e);
+            tracing::debug!("Cask cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_casks = api::fetch_all_casks().await?; // Fetches String
                                                            // Try to cache the fetched data

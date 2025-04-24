@@ -118,7 +118,7 @@ async fn get_formula_info_raw(cache: Arc<Cache>, name: &str) -> Result<Value> {
             e
         ),
     }
-    tracing::debug!("Fetching formula '{}' directly from API...", name);
+    tracing::debug!("Fetching formula '{}' directly from API", name);
     // api::fetch_formula returns Value directly now
     let value = api::fetch_formula(name).await?;
     // Store in cache if fetched successfully
@@ -158,7 +158,7 @@ async fn get_cask_info(cache: Arc<Cache>, name: &str) -> Result<Value> {
             e
         ),
     }
-    tracing::debug!("Fetching cask '{}' directly from API...", name);
+    tracing::debug!("Fetching cask '{}' directly from API", name);
     // api::fetch_cask returns Value directly now
     let value = api::fetch_cask(name).await?;
     // Store in cache if fetched successfully
@@ -212,13 +212,13 @@ fn print_formula_info(_name: &str, formula: &Value) {
     if let Some(desc) = formula.get("desc").and_then(|d| d.as_str()) {
         if !desc.is_empty() {
             println!("\n{}", "Description".blue().bold());
-            println!("  {desc}");
+            println!("{desc}");
         }
     }
     if let Some(caveats) = formula.get("caveats").and_then(|c| c.as_str()) {
         if !caveats.is_empty() {
             println!("\n{}", "Caveats".blue().bold());
-            println!("  {caveats}");
+            println!("{caveats}");
         }
     }
 

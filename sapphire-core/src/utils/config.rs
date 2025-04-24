@@ -52,7 +52,7 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        debug!("Loading Sapphire configuration...");
+        debug!("Loading Sapphire configuration");
         let prefix = determine_prefix();
         let cellar = prefix.join("Cellar");
         let taps_dir = prefix.join("Library/Taps");

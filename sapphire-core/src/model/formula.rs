@@ -80,7 +80,7 @@ pub struct Formula {
     #[serde(skip_deserializing)] // Skip direct deserialization for this field
     pub resources: Vec<ResourceSpec>, // Stores parsed resources
     #[serde(skip)]
-    install_keg_path: Option<PathBuf>,
+    pub install_keg_path: Option<PathBuf>,
 }
 
 // Custom deserialization logic for Formula
