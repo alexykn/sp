@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
@@ -15,7 +15,7 @@ pub fn meson_build(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    info!("==> Building with Meson in {}", build_dir.display());
+    debug!("Building with Meson in {}", build_dir.display());
     let meson_build_subdir_name = "sapphire-meson-build";
     let meson_build_dir = build_dir.join(meson_build_subdir_name);
     let source_root_abs = build_dir.join(source_subdir);
@@ -27,8 +27,8 @@ pub fn meson_build(
             )
         })?;
 
-    info!(
-        "==> Running meson setup (source: {}, build: {})",
+    debug!(
+        "Running meson setup (source: {}, build: {})",
         source_root_abs.display(),
         meson_build_dir.display()
     );
@@ -53,7 +53,7 @@ pub fn meson_build(
         String::from_utf8_lossy(&setup_output.stderr)
     );
 
-    info!("==> Running meson install -C {}", meson_build_dir.display());
+    debug!("Running meson install -C {}", meson_build_dir.display());
     let _ninja_exe = which::which_in("ninja", build_env.get_path_string(), build_dir)
         .map_err(|_| SapphireError::BuildEnvError("ninja command not found.".to_string()))?;
 

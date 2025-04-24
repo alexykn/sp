@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::model::formula::Formula;
 use crate::utils::config::Config;
@@ -70,7 +70,7 @@ fn get_current_platform() -> String {
                 if !output.status.success() || !stderr.trim().is_empty() {
                     debug!("sw_vers stdout:\n{}", stdout);
                     if !stderr.trim().is_empty() {
-                        warn!("sw_vers stderr:\n{}", stderr);
+                        debug!("sw_vers stderr:\n{}", stderr);
                     }
                 }
 
@@ -88,7 +88,7 @@ fn get_current_platform() -> String {
                                 Some("15") => "catalina",
                                 Some("14") => "mojave",
                                 _ => {
-                                    warn!(
+                                    debug!(
                                         "Unrecognized legacy macOS 10.x version: {}",
                                         version_str
                                     );
@@ -96,7 +96,7 @@ fn get_current_platform() -> String {
                                 }
                             },
                             _ => {
-                                warn!("Unrecognized macOS major version: {}", version_str);
+                                debug!("Unrecognized macOS major version: {}", version_str);
                                 "unknown_macos"
                             }
                         };
@@ -127,12 +127,12 @@ fn get_current_platform() -> String {
         }
 
         error!("!!! FAILED TO DETECT MACOS VERSION VIA SW_VERS !!!");
-        warn!("Using UNRELIABLE fallback platform detection. Bottle selection may be incorrect.");
+        debug!("Using UNRELIABLE fallback platform detection. Bottle selection may be incorrect.");
         if arch == "arm64" {
-            warn!("Falling back to platform tag: arm64_monterey");
+            debug!("Falling back to platform tag: arm64_monterey");
             "arm64_monterey".to_string()
         } else {
-            warn!("Falling back to platform tag: monterey");
+            debug!("Falling back to platform tag: monterey");
             "monterey".to_string()
         }
     } else if cfg!(target_os = "linux") {
@@ -144,7 +144,7 @@ fn get_current_platform() -> String {
             "unknown".to_string()
         }
     } else {
-        warn!(
+        debug!(
             "Could not determine platform tag for OS: {}",
             std::env::consts::OS
         );
@@ -279,7 +279,7 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
     let resources_installed = match resources_result {
         Ok(res) => res.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
         Err(_) => {
-            warn!(
+            debug!(
                 "Could not retrieve resources for formula {} when writing receipt.",
                 formula.name
             );

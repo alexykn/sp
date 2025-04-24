@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::utils::error::{Result, SapphireError}; // Added log imports
 
@@ -53,7 +53,7 @@ pub fn unmount_dmg(mount_point: &Path) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
+        debug!(
             "hdiutil detach failed ({}): {}. Trying diskutil...",
             output.status, stderr
         );

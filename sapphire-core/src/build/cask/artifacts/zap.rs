@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf}; // Import Path
 use std::process::{Command, Stdio};
 
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -46,7 +46,7 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                                 debug!("Deleting file {}...", target.display());
                                                 if let Err(e) = fs::remove_file(&target) {
                                                     if e.kind() != std::io::ErrorKind::NotFound {
-                                                        warn!(
+                                                        debug!(
                                                             "Failed to delete {}: {}",
                                                             target.display(),
                                                             e
@@ -66,7 +66,7 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                                 );
                                                 if let Err(e) = fs::remove_dir_all(&target) {
                                                     if e.kind() != std::io::ErrorKind::NotFound {
-                                                        warn!(
+                                                        debug!(
                                                             "Failed to rmdir {}: {}",
                                                             target.display(),
                                                             e
@@ -139,7 +139,7 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                             }
                                         }
                                     }
-                                    _ => warn!("Unsupported zap key '{}', skipping", key),
+                                    _ => debug!("Unsupported zap key '{}', skipping", key),
                                 }
                             }
                         }

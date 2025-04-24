@@ -7,7 +7,7 @@ use std::process::{Command, Output, Stdio};
 
 use futures::future::try_join_all;
 use infer;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error};
 
 use crate::build::env::BuildEnvironment;
 use crate::build::extract;
@@ -59,7 +59,7 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
         )));
     };
 
-    info!("==> Downloading main source for {}", formula.name);
+    debug!("Downloading main source for {}", formula.name);
     http_fetch::fetch_formula_source_or_bottle(
         &formula.name,
         &url,
@@ -129,16 +129,16 @@ fn check_and_run_autoreconf(source_dir: &Path, build_env: &BuildEnvironment) -> 
     {
         match which::which_in("autoreconf", build_env.get_path_string(), source_dir) {
             Ok(autoreconf_path) => {
-                info!("==> Running autoreconf -fvi in {}", source_dir.display());
+                debug!("Running autoreconf -fvi in {}", source_dir.display());
                 let mut cmd = Command::new(autoreconf_path);
                 cmd.args(["-fvi"]);
                 match run_command_in_dir(&mut cmd, source_dir, build_env, "autoreconf") {
-                    Ok(_) => info!("Autoreconf completed successfully."),
-                    Err(e) => warn!("Autoreconf failed ({}). Continuing build detection...", e),
+                    Ok(_) => debug!("Autoreconf completed successfully."),
+                    Err(e) => debug!("Autoreconf failed ({}). Continuing build detection...", e),
                 }
             }
             Err(_) => {
-                warn!("configure.ac/in found but configure script and autoreconf command are missing.");
+                debug!("configure.ac/in found but configure script and autoreconf command are missing.");
             }
         }
     }
@@ -153,7 +153,7 @@ fn detect_and_build(
     all_installed_paths: &[PathBuf],
 ) -> Result<()> {
     let source_root_abs = build_dir.join(source_subdir);
-    info!(
+    debug!(
         "Attempting to detect build system in {}",
         source_root_abs.display()
     );
@@ -161,16 +161,16 @@ fn detect_and_build(
     check_and_run_autoreconf(&source_root_abs, build_env)?;
 
     if source_root_abs.join("CMakeLists.txt").exists() {
-        info!("Detected build system: CMake");
+        debug!("Detected build system: CMake");
         cmake::cmake_build(source_subdir, build_dir, install_dir, build_env)?;
     } else if source_root_abs.join("meson.build").exists() {
-        info!("Detected build system: Meson");
+        debug!("Detected build system: Meson");
         meson::meson_build(source_subdir, build_dir, install_dir, build_env)?;
     } else if source_root_abs.join("configure").exists() {
-        info!("Detected build system: Autotools (configure script)");
+        debug!("Detected build system: Autotools (configure script)");
         make::configure_and_make(&source_root_abs, install_dir, build_env)?;
     } else if source_root_abs.join("go.mod").exists() {
-        info!("Detected Go module (go.mod)");
+        debug!("Detected Go module (go.mod)");
         go::go_build(
             &source_root_abs,
             install_dir,
@@ -180,17 +180,17 @@ fn detect_and_build(
     } else if source_root_abs.join("Makefile.PL").exists()
         || source_root_abs.join("Configure").exists()
     {
-        info!("Detected build system: Perl (Makefile.PL or Configure)");
+        debug!("Detected build system: Perl (Makefile.PL or Configure)");
         perl::perl_build(&source_root_abs, install_dir, build_env)?;
     } else if source_root_abs.join("Cargo.toml").exists() {
-        info!("Detected build system: Rust/Cargo");
+        debug!("Detected build system: Rust/Cargo");
         cargo::cargo_build(&source_root_abs, install_dir, build_env)?;
     } else if source_root_abs.join("setup.py").exists() {
-        info!("Detected build system: Python setup.py");
+        debug!("Detected build system: Python setup.py");
         python::python_build(&source_root_abs, install_dir, build_env)?;
     } else if source_root_abs.join("Makefile").exists() || source_root_abs.join("makefile").exists()
     {
-        info!("Detected build system: Simple Makefile");
+        debug!("Detected build system: Simple Makefile");
         make::simple_make(&source_root_abs, install_dir, build_env)?;
     } else {
         error!(
@@ -256,22 +256,22 @@ fn install_resource(
     libexec_path: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    info!(" --> Installing resource: {}", resource.name);
+    debug!(" --> Installing resource: {}", resource.name);
 
     if stage_path.join("Makefile.PL").exists() {
-        info!(
+        debug!(
             "   -> Detected Perl resource '{}', installing...",
             resource.name
         );
         install_perl_resource(resource, stage_path, libexec_path, build_env)?;
     } else if stage_path.join("setup.py").exists() {
-        info!(
+        debug!(
             "   -> Detected Python resource '{}', installing...",
             resource.name
         );
         install_python_resource(resource, stage_path, libexec_path, build_env)?;
     } else {
-        warn!(
+        debug!(
             "   -> Could not detect known build system (Perl/Python) for resource '{}' in {}. Skipping install.",
             resource.name,
             stage_path.display()
@@ -295,7 +295,7 @@ pub async fn build_from_source(
         .unwrap_or("");
 
     if !RECOGNISED_SINGLE_FILE_EXTENSIONS.contains(&source_extension) {
-        info!("==> Installing single file formula: {}", formula_name);
+        debug!("Installing single file formula: {}", formula_name);
         create_dir_all_with_context(&install_dir, "install directory")?;
         install_single_file(source_path, formula, &install_dir)?;
         crate::build::write_receipt(formula, &install_dir)?;
@@ -314,8 +314,8 @@ pub async fn build_from_source(
         .map_err(|e| SapphireError::IoError(format!("Failed create temp build dir: {e}")))?;
     let build_dir = temp_build_dir.path();
 
-    info!(
-        "==> Extracting main source {} to {} (strip={})",
+    debug!(
+        "Extracting main source {} to {} (strip={})",
         source_path.display(),
         build_dir.display(),
         strip_components
@@ -326,14 +326,14 @@ pub async fn build_from_source(
         strip_components,
         source_archive_type_str,
     )?;
-    debug!("==> Extracted main source to {}", build_dir.display());
+    debug!("Extracted main source to {}", build_dir.display());
 
     let resources = formula.resources()?;
     let mut resource_stage_paths = HashMap::new();
 
     if !resources.is_empty() {
-        info!(
-            "==> Handling {} resources for {}",
+        debug!(
+            "Handling {} resources for {}",
             resources.len(),
             formula_name
         );
@@ -344,7 +344,7 @@ pub async fn build_from_source(
             let formula_name_clone = formula_name.to_string();
             let config_clone = config.clone();
             async move {
-                info!(" --> Downloading resource: {}", resource.name);
+                debug!(" --> Downloading resource: {}", resource.name);
                 let path = http_fetch::fetch_resource(&formula_name_clone, resource, &config_clone)
                     .await?;
                 Ok::<_, SapphireError>((resource.name.clone(), path))
@@ -355,7 +355,7 @@ pub async fn build_from_source(
         for (res_name, resource_archive_path) in download_results {
             let stage_path = resource_staging_base.join(&res_name);
             create_dir_all_with_context(&stage_path, "resource stage path")?;
-            info!(
+            debug!(
                 " --> Staging resource '{}' to {}",
                 res_name,
                 stage_path.display()
@@ -372,13 +372,13 @@ pub async fn build_from_source(
         }
     }
 
-    info!(
-        "==> Building {} from source in {}",
+    debug!(
+        "Building {} from source in {}",
         formula_name,
         build_dir.display()
     );
 
-    info!("==> Setting up build environment");
+    debug!("Setting up build environment");
     let sapphire_prefix = config.prefix();
     let build_env = BuildEnvironment::new(
         formula,
@@ -388,14 +388,14 @@ pub async fn build_from_source(
     )?;
 
     if !resources.is_empty() {
-        info!("==> Installing {} resources into libexec", resources.len());
+        debug!("Installing {} resources into libexec", resources.len());
         let libexec_path = install_dir.join("libexec");
         create_dir_all_with_context(&libexec_path, "libexec directory")?;
         for resource in &resources {
             if let Some(stage_path) = resource_stage_paths.get(&resource.name) {
                 install_resource(resource, stage_path, &libexec_path, &build_env)?;
             } else {
-                warn!(
+                debug!(
                     "Could not find stage path for resource '{}'. Skipping.",
                     resource.name
                 );
@@ -403,8 +403,8 @@ pub async fn build_from_source(
         }
     }
 
-    info!(
-        "==> Detecting build system and building main formula: {}",
+    debug!(
+        "Detecting build system and building main formula: {}",
         formula_name
     );
     let source_subdir = determine_source_root(build_dir)?;
@@ -417,7 +417,7 @@ pub async fn build_from_source(
     )?;
 
     if !install_dir.exists() {
-        info!("Creating installation directory: {}", install_dir.display());
+        debug!("Creating installation directory: {}", install_dir.display());
         fs::create_dir_all(&install_dir).map_err(|e| {
             SapphireError::Io(std::io::Error::new(
                 e.kind(),
@@ -431,7 +431,7 @@ pub async fn build_from_source(
         );
     }
     crate::build::write_receipt(formula, &install_dir)?;
-    info!(
+    debug!(
         "Build completed, temporary directory {} will be cleaned up.",
         build_dir.display()
     );
@@ -494,7 +494,7 @@ fn install_perl_resource(
         &format!("make install for Perl resource '{}'", resource.name),
     )?;
 
-    info!(
+    debug!(
         "   -> Successfully installed Perl resource '{}'",
         resource.name
     );
@@ -566,7 +566,7 @@ fn install_python_resource(
         &format!("Python setup.py install for '{}'", resource.name),
     )?;
 
-    info!(
+    debug!(
         "   -> Successfully installed Python resource '{}' to {}",
         resource.name,
         python_site_packages.display()
@@ -590,7 +590,7 @@ fn install_single_file(source_path: &Path, formula: &Formula, install_dir: &Path
 
     let target_path = target_dir.join(target_filename);
 
-    info!(
+    debug!(
         "Copying {} to {}",
         source_path.display(),
         target_path.display()

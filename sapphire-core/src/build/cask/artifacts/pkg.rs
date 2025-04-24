@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask; // Artifact type alias is just Value
@@ -17,7 +17,7 @@ pub fn install_pkg_from_path(
     _config: &Config,                 // Keep for potential future use
 ) -> Result<Vec<InstalledArtifact>> {
     // <-- Return type changed
-    info!("Installing pkg file: {}", pkg_path.display());
+    debug!("Installing pkg file: {}", pkg_path.display());
 
     if !pkg_path.exists() || !pkg_path.is_file() {
         return Err(SapphireError::NotFound(format!(
@@ -130,6 +130,6 @@ pub fn install_pkg_from_path(
             // Optionally check "zap" stanzas too
         }
     }
-    info!("Successfully installed pkg: {}", pkg_path.display());
+    debug!("Successfully installed pkg: {}", pkg_path.display());
     Ok(installed_artifacts) // <-- Return collected artifacts
 }

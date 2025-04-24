@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use tar::Archive;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
 
@@ -415,7 +415,7 @@ fn extract_tar_archive<R: Read>(
         match entry.unpack(&target_path) {
             Ok(_) => debug!("Unpacked TAR entry to: {}", target_path.display()),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                warn!(
+                debug!(
                     "Entry exists, skipping unpack {}: {}",
                     target_path.display(),
                     e
@@ -473,7 +473,7 @@ fn extract_zip_archive<R: Read + Seek>(
         let original = match file.enclosed_name() {
             Some(p) => p.to_path_buf(),
             None => {
-                warn!("Skipping unsafe ZIP name {}", file.name());
+                debug!("Skipping unsafe ZIP name {}", file.name());
                 continue;
             }
         };
@@ -550,7 +550,7 @@ fn extract_zip_archive<R: Read + Seek>(
                     let _ = fs::remove_file(&target_path); // Ignore error if it doesn't exist
                 }
                 std::os::unix::fs::symlink(&link_target, &target_path).map_err(|e| {
-                    warn!(
+                    debug!(
                         "Failed to create symlink {} -> {}: {}",
                         target_path.display(),
                         link_target.display(),
@@ -561,7 +561,7 @@ fn extract_zip_archive<R: Read + Seek>(
             }
             #[cfg(not(unix))]
             {
-                warn!(
+                debug!(
                     "Cannot create symlink on non-unix system: {} -> {}",
                     target_path.display(),
                     link_target.display()

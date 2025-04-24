@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -37,7 +37,10 @@ pub fn install_manpage(
                         if let Some(man_file) = entry.as_str() {
                             let src = stage_path.join(man_file);
                             if !src.exists() {
-                                warn!("Manpage '{}' not found in staging area, skipping", man_file);
+                                debug!(
+                                    "Manpage '{}' not found in staging area, skipping",
+                                    man_file
+                                );
                                 continue;
                             }
 
@@ -45,7 +48,7 @@ pub fn install_manpage(
                             let section = if let Some(caps) = MANPAGE_RE.captures(man_file) {
                                 caps.get(1).unwrap().as_str()
                             } else {
-                                warn!(
+                                debug!(
                                     "Filename '{}' does not look like a manpage, skipping",
                                     man_file
                                 );
@@ -71,7 +74,7 @@ pub fn install_manpage(
                                 fs::remove_file(&dest)?;
                             }
 
-                            info!("Linking manpage '{}' → '{}'", src.display(), dest.display());
+                            debug!("Linking manpage '{}' → '{}'", src.display(), dest.display());
                             // Create the symlink
                             symlink(&src, &dest)?;
 

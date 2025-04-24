@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
@@ -16,7 +16,7 @@ pub fn go_build(
     build_env: &BuildEnvironment,
     _all_installed_paths: &[PathBuf], // Keep if needed later, currently unused
 ) -> Result<()> {
-    info!("==> Building Go module in {}", source_dir.display());
+    debug!("Building Go module in {}", source_dir.display());
 
     let go_exe = which::which_in("go", build_env.get_path_string(), source_dir).map_err(|_| {
         SapphireError::BuildEnvError("go command not found in build environment PATH.".to_string())
@@ -54,8 +54,8 @@ pub fn go_build(
     })?;
     let output_binary_path = target_bin_dir.join(formula_name);
 
-    info!(
-        "==> Running: go build -o {} -ldflags \"-s -w\" {}",
+    debug!(
+        "Running: go build -o {} -ldflags \"-s -w\" {}",
         output_binary_path.display(),
         package_to_build
     );
@@ -79,7 +79,7 @@ pub fn go_build(
         "Go build stderr:\n{}",
         String::from_utf8_lossy(&build_output.stderr)
     );
-    info!(
+    debug!(
         "Go build successful, binary placed at: {}",
         output_binary_path.display()
     );

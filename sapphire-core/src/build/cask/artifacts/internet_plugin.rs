@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -38,7 +38,7 @@ pub fn install_internet_plugin(
                         if let Some(name) = entry.as_str() {
                             let src = stage_path.join(name);
                             if !src.exists() {
-                                warn!("Internet plugin '{}' not found in staging; skipping", name);
+                                debug!("Internet plugin '{}' not found in staging; skipping", name);
                                 continue;
                             }
 
@@ -47,7 +47,7 @@ pub fn install_internet_plugin(
                                 fs::remove_dir_all(&dest)?;
                             }
 
-                            info!(
+                            debug!(
                                 "Installing internet plugin '{}' → '{}'",
                                 src.display(),
                                 dest.display()

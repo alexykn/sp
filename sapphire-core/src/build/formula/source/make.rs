@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error};
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
@@ -40,7 +40,7 @@ fn is_gnu_autotools_configure(script_path: &Path) -> bool {
             false
         }
         Err(e) => {
-            warn!(
+            debug!(
                 "Could not read {} to check for Autotools: {}.",
                 script_path.display(),
                 e
@@ -55,7 +55,7 @@ pub fn configure_and_make(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    info!("==> Configuring and Making in {}", source_dir.display());
+    debug!("Configuring and Making in {}", source_dir.display());
     let configure_script_path = source_dir.join("configure");
 
     if !configure_script_path.exists() {
@@ -67,9 +67,9 @@ pub fn configure_and_make(
 
     let is_autotools = is_gnu_autotools_configure(&configure_script_path);
 
-    info!("==> Running ./configure --prefix={}", install_dir.display());
+    debug!("Running ./configure --prefix={}", install_dir.display());
     if is_autotools {
-        info!("    (Detected Autotools flags)");
+        debug!("    (Detected Autotools flags)");
     }
 
     let mut cmd_configure = Command::new("./configure");
@@ -93,12 +93,12 @@ pub fn configure_and_make(
         .or_else(|_| which::which("make"))
         .map_err(|_| SapphireError::BuildEnvError("make command not found.".to_string()))?;
 
-    info!("==> Running make");
+    debug!("Running make");
     let mut cmd_make = Command::new(make_exe.clone());
     run_command_in_dir(&mut cmd_make, source_dir, build_env, "make")?;
     debug!("Make completed successfully.");
 
-    info!("==> Running make install");
+    debug!("Running make install");
     let mut cmd_install = Command::new(make_exe);
     cmd_install.arg("install");
     run_command_in_dir(&mut cmd_install, source_dir, build_env, "make install")?;
@@ -116,10 +116,10 @@ pub fn simple_make(
         .or_else(|_| which::which("make"))
         .map_err(|_| SapphireError::BuildEnvError("make command not found.".to_string()))?;
 
-    info!("==> Running make");
+    debug!("Running make");
     let mut cmd_make = Command::new(make_exe.clone());
     let make_output = run_command_in_dir(&mut cmd_make, source_dir, build_env, "make")?;
-    info!("Make completed successfully.");
+    debug!("Make completed successfully.");
     debug!(
         "Make stdout:\n{}",
         String::from_utf8_lossy(&make_output.stdout)
@@ -129,7 +129,7 @@ pub fn simple_make(
         String::from_utf8_lossy(&make_output.stderr)
     );
 
-    info!("==> Running make install PREFIX={}", install_dir.display());
+    debug!("Running make install PREFIX={}", install_dir.display());
     let mut cmd_install = Command::new(make_exe);
     cmd_install.arg("install");
     cmd_install.arg(format!("PREFIX={}", install_dir.display()));
@@ -143,7 +143,7 @@ pub fn simple_make(
     let make_install_succeeded = install_output_result.is_ok();
 
     if !make_install_succeeded {
-        warn!("'make install' failed. Will check for manually installable artifacts.");
+        debug!("'make install' failed. Will check for manually installable artifacts.");
         // Corrected line: Collapsed the nested if let
         if let Err(SapphireError::CommandExecError(msg)) = &install_output_result {
             // Use '&' to borrow
@@ -159,7 +159,7 @@ pub fn simple_make(
             }
         }
     } else {
-        info!("Make install completed successfully.");
+        debug!("Make install completed successfully.");
         if let Ok(ref output) = install_output_result {
             debug!(
                 "Make install stdout:\n{}",
@@ -177,7 +177,7 @@ pub fn simple_make(
         bin_dir.exists() && bin_dir.read_dir().is_ok_and(|mut d| d.next().is_some());
 
     if !bin_populated {
-        warn!(
+        debug!(
             "Installation directory '{}' is empty after 'make install'. Attempting manual artifact installation.",
             bin_dir.display()
         );
@@ -191,7 +191,7 @@ pub fn simple_make(
         let mut found_and_installed_manually = false;
 
         if !formula_name.is_empty() && potential_binary_path.is_file() {
-            info!(
+            debug!(
                 "Found potential binary '{}'. Manually installing...",
                 potential_binary_path.display()
             );
@@ -210,12 +210,12 @@ pub fn simple_make(
                 let mut perms = fs::metadata(&target_path)?.permissions();
                 perms.set_mode(0o755);
                 fs::set_permissions(&target_path, perms)?;
-                info!("Set executable permissions on {}", target_path.display());
+                debug!("Set executable permissions on {}", target_path.display());
             }
 
             found_and_installed_manually = true;
         } else {
-            warn!(
+            debug!(
                 "Could not find executable named '{}' in build directory for manual installation.",
                 formula_name
             );
@@ -226,10 +226,10 @@ pub fn simple_make(
             // Return the original error by propagating it
             return install_output_result.map(|_| ());
         } else if !found_and_installed_manually && make_install_succeeded {
-            warn!("make install reported success, but '{}' was not populated and no executable found manually.", bin_dir.display());
+            debug!("make install reported success, but '{}' was not populated and no executable found manually.", bin_dir.display());
         }
     } else {
-        info!(
+        debug!(
             "Installation directory '{}' appears populated.",
             bin_dir.display()
         );

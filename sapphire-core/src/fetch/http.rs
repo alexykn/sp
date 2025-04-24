@@ -10,7 +10,7 @@ use reqwest::{Client, StatusCode}; // Use async Client
 use sha2::{Digest, Sha256};
 use tokio::fs::File as TokioFile; // Use tokio's async File
 use tokio::io::AsyncWriteExt;
-use tracing::{error, warn};
+use tracing::{debug, error};
 
 use crate::model::formula::ResourceSpec;
 use crate::utils::config::Config;
@@ -55,13 +55,13 @@ pub async fn fetch_formula_source_or_bottle(
                     return Ok(cache_path);
                 }
                 Err(e) => {
-                    warn!(
+                    debug!(
                         "Cached file checksum mismatch ({}): {}. Redownloading.",
                         cache_path.display(),
                         e
                     );
                     if let Err(remove_err) = fs::remove_file(&cache_path) {
-                        warn!(
+                        debug!(
                             "Failed to remove corrupted cached file {}: {}",
                             cache_path.display(),
                             remove_err
@@ -161,13 +161,13 @@ pub async fn fetch_resource(
                 return Ok(cache_path);
             }
             Err(e) => {
-                warn!(
+                debug!(
                     "Cached resource checksum mismatch ({}): {}. Redownloading.",
                     cache_path.display(),
                     e
                 );
                 if let Err(remove_err) = fs::remove_file(&cache_path) {
-                    warn!(
+                    debug!(
                         "Failed to remove corrupted cached resource file {}: {}",
                         cache_path.display(),
                         remove_err

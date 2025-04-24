@@ -11,7 +11,7 @@ use rand::{Rng, SeedableRng};
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 use url::Url;
 
 use crate::utils::config::Config;
@@ -180,7 +180,7 @@ async fn determine_auth(
         );
         match fetch_anonymous_token(client, registry_domain, repo_path).await {
             Ok(t) => return Ok(OciAuth::AnonymousBearer { token: t }),
-            Err(e) => warn!("Anon token failed, proceeding unauthenticated: {}", e),
+            Err(e) => debug!("Anon token failed, proceeding unauthenticated: {}", e),
         }
     }
     Ok(OciAuth::None)

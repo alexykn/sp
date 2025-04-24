@@ -3,6 +3,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use tracing::debug;
 use which;
 
 use crate::utils::error::{Result, SapphireError};
@@ -21,14 +22,14 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
         if let Ok(compiler_path) = env::var(env_var_name) {
             let path = PathBuf::from(compiler_path);
             if path.is_file() {
-                println!(
+                debug!(
                     "Using compiler from env var {}: {}",
                     env_var_name,
                     path.display()
                 );
                 return Ok(path);
             } else {
-                println!(
+                debug!(
                     "Env var {} points to non-existent file: {}",
                     env_var_name,
                     path.display()
@@ -39,7 +40,7 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
 
     // 2. Use xcrun on macOS (if available)
     if cfg!(target_os = "macos") {
-        println!("Attempting to find '{name}' using xcrun");
+        debug!("Attempting to find '{name}' using xcrun");
         let output = Command::new("xcrun")
             .arg("--find")
             .arg(name)
@@ -52,34 +53,34 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
                 if !path_str.is_empty() {
                     let path = PathBuf::from(path_str);
                     if path.is_file() {
-                        println!("Found compiler via xcrun: {}", path.display());
+                        debug!("Found compiler via xcrun: {}", path.display());
                         return Ok(path);
                     } else {
-                        println!(
+                        debug!(
                             "xcrun found '{}' but path doesn't exist or isn't a file: {}",
                             name,
                             path.display()
                         );
                     }
                 } else {
-                    println!("xcrun found '{name}' but returned empty path.");
+                    debug!("xcrun found '{name}' but returned empty path.");
                 }
             }
             Ok(out) => {
                 // xcrun ran but failed
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 // Don't treat xcrun failure as fatal, just means it couldn't find it this way
-                println!("xcrun failed to find '{}': {}", name, stderr.trim());
+                debug!("xcrun failed to find '{}': {}", name, stderr.trim());
             }
             Err(e) => {
                 // xcrun command itself failed to execute (likely not installed or not in PATH)
-                println!("Failed to execute xcrun: {e}. Falling back to PATH search.");
+                debug!("Failed to execute xcrun: {e}. Falling back to PATH search.");
             }
         }
     }
 
     // 3. Fallback to searching PATH
-    println!("Falling back to searching PATH for '{name}'");
+    debug!("Falling back to searching PATH for '{name}'");
     which::which(name).map_err(|e| {
         SapphireError::BuildEnvError(format!("Failed to find compiler '{name}' on PATH: {e}"))
     })
@@ -89,7 +90,7 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
 /// Returns "/" on non-macOS platforms or if detection fails.
 pub fn find_sdk_path() -> Result<PathBuf> {
     if cfg!(target_os = "macos") {
-        println!("Attempting to find macOS SDK path using xcrun");
+        debug!("Attempting to find macOS SDK path using xcrun");
         let output = Command::new("xcrun")
             .arg("--show-sdk-path")
             .stderr(Stdio::piped())
@@ -99,7 +100,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
             Ok(out) if out.status.success() => {
                 let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if path_str.is_empty() || path_str == "/" {
-                    println!("xcrun returned empty or invalid SDK path ('{path_str}'). Check Xcode/CLT installation.");
+                    debug!("xcrun returned empty or invalid SDK path ('{path_str}'). Check Xcode/CLT installation.");
                     // Fallback or error? Homebrew errors here. Let's error.
                     return Err(SapphireError::BuildEnvError(
                         "xcrun returned empty or invalid SDK path. Is Xcode or Command Line Tools installed correctly?".to_string()
@@ -112,7 +113,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
                         sdk_path.display()
                     )));
                 }
-                println!("Found SDK path: {}", sdk_path.display());
+                debug!("Found SDK path: {}", sdk_path.display());
                 Ok(sdk_path)
             }
             Ok(out) => {
@@ -132,7 +133,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
         }
     } else {
         // No SDK concept in this way on Linux/other platforms usually
-        println!("Not on macOS, returning '/' as SDK path placeholder");
+        debug!("Not on macOS, returning '/' as SDK path placeholder");
         Ok(PathBuf::from("/"))
     }
 }
@@ -141,7 +142,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
 /// Returns "0.0" on non-macOS platforms.
 pub fn get_macos_version() -> Result<String> {
     if cfg!(target_os = "macos") {
-        println!("Attempting to get macOS version using sw_vers");
+        debug!("Attempting to get macOS version using sw_vers");
         let output = Command::new("sw_vers")
             .arg("-productVersion")
             .stderr(Stdio::piped())
@@ -157,7 +158,7 @@ pub fn get_macos_version() -> Result<String> {
                 } else {
                     version_full.clone() // Fallback if format is unexpected
                 };
-                println!("Found macOS version: {version_full} (short: {version_short})");
+                debug!("Found macOS version: {version_full} (short: {version_short})");
                 Ok(version_short)
             }
             Ok(out) => {
@@ -176,7 +177,7 @@ pub fn get_macos_version() -> Result<String> {
             }
         }
     } else {
-        println!("Not on macOS, returning '0.0' as version placeholder");
+        debug!("Not on macOS, returning '0.0' as version placeholder");
         Ok(String::from("0.0")) // Not applicable
     }
 }
@@ -186,14 +187,14 @@ pub fn get_arch_flag() -> String {
     if cfg!(target_os = "macos") {
         // On macOS, we explicitly use -arch flags
         if cfg!(target_arch = "x86_64") {
-            println!("Detected target arch: x86_64");
+            debug!("Detected target arch: x86_64");
             "-arch x86_64".to_string()
         } else if cfg!(target_arch = "aarch64") {
-            println!("Detected target arch: aarch64 (arm64)");
+            debug!("Detected target arch: aarch64 (arm64)");
             "-arch arm64".to_string()
         } else {
             let arch = env::consts::ARCH;
-            println!("Unknown target architecture on macOS: {arch}, cannot determine -arch flag. Build might fail.");
+            debug!("Unknown target architecture on macOS: {arch}, cannot determine -arch flag. Build might fail.");
             // Provide no flag in this unknown case? Or default to native?
             // Homebrew might error or try native. Let's return empty for safety.
             String::new()
@@ -202,7 +203,7 @@ pub fn get_arch_flag() -> String {
         // On Linux/other, -march=native is common but less portable for distribution.
         // Compilers usually target the host architecture by default without specific flags.
         // Let's return an empty string for non-macOS for now. Flags can be added later if needed.
-        println!("Not on macOS, returning empty arch flag.");
+        debug!("Not on macOS, returning empty arch flag.");
         String::new()
     }
 }

@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -34,7 +34,7 @@ pub fn install_suite(
                         if let Some(dir_name) = entry.as_str() {
                             let src = stage_path.join(dir_name);
                             if !src.exists() {
-                                warn!(
+                                debug!(
                                     "Suite directory '{}' not found in staging, skipping",
                                     dir_name
                                 );
@@ -47,7 +47,7 @@ pub fn install_suite(
                                 fs::remove_dir_all(&dest)?; // remove old
                             }
 
-                            info!("Moving suite '{}' → '{}'", src.display(), dest.display());
+                            debug!("Moving suite '{}' → '{}'", src.display(), dest.display());
                             // Try a rename (mv); fall back to recursive copy if cross‑filesystem
                             let mv_status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !mv_status.success() {

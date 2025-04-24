@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use semver::Version;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::dependency::{Dependency, DependencyTag, Requirement};
 use crate::utils::error::Result; // <-- Import only Result // Use log crate imports
@@ -207,7 +207,7 @@ impl<'de> Deserialize<'de> for Formula {
             }
         }
         if final_url.is_empty() && raw.versions.head.is_none() {
-            warn!("Warning: Formula '{}' has no stable URL defined.", raw.name);
+            debug!("Warning: Formula '{}' has no stable URL defined.", raw.name);
         }
 
         // --- Dependency Processing (Original logic) ---
@@ -252,12 +252,12 @@ impl<'de> Deserialize<'de> for Formula {
                             if res_spec.name.is_empty() {
                                 res_spec.name = res_name;
                             } else if res_spec.name != res_name {
-                                warn!("Resource name mismatch in formula '{}': key '{}' vs spec '{}'. Using key.", raw.name, res_name, res_spec.name);
+                                debug!("Resource name mismatch in formula '{}': key '{}' vs spec '{}'. Using key.", raw.name, res_name, res_spec.name);
                                 res_spec.name = res_name; // Prefer key name
                             }
                             // Ensure required fields are present
                             if res_spec.url.is_empty() || res_spec.sha256.is_empty() {
-                                warn!("Resource '{}' for formula '{}' is missing URL or SHA256. Skipping.", res_spec.name, raw.name);
+                                debug!("Resource '{}' for formula '{}' is missing URL or SHA256. Skipping.", res_spec.name, raw.name);
                                 continue;
                             }
                             debug!(
@@ -268,14 +268,14 @@ impl<'de> Deserialize<'de> for Formula {
                         }
                         Err(e) => {
                             // Use display for the error which comes from serde::de::Error::custom
-                            warn!("Failed to parse resource spec value for key '{}' in formula '{}': {}. Value: {:?}", res_name, raw.name, e, res_spec_val);
+                            debug!("Failed to parse resource spec value for key '{}' in formula '{}': {}. Value: {:?}", res_name, raw.name, e, res_spec_val);
                         }
                     }
                 } else {
-                    warn!("Empty resource object found in formula '{}'.", raw.name);
+                    debug!("Empty resource object found in formula '{}'.", raw.name);
                 }
             } else {
-                warn!("Unexpected format for resource entry in formula '{}': expected object, got {:?}", raw.name, res_val);
+                debug!("Unexpected format for resource entry in formula '{}': expected object, got {:?}", raw.name, res_val);
             }
         }
 
@@ -427,7 +427,7 @@ where
                 }
             }
         } else {
-            warn!("Warning: Could not parse requirement: {:?}", req_val);
+            debug!("Warning: Could not parse requirement: {:?}", req_val);
             requirements.push(Requirement::Other(format!(
                 "Unparsed requirement: {req_val:?}"
             )));

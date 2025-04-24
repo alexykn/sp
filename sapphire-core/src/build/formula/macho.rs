@@ -27,7 +27,7 @@ use object::{
     FileKind,      // For checking FAT/single arch
 };
 use tempfile::NamedTempFile; // Keep for write_patched_buffer
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::utils::error::Result; // Keep top-level Result
 #[cfg(target_os = "macos")]
@@ -76,7 +76,7 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
     let mut buffer = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            warn!("  Failed to read {}: {}. Skipping.", path.display(), e);
+            debug!("  Failed to read {}: {}. Skipping.", path.display(), e);
             return Ok(false);
         }
     };

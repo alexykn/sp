@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
@@ -14,7 +14,7 @@ pub fn cargo_build(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    info!("==> Building with Cargo in {}", source_dir.display());
+    debug!("Building with Cargo in {}", source_dir.display());
     let cargo_exe =
         which::which_in("cargo", build_env.get_path_string(), source_dir).map_err(|_| {
             SapphireError::BuildEnvError(
@@ -22,8 +22,8 @@ pub fn cargo_build(
             )
         })?;
 
-    info!(
-        "==> Running cargo install --path . --root {}",
+    debug!(
+        "Running cargo install --path . --root {}",
         install_dir.display()
     );
     let mut cmd = Command::new(cargo_exe);

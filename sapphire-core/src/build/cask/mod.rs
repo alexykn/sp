@@ -14,7 +14,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tempfile::TempDir; // For staging directory
-use tracing::{debug, error, info, warn}; // For logging
+use tracing::{debug, error}; // For logging
 
 use crate::build::extract; // To use extract_archive for ZIP/TAR
 use crate::model::cask::{Cask, UrlField};
@@ -85,7 +85,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         )));
     }
 
-    info!("==> Downloading cask from {}", url_str); // Use info level for user visibility
+    debug!("Downloading cask from {}", url_str); // Use info level for user visibility
 
     let parsed = Url::parse(url_str)
         .map_err(|e| SapphireError::Generic(format!("Invalid URL '{url_str}': {e}")))?;
@@ -97,7 +97,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            warn!("URL has no filename component, using fallback name for cache based on token.");
+            debug!("URL has no filename component, using fallback name for cache based on token.");
             format!("cask-{}-download.tmp", cask.token.replace('/', "_"))
         });
 
@@ -107,8 +107,8 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     // Checksum logic would go here if implemented
 
     if cache_path.exists() {
-        info!("==> Using cached download: {}", cache_path.display()); // Use info
-                                                                      // Verify checksum here if implemented
+        debug!("Using cached download: {}", cache_path.display()); // Use info
+                                                                   // Verify checksum here if implemented
         return Ok(cache_path);
     }
 
@@ -138,14 +138,14 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     let mut file = fs::File::create(&cache_path)?;
     file.write_all(&bytes)?;
 
-    info!("==> Download completed: {}", cache_path.display()); // Use info
-                                                               // Verify checksum here if implemented
+    debug!("Download completed: {}", cache_path.display()); // Use info
+                                                            // Verify checksum here if implemented
     Ok(cache_path)
 }
 
 /// Install a cask from a downloaded file using artifact-driven logic
 pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Result<()> {
-    info!("==> Installing cask: {}", cask.token);
+    debug!("Installing cask: {}", cask.token);
 
     let cask_version_install_path = get_cask_version_path(cask, config);
     if !cask_version_install_path.exists() {
@@ -176,7 +176,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     let non_extensions = ["stable", "latest", "download", "bin", ""];
 
     if non_extensions.contains(&detected_extension.as_str()) {
-        info!(
+        debug!(
             "Download path '{}' has no definite extension ('{}'), attempting content detection.",
             download_path.display(),
             detected_extension
@@ -186,7 +186,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             // Propagate potential IO errors? Use map_err
             Ok(Some(kind)) => {
                 detected_extension = kind.extension().to_string(); // Get common extension from infer
-                info!("Detected file type via content: {}", detected_extension);
+                debug!("Detected file type via content: {}", detected_extension);
             }
             Ok(None) => {
                 error!(
@@ -216,7 +216,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
 
     // --- Handle PKG directly (before staging) ---
     if detected_extension == "pkg" || detected_extension == "mpkg" {
-        info!("Detected PKG installer, running directly...");
+        debug!("Detected PKG installer, running directly...");
         match artifacts::pkg::install_pkg_from_path(
             cask,
             download_path,
@@ -225,9 +225,9 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         ) {
             Ok(installed_artifacts) => {
                 // PKG install succeeded, write manifest and return early
-                info!("Writing PKG install manifest...");
+                debug!("Writing PKG install manifest...");
                 write_cask_manifest(cask, &cask_version_install_path, installed_artifacts)?;
-                info!("✅ Successfully installed PKG cask: {}", cask.token);
+                debug!("✅ Successfully installed PKG cask: {}", cask.token);
                 return Ok(()); // Success!
             }
             Err(e) => {
@@ -258,7 +258,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                 stage_path.display()
             );
             dmg::extract_dmg_to_stage(download_path, stage_path)?; // Pass errors up
-            info!("Successfully extracted DMG to staging area.");
+            debug!("Successfully extracted DMG to staging area.");
         }
         "zip" => {
             debug!(
@@ -268,7 +268,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             );
             // Pass the detected type!
             extract::extract_archive(download_path, stage_path, 0, "zip")?; // Pass errors up
-            info!("Successfully extracted ZIP to staging area.");
+            debug!("Successfully extracted ZIP to staging area.");
         }
         "gz" | "bz2" | "xz" | "tar" => {
             // Handle tarballs potentially (if cask delivers them)
@@ -282,7 +282,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             );
             // Pass strip_components=0 for casks unless specified otherwise
             extract::extract_archive(download_path, stage_path, 0, archive_type_for_extraction)?;
-            info!("Successfully extracted TAR archive to staging area.");
+            debug!("Successfully extracted TAR archive to staging area.");
         }
         // PKG handled above, App bundle likely inside DMG/ZIP
         // Add other container types if necessary (e.g., 7z)
@@ -304,7 +304,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
 
     if let Some(artifacts_def) = &cask.artifacts {
         // Use the correct variable name
-        info!(
+        debug!(
             "Processing {} declared artifacts from staging area...",
             artifacts_def.len()
         );
@@ -344,14 +344,14 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                             }
                                         }
                                     } else {
-                                        warn!(
+                                        debug!(
                                             "Non-string value found in 'app' artifact array: {:?}",
                                             app_name_val
                                         );
                                     }
                                 }
                             } else {
-                                warn!("'app' artifact value is not an array: {:?}", value);
+                                debug!("'app' artifact value is not an array: {:?}", value);
                             }
                             Ok(app_artifacts)
                         }
@@ -381,14 +381,14 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                             }
                                         }
                                     } else {
-                                        warn!(
+                                        debug!(
                                             "Non-string value found in 'pkg' artifact array: {:?}",
                                             pkg_val
                                         );
                                     }
                                 }
                             } else {
-                                warn!("'pkg' artifact value is not an array: {:?}", value);
+                                debug!("'pkg' artifact value is not an array: {:?}", value);
                             }
                             Ok(installed_pkgs)
                         }
@@ -511,7 +511,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                         "uninstall" => artifacts::uninstall::record_uninstall(cask), /* Doesn't use stage_path, just records */
                         // Ignore keys we don't handle or understand
                         other => {
-                            warn!("Artifact type '{}' not supported yet — skipping.", other);
+                            debug!("Artifact type '{}' not supported yet — skipping.", other);
                             Ok(vec![]) // Return empty Ok result
                         }
                     };
@@ -538,10 +538,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                         }
                     }
                 } else {
-                    warn!("Empty artifact object found: {:?}", artifact_obj);
+                    debug!("Empty artifact object found: {:?}", artifact_obj);
                 }
             } else {
-                warn!(
+                debug!(
                     "Unexpected non-object artifact found in list: {:?}",
                     artifact_value
                 );
@@ -583,12 +583,12 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         .count();
 
     if actual_install_count == 0 {
-        warn!("No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.", cask.token);
+        debug!("No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.", cask.token);
         // Decide if this is an error or just a warning. Let's allow it but warn.
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     // Write potentially empty installable manifest
     } else {
-        info!("Writing cask installation manifest...");
+        debug!("Writing cask installation manifest...");
         // Use the new function with the detailed artifact list
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     }
@@ -596,7 +596,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     // Staging directory cleanup happens automatically when `stage_dir` goes out of scope
     // Ensure temp_dir crate cleans up correctly
 
-    info!("✅ Successfully installed cask: {}", cask.token);
+    debug!("✅ Successfully installed cask: {}", cask.token);
     Ok(())
 }
 

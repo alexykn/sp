@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -37,7 +37,7 @@ pub fn install_mdimporter(
                         if let Some(bundle_name) = entry.as_str() {
                             let src = stage_path.join(bundle_name);
                             if !src.exists() {
-                                warn!(
+                                debug!(
                                     "Mdimporter bundle '{}' not found in staging; skipping",
                                     bundle_name
                                 );
@@ -49,7 +49,7 @@ pub fn install_mdimporter(
                                 fs::remove_dir_all(&dest)?;
                             }
 
-                            info!(
+                            debug!(
                                 "Installing mdimporter '{}' → '{}',",
                                 src.display(),
                                 dest.display()
@@ -73,7 +73,7 @@ pub fn install_mdimporter(
                             });
 
                             // Reload Spotlight importer so it's picked up immediately
-                            info!("Reloading Spotlight importer: {}", dest.display());
+                            debug!("Reloading Spotlight importer: {}", dest.display());
                             let _ = Command::new("/usr/bin/mdimport")
                                 .arg("-r")
                                 .arg(&dest)

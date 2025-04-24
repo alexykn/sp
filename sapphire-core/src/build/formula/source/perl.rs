@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
@@ -18,8 +18,8 @@ pub fn perl_build(
     let makefile_pl = source_dir.join("Makefile.PL");
 
     if configure_script.is_file() {
-        info!(
-            "==> Building with Perl Configure script in {}",
+        debug!(
+            "Building with Perl Configure script in {}",
             source_dir.display()
         );
         let sh_exe = which::which_in("sh", build_env.get_path_string(), source_dir)
@@ -42,10 +42,7 @@ pub fn perl_build(
             String::from_utf8_lossy(&configure_output.stderr)
         );
     } else if makefile_pl.is_file() {
-        info!(
-            "==> Building with Perl Makefile.PL in {}",
-            source_dir.display()
-        );
+        debug!("Building with Perl Makefile.PL in {}", source_dir.display());
         let perl_exe = which::which_in("perl", build_env.get_path_string(), source_dir)
             .map_err(|_| SapphireError::BuildEnvError("perl command not found.".to_string()))?;
 
@@ -73,12 +70,12 @@ pub fn perl_build(
     let make_exe = which::which_in("make", build_env.get_path_string(), source_dir)
         .map_err(|_| SapphireError::BuildEnvError("make command not found.".to_string()))?;
 
-    info!("==> Running make for Perl");
+    debug!("Running make for Perl");
     let mut cmd_make = Command::new(make_exe.clone());
     run_command_in_dir(&mut cmd_make, source_dir, build_env, "make (perl)")?;
-    info!("Perl make completed successfully.");
+    debug!("Perl make completed successfully.");
 
-    info!("==> Running make install for Perl");
+    debug!("Running make install for Perl");
     let mut cmd_install = Command::new(make_exe);
     cmd_install.arg("install");
     run_command_in_dir(
@@ -87,7 +84,7 @@ pub fn perl_build(
         build_env,
         "make install (perl)",
     )?;
-    info!("Perl make install completed successfully.");
+    debug!("Perl make install completed successfully.");
 
     Ok(())
 }

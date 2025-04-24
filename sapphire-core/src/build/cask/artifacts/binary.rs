@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -99,7 +99,7 @@ pub fn install_binary(
                         // Link into bin_dir
                         let link_path = bin_dir.join(&target_name);
                         let _ = fs::remove_file(&link_path);
-                        info!(
+                        debug!(
                             "Linking binary '{}' → '{}'",
                             src_path.display(),
                             link_path.display()

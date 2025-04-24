@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
@@ -16,7 +16,7 @@ pub fn cmake_build(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    info!("==> Building with CMake in {}", build_dir.display());
+    debug!("Building with CMake in {}", build_dir.display());
     let cmake_build_subdir_name = "sapphire-cmake-build";
     let cmake_build_dir = build_dir.join(cmake_build_subdir_name);
     fs::create_dir_all(&cmake_build_dir).map_err(SapphireError::Io)?;
@@ -28,8 +28,8 @@ pub fn cmake_build(
             )
         })?;
 
-    info!(
-        "==> Running cmake configuration (source: {}, build: {})",
+    debug!(
+        "Running cmake configuration (source: {}, build: {})",
         build_dir.join(source_subdir).display(),
         cmake_build_dir.display()
     );
@@ -63,7 +63,7 @@ pub fn cmake_build(
         String::from_utf8_lossy(&configure_output.stderr)
     );
 
-    info!("==> Running ninja install in {}", cmake_build_dir.display());
+    debug!("Running ninja install in {}", cmake_build_dir.display());
     let ninja_exe = which::which_in("ninja", build_env.get_path_string(), &cmake_build_dir)
         .map_err(|_| {
             SapphireError::BuildEnvError(

@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir; // Ensure helper is imported if used
@@ -15,18 +15,15 @@ pub fn python_build(
     install_dir: &Path,
     build_env: &BuildEnvironment,
 ) -> Result<()> {
-    info!(
-        "==> Building with Python setup.py in {}",
-        source_dir.display()
-    );
+    debug!("Building with Python setup.py in {}", source_dir.display());
     let python_exe = which::which_in("python3", build_env.get_path_string(), source_dir)
         .or_else(|_| which::which_in("python", build_env.get_path_string(), source_dir))
         .map_err(|_| {
             SapphireError::BuildEnvError("python3 or python command not found.".to_string())
         })?;
 
-    info!(
-        "==> Running {} setup.py install --prefix={}",
+    debug!(
+        "Running {} setup.py install --prefix={}",
         python_exe.display(),
         install_dir.display()
     );

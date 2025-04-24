@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use tracing::debug;
+
 use crate::utils::error::{Result, SapphireError};
 
 /// Represents a source of packages (formulas and casks)
@@ -74,7 +76,7 @@ impl Tap {
             .map_err(|e| SapphireError::Generic(format!("Failed to analyze merge: {e}")))?;
 
         if analysis.0.is_up_to_date() {
-            println!("Already up-to-date");
+            debug!("Already up-to-date");
             return Ok(());
         }
 
@@ -106,7 +108,7 @@ impl Tap {
                 self.full_name()
             )));
         }
-        println!("Removing tap {}", self.full_name());
+        debug!("Removing tap {}", self.full_name());
         std::fs::remove_dir_all(&self.path).map_err(|e| {
             SapphireError::Generic(format!("Failed to remove tap {}: {}", self.full_name(), e))
         })

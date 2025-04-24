@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -38,7 +38,7 @@ pub fn install_font(
                         if let Some(name) = entry.as_str() {
                             let src = stage_path.join(name);
                             if !src.exists() {
-                                warn!("Font '{}' not found in staging; skipping", name);
+                                debug!("Font '{}' not found in staging; skipping", name);
                                 continue;
                             }
 
@@ -47,7 +47,7 @@ pub fn install_font(
                                 fs::remove_file(&dest)?;
                             }
 
-                            info!("Installing font '{}' → '{}'", src.display(), dest.display());
+                            debug!("Installing font '{}' → '{}'", src.display(), dest.display());
                             // Try move, fallback to copy
                             let status = Command::new("mv").arg(&src).arg(&dest).status()?;
                             if !status.success() {

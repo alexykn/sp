@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -37,7 +37,7 @@ pub fn install_qlplugin(
                         if let Some(bundle_name) = entry.as_str() {
                             let src = stage_path.join(bundle_name);
                             if !src.exists() {
-                                warn!(
+                                debug!(
                                     "QuickLook plugin '{}' not found in staging; skipping",
                                     bundle_name
                                 );
@@ -49,7 +49,7 @@ pub fn install_qlplugin(
                                 fs::remove_dir_all(&dest)?;
                             }
 
-                            info!(
+                            debug!(
                                 "Installing QuickLook plugin '{}' → '{}',",
                                 src.display(),
                                 dest.display()

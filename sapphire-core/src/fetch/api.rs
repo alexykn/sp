@@ -3,7 +3,7 @@
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT}; // Import headers
 use reqwest::Client;
 use serde_json::Value;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 //use serde::de::DeserializeOwned; // Import DeserializeOwned - might be used later
 use crate::model::cask::{Cask, CaskList};
@@ -114,7 +114,7 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
         Ok(formula)
     } else {
         // Fallback might be less useful if the single endpoint fails, but keep for now
-        warn!(
+        debug!(
             "Direct fetch for formula '{}' failed. Fetching full list as fallback.",
             name
         );
@@ -143,7 +143,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
         let cask: serde_json::Value = serde_json::from_str(&body).map_err(SapphireError::Json)?;
         Ok(cask)
     } else {
-        warn!(
+        debug!(
             "Direct fetch for cask '{}' failed. Fetching full list as fallback.",
             token
         );

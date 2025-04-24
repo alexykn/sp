@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -32,7 +32,7 @@ pub fn run_installer(
                         if let Some(inst_obj) = inst.as_object() {
                             // Manual installer: user must open the path themselves
                             if let Some(man) = inst_obj.get("manual").and_then(|v| v.as_str()) {
-                                warn!(
+                                debug!(
                                     "Cask {} requires manual install. To finish:\n    open {}",
                                     cask.token,
                                     stage_path.join(man).display()
@@ -77,7 +77,7 @@ pub fn run_installer(
                                 )));
                             }
 
-                            info!(
+                            debug!(
                                 "Running installer script '{}' for cask {}",
                                 script_path.display(),
                                 cask.token

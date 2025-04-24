@@ -462,7 +462,7 @@ async fn install_casks(
     while let Some(join_res) = js.join_next().await {
         match join_res {
             Ok((token, outcome)) => match outcome {
-                Ok(()) => info!("✔ installed cask {token}"),
+                Ok(()) => info!("Installed cask {token}"),
                 Err(e) => {
                     error!("✖ {}: {}", token, e);
                     failures.push(token.clone());

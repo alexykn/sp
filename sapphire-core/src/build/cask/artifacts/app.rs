@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use tracing::{debug, error, info, warn}; // Added log imports
+use tracing::{debug, error}; // Added log imports
 
 use crate::build::cask::InstalledArtifact;
 use crate::model::cask::Cask;
@@ -63,7 +63,7 @@ pub fn install_app_from_staged(
             if e.kind() == std::io::ErrorKind::PermissionDenied
                 || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
             {
-                warn!("Direct removal failed ({}). Trying with sudo rm -rf...", e);
+                debug!("Direct removal failed ({}). Trying with sudo rm -rf...", e);
                 debug!("Executing: sudo rm -rf {}", final_app_destination.display());
                 let output = Command::new("sudo")
                     .arg("rm")
@@ -110,7 +110,7 @@ pub fn install_app_from_staged(
             || stderr.contains("operation not permitted")
             || stderr.contains("permission denied")
         {
-            warn!("Direct mv failed ({}), trying cp -R...", stderr);
+            debug!("Direct mv failed ({}), trying cp -R...", stderr);
             debug!(
                 "Executing: cp -R {} {}",
                 staged_app_path.display(),
@@ -158,7 +158,7 @@ pub fn install_app_from_staged(
 
     if caskroom_app_link_path.exists() || caskroom_app_link_path.symlink_metadata().is_ok() {
         if let Err(e) = fs::remove_file(&caskroom_app_link_path) {
-            warn!(
+            debug!(
                 "Failed to remove existing item at caskroom link path {}: {}",
                 caskroom_app_link_path.display(),
                 e
@@ -170,7 +170,7 @@ pub fn install_app_from_staged(
     {
         if let Err(e) = std::os::unix::fs::symlink(&final_app_destination, &caskroom_app_link_path)
         {
-            warn!(
+            debug!(
                 "Failed to create symlink {} -> {}: {}",
                 caskroom_app_link_path.display(),
                 final_app_destination.display(),
@@ -189,12 +189,12 @@ pub fn install_app_from_staged(
     }
     #[cfg(not(unix))]
     {
-        warn!(
+        debug!(
             "Symlink creation not supported on this platform. Skipping link for {}.",
             caskroom_app_link_path.display()
         );
     }
 
-    info!("Successfully installed app artifact: {}", app_name);
+    debug!("Successfully installed app artifact: {}", app_name);
     Ok(created_artifacts) // <-- Return the collected artifacts
 }
