@@ -3,8 +3,8 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
+use std::sync::LazyLock;
 
-use once_cell::sync::Lazy; // Import Lazy
 use regex::Regex;
 use tracing::{info, warn};
 
@@ -14,7 +14,8 @@ use crate::utils::config::Config;
 use crate::utils::error::Result;
 
 // --- Moved Regex Creation Outside ---
-static MANPAGE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap());
+static MANPAGE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap());
 
 /// Install any `manpage` stanzas from the Cask definition.
 /// Mirrors Homebrew’s `Cask::Artifact::Manpage < Symlinked` behavior
