@@ -504,9 +504,7 @@ impl Install {
                     }
                 }
                 Err(e) => {
-                    let msg = format!(
-                        "Failed to fetch dependency cask info for '{token}': {e}"
-                    );
+                    let msg = format!("Failed to fetch dependency cask info for '{token}': {e}");
                     if !cask_fetch_errors.iter().any(|(n, _)| n == &token) {
                         debug!("✖ {msg}");
                         cask_fetch_errors.push((token, e));
