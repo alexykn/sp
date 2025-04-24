@@ -215,8 +215,7 @@ fn determine_archive_type(archive_path: &Path, _context: &str) -> Result<&'stati
                     .copied()
                     .ok_or_else(|| {
                         SapphireError::Generic(format!(
-                            "Internal error matching inferred ext {}",
-                            ext
+                            "Internal error matching inferred ext {ext}"
                         ))
                     })
             } else {
@@ -238,7 +237,7 @@ fn determine_archive_type(archive_path: &Path, _context: &str) -> Result<&'stati
                     .find(|&&s| s == ext)
                     .copied()
                     .ok_or_else(|| {
-                        SapphireError::Generic(format!("Internal error matching file ext {}", ext))
+                        SapphireError::Generic(format!("Internal error matching file ext {ext}"))
                     })
             } else {
                 Err(SapphireError::Generic(format!(
@@ -310,9 +309,9 @@ pub async fn build_from_source(
     let temp_dir_base = config.cache_dir.join("build-temp");
     create_dir_all_with_context(&temp_dir_base, "build temp base")?;
     let temp_build_dir = tempfile::Builder::new()
-        .prefix(&format!("{}-", formula_name))
+        .prefix(&format!("{formula_name}-"))
         .tempdir_in(&temp_dir_base)
-        .map_err(|e| SapphireError::IoError(format!("Failed create temp build dir: {}", e)))?;
+        .map_err(|e| SapphireError::IoError(format!("Failed create temp build dir: {e}")))?;
     let build_dir = temp_build_dir.path();
 
     info!(
@@ -361,10 +360,8 @@ pub async fn build_from_source(
                 res_name,
                 stage_path.display()
             );
-            let resource_archive_type_str = determine_archive_type(
-                &resource_archive_path,
-                &format!("resource '{}'", res_name),
-            )?;
+            let resource_archive_type_str =
+                determine_archive_type(&resource_archive_path, &format!("resource '{res_name}'"))?;
             crate::build::extract::extract_archive(
                 &resource_archive_path,
                 &stage_path,
@@ -424,7 +421,7 @@ pub async fn build_from_source(
         fs::create_dir_all(&install_dir).map_err(|e| {
             SapphireError::Io(std::io::Error::new(
                 e.kind(),
-                format!("Failed create install dir: {}", e),
+                format!("Failed create install dir: {e}"),
             ))
         })?;
     } else {
@@ -462,7 +459,7 @@ fn install_perl_resource(
     let new_perl5lib = if current_perl5lib.is_empty() {
         perl5lib_path_str
     } else {
-        format!("{}:{}", perl5lib_path_str, current_perl5lib)
+        format!("{perl5lib_path_str}:{current_perl5lib}")
     };
     cmd_env.insert("PERL5LIB".into(), new_perl5lib.clone());
 
@@ -538,7 +535,7 @@ fn install_python_resource(
     let python_site_packages = libexec_path
         .join("vendor")
         .join("lib")
-        .join(format!("python{}", python_version_str))
+        .join(format!("python{python_version_str}"))
         .join("site-packages");
     create_dir_all_with_context(&python_site_packages, "Python resource site-packages")?;
 
@@ -650,7 +647,7 @@ fn run_command_in_dir(
             if error_log.exists() {
                 eprintln!("--- CMakeFiles/CMakeError.log ---");
                 if let Ok(content) = fs::read_to_string(&error_log) {
-                    eprintln!("{}", content);
+                    eprintln!("{content}");
                 }
                 eprintln!("--- End CMakeFiles/CMakeError.log ---");
             }
@@ -661,7 +658,7 @@ fn run_command_in_dir(
                 if let Ok(content) = fs::read_to_string(&config_log_path) {
                     let lines: Vec<&str> = content.lines().rev().take(50).collect();
                     for line in lines.iter().rev() {
-                        eprintln!("{}", line);
+                        eprintln!("{line}");
                     }
                 }
                 eprintln!("--- End config.log ---");

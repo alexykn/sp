@@ -31,7 +31,7 @@ impl Default for DependencyTag {
 
 impl fmt::Display for DependencyTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self) // Simple debug format for now
+        write!(f, "{self:?}") // Simple debug format for now
     }
 }
 

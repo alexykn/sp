@@ -39,7 +39,7 @@ pub fn go_build(
             "Found potential command package path: {}",
             cmd_pkg_path.display()
         );
-        format!("./cmd/{}", formula_name) // Relative to source_dir
+        format!("./cmd/{formula_name}") // Relative to source_dir
     } else {
         debug!("Command package path not found, building '.'");
         ".".to_string()
@@ -49,7 +49,7 @@ pub fn go_build(
     fs::create_dir_all(&target_bin_dir).map_err(|e| {
         SapphireError::Io(std::io::Error::new(
             e.kind(),
-            format!("Failed create target bin dir: {}", e),
+            format!("Failed create target bin dir: {e}"),
         ))
     })?;
     let output_binary_path = target_bin_dir.join(formula_name);

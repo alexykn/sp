@@ -27,7 +27,7 @@ fn build_api_client(config: &Config) -> Result<Client> {
     // Add GitHub API token if present in config
     if let Some(token) = &config.github_api_token {
         debug!("Adding GitHub API token to request headers.");
-        match format!("Bearer {}", token).parse() {
+        match format!("Bearer {token}").parse() {
             Ok(val) => {
                 headers.insert(AUTHORIZATION, val);
             }
@@ -52,7 +52,7 @@ fn build_api_client(config: &Config) -> Result<Client> {
 /// Fetch raw JSON data from the Homebrew Formulae API (formulae.brew.sh).
 /// This does *not* typically require GitHub API token authentication.
 pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
-    let url = format!("{}/{}", FORMULAE_API_BASE_URL, endpoint);
+    let url = format!("{FORMULAE_API_BASE_URL}/{endpoint}");
     debug!("Fetching data from Homebrew Formulae API: {}", url);
 
     // Use a default client for formulae.brew.sh, usually no auth needed
@@ -71,14 +71,13 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
         let body = response
             .text()
             .await
-            .unwrap_or_else(|e| format!("(Failed to read response body: {})", e));
+            .unwrap_or_else(|e| format!("(Failed to read response body: {e})"));
         error!(
             "HTTP request to {} returned non-success status: {}. Body: {}",
             url, status, body
         );
         return Err(SapphireError::Api(format!(
-            "HTTP status {} from {}. Response body: {}",
-            status, url, body
+            "HTTP status {status} from {url}. Response body: {body}"
         )));
     }
 
@@ -89,8 +88,7 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
         // Consider returning an error or warning based on endpoint expectations
         // For formula.json/cask.json, empty is an error.
         return Err(SapphireError::Api(format!(
-            "Empty response body received from {}",
-            url
+            "Empty response body received from {url}"
         )));
     }
     Ok(body)
@@ -108,7 +106,7 @@ pub async fn fetch_all_casks() -> Result<String> {
 
 /// Fetch a specific formula by name from the Homebrew Formulae API.
 pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
-    let direct_fetch_result = fetch_raw_formulae_json(&format!("formula/{}.json", name)).await;
+    let direct_fetch_result = fetch_raw_formulae_json(&format!("formula/{name}.json")).await;
 
     if let Ok(body) = direct_fetch_result {
         let formula: serde_json::Value =
@@ -132,15 +130,14 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
             }
         }
         Err(SapphireError::NotFound(format!(
-            "Formula '{}' not found in API list",
-            name
+            "Formula '{name}' not found in API list"
         )))
     }
 }
 
 /// Fetch a specific cask by token from the Homebrew Formulae API.
 pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
-    let direct_fetch_result = fetch_raw_formulae_json(&format!("cask/{}.json", token)).await;
+    let direct_fetch_result = fetch_raw_formulae_json(&format!("cask/{token}.json")).await;
 
     if let Ok(body) = direct_fetch_result {
         let cask: serde_json::Value = serde_json::from_str(&body).map_err(SapphireError::Json)?;
@@ -159,8 +156,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
             // Check aliases or names if needed
         }
         Err(SapphireError::NotFound(format!(
-            "Cask '{}' not found in API list",
-            token
+            "Cask '{token}' not found in API list"
         )))
     }
 }
@@ -171,7 +167,7 @@ pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
 /// Fetches JSON data from a specified GitHub API endpoint.
 /// Uses the client configured with HOMEBREW_GITHUB_API_TOKEN if available.
 async fn fetch_github_api_json(endpoint: &str, config: &Config) -> Result<Value> {
-    let url = format!("{}{}", GITHUB_API_BASE_URL, endpoint); // Endpoint should start with /
+    let url = format!("{GITHUB_API_BASE_URL}{endpoint}"); // Endpoint should start with /
     debug!("Fetching data from GitHub API: {}", url);
     let client = build_api_client(config)?; // Build client with potential auth token
 
@@ -185,14 +181,13 @@ async fn fetch_github_api_json(endpoint: &str, config: &Config) -> Result<Value>
         let body = response
             .text()
             .await
-            .unwrap_or_else(|e| format!("(Failed to read response body: {})", e));
+            .unwrap_or_else(|e| format!("(Failed to read response body: {e})"));
         error!(
             "GitHub API request to {} returned non-success status: {}. Body: {}",
             url, status, body
         );
         return Err(SapphireError::Api(format!(
-            "HTTP status {} from {}. Response body: {}",
-            status, url, body
+            "HTTP status {status} from {url}. Response body: {body}"
         )));
     }
 
@@ -208,7 +203,7 @@ async fn fetch_github_api_json(endpoint: &str, config: &Config) -> Result<Value>
 /// (Adapt or add functions as needed for specific GitHub interactions)
 #[allow(dead_code)]
 async fn fetch_github_repo_info(owner: &str, repo: &str, config: &Config) -> Result<Value> {
-    let endpoint = format!("/repos/{}/{}", owner, repo);
+    let endpoint = format!("/repos/{owner}/{repo}");
     fetch_github_api_json(&endpoint, config).await
 }
 
@@ -217,7 +212,7 @@ async fn fetch_github_repo_info(owner: &str, repo: &str, config: &Config) -> Res
 
 /// Get data for a specific formula, parsed into the Formula struct.
 pub async fn get_formula(name: &str) -> Result<Formula> {
-    let url = format!("{}/formula/{}.json", FORMULAE_API_BASE_URL, name);
+    let url = format!("{FORMULAE_API_BASE_URL}/formula/{name}.json");
     debug!(
         "Fetching and parsing formula data for '{}' from {}",
         name, url
@@ -232,7 +227,7 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
             let text = response
                 .text()
                 .await
-                .unwrap_or_else(|e| format!("(Failed to read body: {})", e));
+                .unwrap_or_else(|e| format!("(Failed to read body: {e})"));
 
             if !status.is_success() {
                 error!(
@@ -240,15 +235,13 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
                     name, status, text
                 );
                 return Err(SapphireError::Api(format!(
-                    "Failed to fetch formula {}: Status {}",
-                    name, status
+                    "Failed to fetch formula {name}: Status {status}"
                 )));
             }
             if text.trim().is_empty() {
                 error!("Received empty body when fetching formula {}", name);
                 return Err(SapphireError::Api(format!(
-                    "Empty response body for formula {}",
-                    name
+                    "Empty response body for formula {name}"
                 )));
             }
 
@@ -269,8 +262,7 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
                             // Empty array
                             error!("Received empty array when fetching formula {}", name);
                             Err(SapphireError::NotFound(format!(
-                                "Formula '{}' not found (empty array returned)",
-                                name
+                                "Formula '{name}' not found (empty array returned)"
                             )))
                         }
                         Err(e_vec) => {
@@ -325,16 +317,16 @@ pub async fn get_cask(name: &str) -> Result<Cask> {
             match serde_json::to_string_pretty(&raw_json) {
                 Ok(json_str) => {
                     // Print to stderr so it's visible even if logging is redirected
-                    eprintln!("\n--- Problematic JSON for cask '{}' ---", name);
-                    eprintln!("{}", json_str);
+                    eprintln!("\n--- Problematic JSON for cask '{name}' ---");
+                    eprintln!("{json_str}");
                     eprintln!("--- End of JSON ---");
                     // Also log it for persistence
                     tracing::error!("Problematic JSON for cask '{}':\n{}", name, json_str);
                 }
                 Err(fmt_err) => {
                     // Fallback if pretty-printing fails (less likely)
-                    eprintln!("\n--- Problematic JSON (raw debug) for cask '{}' ---", name);
-                    eprintln!("{:?}", raw_json); // Print debug format
+                    eprintln!("\n--- Problematic JSON (raw debug) for cask '{name}' ---");
+                    eprintln!("{raw_json:?}"); // Print debug format
                     eprintln!("--- End of JSON ---");
                     tracing::error!(
                         "Could not pretty-print problematic JSON for cask {}: {}",

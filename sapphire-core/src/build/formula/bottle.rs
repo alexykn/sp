@@ -117,7 +117,7 @@ pub async fn download_bottle(
                 return Err(SapphireError::DownloadError(
                     formula.name.clone(),
                     bottle_url_str.to_string(),
-                    format!("Failed to download OCI blob: {}", e),
+                    format!("Failed to download OCI blob: {e}"),
                 ));
             }
         }
@@ -226,7 +226,7 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
                 // Clippy fix: Use an iterator instead of indexing
                 for target_os_name in version_list.iter().skip(current_os_index) {
                     let target_tag = if current_platform.starts_with("arm64_") {
-                        format!("arm64_{}", target_os_name)
+                        format!("arm64_{target_os_name}")
                     } else {
                         target_os_name.to_string()
                     };
@@ -877,9 +877,9 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
 
                 if let Some(version_part) = s.strip_prefix("perl@") {
                     let version_str_padded = if version_part.contains('.') {
-                        format!("{}.0", version_part)
+                        format!("{version_part}.0")
                     } else {
-                        format!("{}.0.0", version_part)
+                        format!("{version_part}.0.0")
                     };
 
                     if let Ok(v) = semver::Version::parse(&version_str_padded) {

@@ -187,8 +187,7 @@ impl<'a> DependencyResolver<'a> {
         if self.visiting.contains(name) {
             error!("Dependency cycle detected involving: {}", name);
             return Err(SapphireError::DependencyError(format!(
-                "Dependency cycle detected involving '{}'",
-                name
+                "Dependency cycle detected involving '{name}'"
             )));
         }
 
@@ -434,8 +433,7 @@ impl<'a> DependencyResolver<'a> {
                     u_name
                 );
                 return Err(SapphireError::Generic(format!(
-                    "Topological sort inconsistency: node {} not found",
-                    u_name
+                    "Topological sort inconsistency: node {u_name} not found"
                 )));
             }
 

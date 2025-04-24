@@ -290,12 +290,11 @@ impl BuildEnvironment {
         path_dirs = unique_path_dirs;
 
         let final_path_string = std::env::join_paths(path_dirs.iter())
-            .map_err(|e| SapphireError::BuildEnvError(format!("Failed to join PATH: {}", e)))?
+            .map_err(|e| SapphireError::BuildEnvError(format!("Failed to join PATH: {e}")))?
             .into_string()
             .map_err(|os_str| {
                 SapphireError::BuildEnvError(format!(
-                    "Final PATH contains non-UTF8 characters: {:?}",
-                    os_str
+                    "Final PATH contains non-UTF8 characters: {os_str:?}"
                 ))
             })?;
         vars.insert("PATH".to_string(), final_path_string.clone());
@@ -344,13 +343,11 @@ impl BuildEnvironment {
         } else {
             String::new()
         };
-        let cflags = format!("{} -O2 {}", arch_flag, sysroot_flag)
-            .trim()
-            .to_string();
+        let cflags = format!("{arch_flag} -O2 {sysroot_flag}").trim().to_string();
         vars.insert("CFLAGS".to_string(), cflags.clone());
         debug!("Set CFLAGS={}", cflags);
 
-        let cxxflags = format!("{} {}", cflags, stdlib_flag).trim().to_string();
+        let cxxflags = format!("{cflags} {stdlib_flag}").trim().to_string();
         vars.insert("CXXFLAGS".to_string(), cxxflags.clone());
         debug!("Set CXXFLAGS={}", cxxflags);
 
@@ -359,14 +356,14 @@ impl BuildEnvironment {
             .map(|p| format!("-L{}", p.display()))
             .collect::<Vec<_>>()
             .join(" ");
-        let ldflags = format!("{} {} {}", ldflags_lib_part, arch_flag, sysroot_flag)
+        let ldflags = format!("{ldflags_lib_part} {arch_flag} {sysroot_flag}")
             .trim()
             .to_string();
         vars.insert("LDFLAGS".to_string(), ldflags.clone());
         debug!("Set LDFLAGS={}", ldflags);
 
         let jobs = num_cpus::get().to_string();
-        vars.insert("MAKEFLAGS".to_string(), format!("-j{}", jobs));
+        vars.insert("MAKEFLAGS".to_string(), format!("-j{jobs}"));
         debug!("Set MAKEFLAGS=-j{}", jobs);
 
         Self::set_path_list_var(&mut vars, "PKG_CONFIG_PATH", &pkgconfig_paths)?;

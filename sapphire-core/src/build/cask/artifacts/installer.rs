@@ -52,8 +52,7 @@ pub fn run_installer(
                                 .and_then(|v| v.as_str())
                                 .ok_or_else(|| {
                                     SapphireError::Generic(format!(
-                                        "installer stanza missing '{}' field",
-                                        exe_key
+                                        "installer stanza missing '{exe_key}' field"
                                     ))
                                 })?;
                             let args: Vec<String> = inst_obj
@@ -100,14 +99,12 @@ pub fn run_installer(
                             // Execute
                             let status = cmd.status().map_err(|e| {
                                 SapphireError::Generic(format!(
-                                    "Failed to spawn installer script: {}",
-                                    e
+                                    "Failed to spawn installer script: {e}"
                                 ))
                             })?;
                             if !status.success() {
                                 return Err(SapphireError::InstallError(format!(
-                                    "Installer script exited with {}",
-                                    status
+                                    "Installer script exited with {status}"
                                 )));
                             }
 

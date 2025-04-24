@@ -88,7 +88,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     info!("==> Downloading cask from {}", url_str); // Use info level for user visibility
 
     let parsed = Url::parse(url_str)
-        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{}': {}", url_str, e)))?;
+        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{url_str}': {e}")))?;
 
     // Construct a filename, even if the URL has none
     let file_name = parsed
@@ -243,7 +243,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     let stage_dir = TempDir::new().map_err(|e| {
         SapphireError::Io(std::io::Error::new(
             e.kind(),
-            format!("Failed to create staging directory: {}", e),
+            format!("Failed to create staging directory: {e}"),
         ))
     })?;
     let stage_path = stage_dir.path();
@@ -293,8 +293,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                 download_path.display()
             );
             return Err(SapphireError::Generic(format!(
-                "Unsupported file type for staged installation: {}",
-                detected_extension
+                "Unsupported file type for staged installation: {detected_extension}"
             )));
         }
     }
@@ -614,7 +613,7 @@ pub fn write_receipt(
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {}", e)))?
+        .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {e}")))?
         .as_secs();
 
     let receipt_data = json!({
@@ -651,7 +650,7 @@ pub fn write_cask_manifest(
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {}", e)))?
+        .map_err(|e: SystemTimeError| SapphireError::Generic(format!("System time error: {e}")))?
         .as_secs();
 
     let manifest_data = CaskInstallManifest {

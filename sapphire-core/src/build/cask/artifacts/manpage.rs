@@ -54,14 +54,13 @@ pub fn install_manpage(
 
                             // Build the target directory: e.g. /usr/local/share/man/man1
                             // :contentReference[oaicite:6]{index=6}
-                            let man_dir = config.manpagedir().join(format!("man{}", section));
+                            let man_dir = config.manpagedir().join(format!("man{section}"));
                             fs::create_dir_all(&man_dir)?;
 
                             // Determine the target path
                             let file_name = Path::new(man_file).file_name().ok_or_else(|| {
                                 crate::utils::error::SapphireError::Generic(format!(
-                                    "Invalid manpage filename: {}",
-                                    man_file
+                                    "Invalid manpage filename: {man_file}"
                                 ))
                             })?; // Handle potential None
                             let dest = man_dir.join(file_name);

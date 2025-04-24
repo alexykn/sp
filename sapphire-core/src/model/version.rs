@@ -26,8 +26,7 @@ impl Version {
             };
             semver::Version::parse(&padded).map(Version).map_err(|e| {
                 SapphireError::VersionError(format!(
-                    "Failed to parse version '{}' (tried '{}'): {}",
-                    s, padded, e
+                    "Failed to parse version '{s}' (tried '{padded}'): {e}"
                 ))
             })
         })

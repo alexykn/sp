@@ -103,7 +103,7 @@ fn get_current_platform() -> String {
 
                         if os_name != "unknown_macos" {
                             let platform_tag = if arch == "arm64" {
-                                format!("{}_{}", arch, os_name)
+                                format!("{arch}_{os_name}")
                             } else {
                                 os_name.to_string()
                             };
@@ -166,8 +166,7 @@ pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
         "xz" | "txz" => extract_tar_xz(archive_path, target_dir),
         "zip" => extract_zip(archive_path, target_dir),
         _ => Err(SapphireError::Generic(format!(
-            "Unsupported archive format: {}",
-            extension
+            "Unsupported archive format: {extension}"
         ))),
     }
 }

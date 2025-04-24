@@ -26,7 +26,7 @@ impl Formulary {
         let cache = Cache::new(&config.cache_dir).unwrap_or_else(|e| {
             // Handle error appropriately - maybe panic or return Result?
             // Using expect here for simplicity, but Result is better.
-            panic!("Failed to initialize cache in Formulary: {}", e);
+            panic!("Failed to initialize cache in Formulary: {e}");
         });
         Self {
             // config,
@@ -57,7 +57,7 @@ impl Formulary {
         // This could be expensive, hence the parsed_cache above.
         debug!("Parsing full formula list...");
         let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data).map_err(|e| {
-            SapphireError::Cache(format!("Failed to parse cached formula data: {}", e))
+            SapphireError::Cache(format!("Failed to parse cached formula data: {e}"))
         })?;
         debug!("Parsed {} formulas.", all_formulas.len());
 
@@ -98,8 +98,7 @@ impl Formulary {
                     name
                 );
                 Err(SapphireError::Generic(format!(
-                    "Formula '{}' not found in cache.",
-                    name
+                    "Formula '{name}' not found in cache."
                 )))
             }
         }

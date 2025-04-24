@@ -63,7 +63,7 @@ pub async fn run_search(
     tracing::debug!("Searching for packages matching: {}", query);
 
     // Use the ui utility function to create the spinner
-    let pb = ui::create_spinner(&format!("Searching for \"{}\"", query)); // <-- CHANGED
+    let pb = ui::create_spinner(&format!("Searching for \"{query}\"")); // <-- CHANGED
 
     // Store search results
     let mut formula_matches = Vec::new();
@@ -300,12 +300,12 @@ fn truncate_vis(s: &str, max: usize) -> String {
 pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches: &[Value]) {
     let total = formula_matches.len() + cask_matches.len();
     if total == 0 {
-        println!("{}", format!("No matches found for '{}'", query).yellow());
+        println!("{}", format!("No matches found for '{query}'").yellow());
         return;
     }
     println!(
         "{}",
-        format!("Found {} result(s) for '{}'", total, query).bold()
+        format!("Found {total} result(s) for '{query}'").bold()
     );
 
     // 1) Terminal width

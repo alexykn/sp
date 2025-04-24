@@ -39,7 +39,7 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
 
     // 2. Use xcrun on macOS (if available)
     if cfg!(target_os = "macos") {
-        println!("Attempting to find '{}' using xcrun", name);
+        println!("Attempting to find '{name}' using xcrun");
         let output = Command::new("xcrun")
             .arg("--find")
             .arg(name)
@@ -62,7 +62,7 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
                         );
                     }
                 } else {
-                    println!("xcrun found '{}' but returned empty path.", name);
+                    println!("xcrun found '{name}' but returned empty path.");
                 }
             }
             Ok(out) => {
@@ -73,18 +73,15 @@ pub fn find_compiler(name: &str) -> Result<PathBuf> {
             }
             Err(e) => {
                 // xcrun command itself failed to execute (likely not installed or not in PATH)
-                println!(
-                    "Failed to execute xcrun: {}. Falling back to PATH search.",
-                    e
-                );
+                println!("Failed to execute xcrun: {e}. Falling back to PATH search.");
             }
         }
     }
 
     // 3. Fallback to searching PATH
-    println!("Falling back to searching PATH for '{}'", name);
+    println!("Falling back to searching PATH for '{name}'");
     which::which(name).map_err(|e| {
-        SapphireError::BuildEnvError(format!("Failed to find compiler '{}' on PATH: {}", name, e))
+        SapphireError::BuildEnvError(format!("Failed to find compiler '{name}' on PATH: {e}"))
     })
 }
 
@@ -102,7 +99,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
             Ok(out) if out.status.success() => {
                 let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if path_str.is_empty() || path_str == "/" {
-                    println!("xcrun returned empty or invalid SDK path ('{}'). Check Xcode/CLT installation.", path_str);
+                    println!("xcrun returned empty or invalid SDK path ('{path_str}'). Check Xcode/CLT installation.");
                     // Fallback or error? Homebrew errors here. Let's error.
                     return Err(SapphireError::BuildEnvError(
                         "xcrun returned empty or invalid SDK path. Is Xcode or Command Line Tools installed correctly?".to_string()
@@ -129,7 +126,7 @@ pub fn find_sdk_path() -> Result<PathBuf> {
             Err(e) => {
                 // xcrun command itself failed to execute
                 Err(SapphireError::BuildEnvError(format!(
-                    "Failed to execute 'xcrun --show-sdk-path': {}. Is Xcode or Command Line Tools installed?", e
+                    "Failed to execute 'xcrun --show-sdk-path': {e}. Is Xcode or Command Line Tools installed?"
                 )))
             }
         }
@@ -160,10 +157,7 @@ pub fn get_macos_version() -> Result<String> {
                 } else {
                     version_full.clone() // Fallback if format is unexpected
                 };
-                println!(
-                    "Found macOS version: {} (short: {})",
-                    version_full, version_short
-                );
+                println!("Found macOS version: {version_full} (short: {version_short})");
                 Ok(version_short)
             }
             Ok(out) => {
@@ -177,8 +171,7 @@ pub fn get_macos_version() -> Result<String> {
             Err(e) => {
                 // sw_vers command itself failed to execute
                 Err(SapphireError::BuildEnvError(format!(
-                    "Failed to execute 'sw_vers -productVersion': {}",
-                    e
+                    "Failed to execute 'sw_vers -productVersion': {e}"
                 )))
             }
         }
@@ -200,7 +193,7 @@ pub fn get_arch_flag() -> String {
             "-arch arm64".to_string()
         } else {
             let arch = env::consts::ARCH;
-            println!("Unknown target architecture on macOS: {}, cannot determine -arch flag. Build might fail.", arch);
+            println!("Unknown target architecture on macOS: {arch}, cannot determine -arch flag. Build might fail.");
             // Provide no flag in this unknown case? Or default to native?
             // Homebrew might error or try native. Let's return empty for safety.
             String::new()

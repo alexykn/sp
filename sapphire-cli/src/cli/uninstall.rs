@@ -31,7 +31,7 @@ impl Uninstall {
         let mut errors: Vec<(String, SapphireError)> = Vec::new(); // Store errors per package name
 
         for name in names {
-            let pb = ui::create_spinner(&format!("Uninstalling {}", name));
+            let pb = ui::create_spinner(&format!("Uninstalling {name}"));
 
             let formula_result = info::get_formula_info(name, config, Arc::clone(&cache)).await;
             let is_formula = formula_result.is_ok();
@@ -51,8 +51,7 @@ impl Uninstall {
                     );
                     match build::formula::link::unlink_formula_artifacts(&formula, config) {
                         Ok(_) => pb.finish_with_message(format!(
-                            "Unlinked remaining artifacts for {} (keg missing)",
-                            name
+                            "Unlinked remaining artifacts for {name} (keg missing)"
                         )),
                         Err(e) => {
                             tracing::error!(
@@ -144,8 +143,7 @@ impl Uninstall {
                                 errors.push((
                                     name.to_string(),
                                     SapphireError::NotFound(format!(
-                                        "Cask '{}' is not installed",
-                                        name
+                                        "Cask '{name}' is not installed"
                                     )),
                                 ));
                             }
@@ -166,8 +164,7 @@ impl Uninstall {
                         errors.push((
                             name.to_string(),
                             SapphireError::NotFound(format!(
-                                "Cask '{}' version '{}' installation is inconsistent (missing dir)",
-                                name, installed_version
+                                "Cask '{name}' version '{installed_version}' installation is inconsistent (missing dir)"
                             )),
                         ));
                         pb.finish_and_clear();
@@ -199,8 +196,7 @@ impl Uninstall {
                                         errors.push((
                                             name.to_string(),
                                             SapphireError::Generic(format!(
-                                                "Failed parse manifest for cask '{}'",
-                                                name
+                                                "Failed parse manifest for cask '{name}'"
                                             )),
                                         ));
                                         artifact_removal_errors += 1; // Count as error if manifest
@@ -214,8 +210,7 @@ impl Uninstall {
                                 errors.push((
                                     name.to_string(),
                                     SapphireError::Generic(format!(
-                                        "Failed read manifest for cask '{}'",
-                                        name
+                                        "Failed read manifest for cask '{name}'"
                                     )),
                                 ));
                                 artifact_removal_errors += 1; // Count as error if manifest cannot
@@ -244,7 +239,7 @@ impl Uninstall {
                             name.to_string(),
                             SapphireError::Io(std::io::Error::new(
                                 e.kind(),
-                                format!("Failed to remove cask version dir for '{}'", name),
+                                format!("Failed to remove cask version dir for '{name}'"),
                             )),
                         ));
                         // If dir removal fails, stop processing this cask.
@@ -276,8 +271,7 @@ impl Uninstall {
                             errors.push((
                                 name.to_string(),
                                 SapphireError::Generic(format!(
-                                    "Encountered {} errors removing artifacts for cask '{}'",
-                                    artifact_removal_errors, name
+                                    "Encountered {artifact_removal_errors} errors removing artifacts for cask '{name}'"
                                 )),
                             ));
                         }
@@ -294,10 +288,7 @@ impl Uninstall {
                     {
                         errors.push((
                             name.to_string(),
-                            SapphireError::NotFound(format!(
-                                "Formula or Cask '{}' not found",
-                                name
-                            )),
+                            SapphireError::NotFound(format!("Formula or Cask '{name}' not found")),
                         ));
                     }
                     pb.finish_and_clear();
@@ -605,6 +596,6 @@ fn format_size(size: u64) -> String {
     } else if size >= KB {
         format!("{:.1}KB", size as f64 / KB as f64)
     } else {
-        format!("{}B", size)
+        format!("{size}B")
     }
 }

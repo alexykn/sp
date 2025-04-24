@@ -31,7 +31,7 @@ impl Info {
         tracing::debug!("Getting info for package: {name}, is_cask: {is_cask}",);
 
         // Use the ui utility function to create the spinner
-        let pb = ui::create_spinner(&format!("Loading info for {}", name)); // <-- CHANGED
+        let pb = ui::create_spinner(&format!("Loading info for {name}")); // <-- CHANGED
 
         if self.cask {
             match get_cask_info(Arc::clone(&cache), name).await {
@@ -110,8 +110,7 @@ async fn get_formula_info_raw(cache: Arc<Cache>, name: &str) -> Result<Value> {
             tracing::debug!("Formula '{}' not found within cached 'formula.json'.", name);
             // Explicitly return NotFound if not in cache
             return Err(SapphireError::NotFound(format!(
-                "Formula '{}' not found in cache",
-                name
+                "Formula '{name}' not found in cache"
             )));
         }
         Err(e) => tracing::debug!(
@@ -151,8 +150,7 @@ async fn get_cask_info(cache: Arc<Cache>, name: &str) -> Result<Value> {
             tracing::debug!("Cask '{}' not found within cached 'cask.json'.", name);
             // Explicitly return NotFound if not in cache
             return Err(SapphireError::NotFound(format!(
-                "Cask '{}' not found in cache",
-                name
+                "Cask '{name}' not found in cache"
             )));
         }
         Err(e) => tracing::debug!(
@@ -186,7 +184,7 @@ fn print_formula_info(_name: &str, formula: &Value) {
         .and_then(|r| r.as_u64())
         .unwrap_or(0);
     let version_str = if revision > 0 {
-        format!("{}_{}", version, revision)
+        format!("{version}_{revision}")
     } else {
         version.to_string()
     };
@@ -200,7 +198,7 @@ fn print_formula_info(_name: &str, formula: &Value) {
         .unwrap_or("N/A");
 
     // Header
-    println!("{}", format!("Formula: {}", full_name).green().bold());
+    println!("{}", format!("Formula: {full_name}").green().bold());
 
     // Summary table
     let mut table = prettytable::Table::new();
@@ -214,13 +212,13 @@ fn print_formula_info(_name: &str, formula: &Value) {
     if let Some(desc) = formula.get("desc").and_then(|d| d.as_str()) {
         if !desc.is_empty() {
             println!("\n{}", "Description".blue().bold());
-            println!("  {}", desc);
+            println!("  {desc}");
         }
     }
     if let Some(caveats) = formula.get("caveats").and_then(|c| c.as_str()) {
         if !caveats.is_empty() {
             println!("\n{}", "Caveats".blue().bold());
-            println!("  {}", caveats);
+            println!("  {caveats}");
         }
     }
 
@@ -237,7 +235,7 @@ fn print_formula_info(_name: &str, formula: &Value) {
                 for (i, d) in dep_list.iter().enumerate() {
                     let display_title = if i == 0 { title } else { "" };
                     let display_tag = if i == 0 {
-                        format!("({})", tag)
+                        format!("({tag})")
                     } else {
                         "".to_string()
                     };
@@ -277,7 +275,7 @@ fn print_formula_info(_name: &str, formula: &Value) {
 /// Prints cask information in a formatted table
 fn print_cask_info(name: &str, cask: &Value) {
     // Header
-    println!("{}", format!("Cask: {}", name).green().bold());
+    println!("{}", format!("Cask: {name}").green().bold());
 
     // Summary table
     let mut table = prettytable::Table::new();

@@ -33,7 +33,7 @@ pub async fn fetch_formula_source_or_bottle(
         .split('/')
         .next_back() // Use next_back()
         .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("{}-download", formula_name));
+        .unwrap_or_else(|| format!("{formula_name}-download"));
     let cache_path = config.cache_dir.join(&filename);
 
     tracing::debug!(
@@ -195,7 +195,7 @@ pub async fn fetch_resource(
             Err(SapphireError::DownloadError(
                 resource.name.clone(),
                 resource.url.clone(),
-                format!("Download failed: {}", e),
+                format!("Download failed: {e}"),
             ))
         }
     }
@@ -214,7 +214,7 @@ fn build_http_client() -> Result<Client> {
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
-        .map_err(|e| SapphireError::HttpError(format!("Failed to build HTTP client: {}", e)))
+        .map_err(|e| SapphireError::HttpError(format!("Failed to build HTTP client: {e}")))
 }
 
 // Performs download and verification asynchronously
@@ -244,7 +244,7 @@ async fn download_and_verify(
         .get(url)
         .send()
         .await // Await send
-        .map_err(|e| SapphireError::HttpError(format!("HTTP request failed for {}: {}", url, e)))?;
+        .map_err(|e| SapphireError::HttpError(format!("HTTP request failed for {url}: {e}")))?;
     let status = response.status();
     tracing::debug!("Received HTTP status: {} for {}", status, url);
 
@@ -272,8 +272,7 @@ async fn download_and_verify(
                 "Access forbidden (403)".to_string(),
             )),
             _ => Err(SapphireError::HttpError(format!(
-                "HTTP error {} for URL {}: {}",
-                status, url, body_text
+                "HTTP error {status} for URL {url}: {body_text}"
             ))),
         };
     }
@@ -290,7 +289,7 @@ async fn download_and_verify(
         .bytes()
         .await // Await bytes
         .map_err(|e| {
-            SapphireError::HttpError(format!("Failed to read response body bytes: {}", e))
+            SapphireError::HttpError(format!("Failed to read response body bytes: {e}"))
         })?;
     temp_file
         .write_all(&content)

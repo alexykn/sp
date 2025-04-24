@@ -174,9 +174,9 @@ impl<'de> Deserialize<'de> for Formula {
                     }
                 }
                 let version_str_padded = match part_count {
-                    1 => format!("{}.0.0", majors),
-                    2 => format!("{}.{}.0", majors, minors),
-                    _ => format!("{}.{}.{}", majors, minors, patches),
+                    1 => format!("{majors}.0.0"),
+                    2 => format!("{majors}.{minors}.0"),
+                    _ => format!("{majors}.{minors}.{patches}"),
                 };
                 match Version::parse(&version_str_padded) {
                     Ok(v) => v,
@@ -415,24 +415,21 @@ where
                     )));
                 }
                 _ => requirements.push(Requirement::Other(format!(
-                    "Unknown requirement type: {:?}",
-                    req_obj
+                    "Unknown requirement type: {req_obj:?}"
                 ))),
             }
         } else if let Value::String(req_str) = req_val {
             match req_str.as_str() {
                 "macos" => requirements.push(Requirement::MacOS("latest".to_string())),
                 "xcode" => requirements.push(Requirement::Xcode("latest".to_string())),
-                _ => requirements.push(Requirement::Other(format!(
-                    "Simple requirement: {}",
-                    req_str
-                ))),
+                _ => {
+                    requirements.push(Requirement::Other(format!("Simple requirement: {req_str}")))
+                }
             }
         } else {
             warn!("Warning: Could not parse requirement: {:?}", req_val);
             requirements.push(Requirement::Other(format!(
-                "Unparsed requirement: {:?}",
-                req_val
+                "Unparsed requirement: {req_val:?}"
             )));
         }
     }

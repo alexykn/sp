@@ -70,7 +70,7 @@ impl Install {
                 let any_not_found = self
                     .names
                     .iter()
-                    .any(|name| msg.contains(&format!("Formula '{}' not found", name)));
+                    .any(|name| msg.contains(&format!("Formula '{name}' not found")));
 
                 if any_not_found {
                     info!(
@@ -227,11 +227,10 @@ impl Install {
                     Err(e) => {
                         error!("Failed to acquire semaphore permit: {}", e);
                         if let Some(node) = nodes.get_mut(&name) {
-                            node.state = InstallState::Failed(format!("Semaphore closed: {}", e));
+                            node.state = InstallState::Failed(format!("Semaphore closed: {e}"));
                         }
                         return Err(SapphireError::Generic(format!(
-                            "Failed to acquire semaphore permit: {}",
-                            e
+                            "Failed to acquire semaphore permit: {e}"
                         )));
                     }
                 }
@@ -289,7 +288,7 @@ impl Install {
     }
 }
 fn join_to_err(e: JoinError) -> SapphireError {
-    SapphireError::Generic(format!("Task join error: {}", e))
+    SapphireError::Generic(format!("Task join error: {e}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,7 +330,7 @@ fn process_task_outcome(
             tracing::debug!("{} installed successfully", name);
         }
         Err(e) => {
-            let msg = format!("{}", e);
+            let msg = format!("{e}");
             node.state = InstallState::Failed(msg.clone());
             error!("install of {} failed: {}", name, msg);
         }
@@ -363,7 +362,7 @@ fn process_task_outcome(
                 InstallState::Pending | InstallState::Ready | InstallState::Running
             ) {
                 dep_node.state =
-                    InstallState::Failed(format!("dependency '{}' failed: {}", name, failure_msg));
+                    InstallState::Failed(format!("dependency '{name}' failed: {failure_msg}"));
                 tracing::debug!(
                     "Marking dependent '{}' as failed due to upstream failure of '{}'",
                     dependent,

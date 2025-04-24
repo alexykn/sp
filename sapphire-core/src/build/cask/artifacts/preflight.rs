@@ -26,8 +26,7 @@ pub fn run_preflight(
                     let status = Command::new("sh").arg("-c").arg(&cmd_str).status()?;
                     if !status.success() {
                         return Err(SapphireError::InstallError(format!(
-                            "preflight failed: {}",
-                            cmd_str
+                            "preflight failed: {cmd_str}"
                         )));
                     }
                 }

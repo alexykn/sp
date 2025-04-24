@@ -56,7 +56,7 @@ pub fn install_pkg_from_path(
         );
         return Err(SapphireError::Io(std::io::Error::new(
             e.kind(),
-            format!("Failed copy PKG to caskroom: {}", e),
+            format!("Failed copy PKG to caskroom: {e}"),
         )));
     } else {
         // Record the reference copy artifact
@@ -81,7 +81,7 @@ pub fn install_pkg_from_path(
         .map_err(|e| {
             SapphireError::Io(std::io::Error::new(
                 e.kind(),
-                format!("Failed to execute sudo installer: {}", e),
+                format!("Failed to execute sudo installer: {e}"),
             ))
         })?;
 

@@ -53,8 +53,7 @@ impl Cache {
 
         if !path.exists() {
             return Err(SapphireError::Cache(format!(
-                "Cache file {} does not exist",
-                filename
+                "Cache file {filename} does not exist"
             )));
         }
 
@@ -72,7 +71,7 @@ impl Cache {
         let modified_time = metadata.modified()?;
         let age = SystemTime::now()
             .duration_since(modified_time)
-            .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
+            .map_err(|e| SapphireError::Cache(format!("System time error: {e}")))?;
 
         Ok(age <= CACHE_TTL)
     }
@@ -149,7 +148,7 @@ pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
     let modified_time = metadata.modified()?;
     let age = SystemTime::now()
         .duration_since(modified_time)
-        .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
+        .map_err(|e| SapphireError::Cache(format!("System time error: {e}")))?;
 
     if age > CACHE_TTL {
         tracing::debug!("Cache file expired (age: {:?}, TTL: {:?}).", age, CACHE_TTL);
@@ -186,6 +185,6 @@ pub fn is_cache_valid(filename: &str) -> Result<bool> {
     let modified_time = metadata.modified()?;
     let age = SystemTime::now()
         .duration_since(modified_time)
-        .map_err(|e| SapphireError::Cache(format!("System time error: {}", e)))?;
+        .map_err(|e| SapphireError::Cache(format!("System time error: {e}")))?;
     Ok(age <= CACHE_TTL)
 }

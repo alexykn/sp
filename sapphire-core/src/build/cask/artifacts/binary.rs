@@ -53,8 +53,7 @@ pub fn install_binary(
                                 .map(String::from)
                                 .ok_or_else(|| {
                                     SapphireError::InstallError(format!(
-                                        "Binary artifact missing 'target': {:?}",
-                                        m
+                                        "Binary artifact missing 'target': {m:?}"
                                     ))
                                 })?;
 
@@ -66,16 +65,16 @@ pub fn install_binary(
                                 src.to_string()
                             } else {
                                 // generate wrapper script in caskroom
-                                let wrapper_name = format!("{}.wrapper.sh", target);
+                                let wrapper_name = format!("{target}.wrapper.sh");
                                 let wrapper_path = cask_version_install_path.join(&wrapper_name);
 
                                 // assume the real executable lives inside the .app bundle
                                 let app_name = format!("{}.app", cask.display_name());
                                 let exe_path =
-                                    format!("/Applications/{}/Contents/MacOS/{}", app_name, target);
+                                    format!("/Applications/{app_name}/Contents/MacOS/{target}");
 
                                 let script =
-                                    format!("#!/usr/bin/env bash\nexec \"{}\" \"$@\"\n", exe_path);
+                                    format!("#!/usr/bin/env bash\nexec \"{exe_path}\" \"$@\"\n");
                                 fs::write(&wrapper_path, script)?;
                                 Command::new("chmod")
                                     .arg("+x")

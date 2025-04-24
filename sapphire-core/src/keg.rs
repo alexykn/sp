@@ -178,7 +178,7 @@ impl KegRegistry {
     /// Includes revision in the path name if revision > 0.
     pub fn get_keg_path(&self, name: &str, version: &Version, revision: u32) -> PathBuf {
         let version_string = if revision > 0 {
-            format!("{}_{}", version, revision)
+            format!("{version}_{revision}")
         } else {
             version.to_string()
         };

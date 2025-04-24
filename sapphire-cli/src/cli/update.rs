@@ -29,7 +29,7 @@ impl Update {
                 pb.set_message("Cached formulas data");
             }
             Err(e) => {
-                let err_msg = format!("Failed to fetch/store formulas from API: {}", e);
+                let err_msg = format!("Failed to fetch/store formulas from API: {e}");
                 tracing::error!("{}", err_msg);
                 pb.finish_and_clear(); // Clear spinner on error
                 return Err(e);
@@ -44,7 +44,7 @@ impl Update {
                 pb.set_message("Cached casks data");
             }
             Err(e) => {
-                let err_msg = format!("Failed to fetch/store casks from API: {}", e);
+                let err_msg = format!("Failed to fetch/store casks from API: {e}");
                 tracing::error!("{}", err_msg);
                 pb.finish_and_clear(); // Clear spinner on error
                 return Err(e);

@@ -78,7 +78,7 @@ async fn fetch_oci_resource<T: serde::de::DeserializeOwned>(
     client: &Client,
 ) -> Result<T> {
     let url = Url::parse(resource_url)
-        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{}': {}", resource_url, e)))?;
+        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{resource_url}': {e}")))?;
     let registry_domain = url.host_str().unwrap_or(DEFAULT_GHCR_DOMAIN);
     let repo_path = extract_repo_path_from_url(&url).unwrap_or("");
 
@@ -101,7 +101,7 @@ pub async fn download_oci_blob(
 ) -> Result<()> {
     debug!("Downloading OCI blob: {}", blob_url);
     let url = Url::parse(blob_url)
-        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{}': {}", blob_url, e)))?;
+        .map_err(|e| SapphireError::Generic(format!("Invalid URL '{blob_url}': {e}")))?;
     let registry_domain = url.host_str().unwrap_or(DEFAULT_GHCR_DOMAIN);
     let repo_path = extract_repo_path_from_url(&url).unwrap_or("");
 
@@ -194,9 +194,9 @@ async fn fetch_anonymous_token(
     let endpoint = if registry_domain.eq_ignore_ascii_case(DEFAULT_GHCR_DOMAIN) {
         DEFAULT_GHCR_TOKEN_ENDPOINT.to_string()
     } else {
-        format!("https://{}/token", registry_domain)
+        format!("https://{registry_domain}/token")
     };
-    let scope = format!("repository:{}:pull", repo_path);
+    let scope = format!("repository:{repo_path}:pull");
     let token_url = format!("{endpoint}?service={registry_domain}&scope={scope}");
 
     const MAX_RETRIES: u8 = 3;
@@ -216,7 +216,7 @@ async fn fetch_anonymous_token(
         match client.get(&token_url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 let tok: OciTokenResponse = resp.json().await.map_err(|e| {
-                    SapphireError::ApiRequestError(format!("Parse token response: {}", e))
+                    SapphireError::ApiRequestError(format!("Parse token response: {e}"))
                 })?;
                 return Ok(tok.token);
             }
@@ -225,10 +225,7 @@ async fn fetch_anonymous_token(
                 let body = resp.text().await.unwrap_or_default();
                 error!("Token fetch {}: {} – {}", attempt + 1, code, body);
                 if !code.is_server_error() || attempt == MAX_RETRIES {
-                    return Err(SapphireError::Api(format!(
-                        "Token endpoint {}: {}",
-                        code, body
-                    )));
+                    return Err(SapphireError::Api(format!("Token endpoint {code}: {body}")));
                 }
             }
             Err(e) => {
@@ -263,10 +260,10 @@ async fn execute_oci_request(
         OciAuth::AnonymousBearer { token } | OciAuth::ExplicitBearer { token }
             if !token.is_empty() =>
         {
-            req = req.header(AUTHORIZATION, format!("Bearer {}", token))
+            req = req.header(AUTHORIZATION, format!("Bearer {token}"))
         }
         OciAuth::Basic { encoded } if !encoded.is_empty() => {
-            req = req.header(AUTHORIZATION, format!("Basic {}", encoded))
+            req = req.header(AUTHORIZATION, format!("Basic {encoded}"))
         }
         _ => {}
     }
@@ -279,10 +276,10 @@ async fn execute_oci_request(
         let body = resp.text().await.unwrap_or_default();
         error!("OCI {} ⇒ {} – {}", url, status, body);
         let err = match status {
-            StatusCode::UNAUTHORIZED => SapphireError::Api(format!("Auth required: {}", status)),
-            StatusCode::FORBIDDEN => SapphireError::Api(format!("Permission denied: {}", status)),
-            StatusCode::NOT_FOUND => SapphireError::NotFound(format!("Not found: {}", status)),
-            _ => SapphireError::Api(format!("HTTP {} – {}", status, body)),
+            StatusCode::UNAUTHORIZED => SapphireError::Api(format!("Auth required: {status}")),
+            StatusCode::FORBIDDEN => SapphireError::Api(format!("Permission denied: {status}")),
+            StatusCode::NOT_FOUND => SapphireError::NotFound(format!("Not found: {status}")),
+            _ => SapphireError::Api(format!("HTTP {status} – {body}")),
         };
         Err(err)
     }

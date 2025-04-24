@@ -188,8 +188,7 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
         }
         unmount_result?; // Ensure we still return unmount error if it happened
         return Err(SapphireError::Generic(format!(
-            "Failed to copy DMG contents using ditto: {}",
-            stderr
+            "Failed to copy DMG contents using ditto: {stderr}"
         )));
     }
 

@@ -201,7 +201,7 @@ pub fn simple_make(
             fs::copy(&potential_binary_path, &target_path).map_err(|e| {
                 SapphireError::Io(std::io::Error::new(
                     e.kind(),
-                    format!("Failed copy binary: {}", e),
+                    format!("Failed copy binary: {e}"),
                 ))
             })?;
 

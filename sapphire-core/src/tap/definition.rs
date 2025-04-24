@@ -21,10 +21,7 @@ impl Tap {
     pub fn new(name: &str) -> Result<Self> {
         let parts: Vec<&str> = name.split('/').collect();
         if parts.len() != 2 {
-            return Err(SapphireError::Generic(format!(
-                "Invalid tap name: {}",
-                name
-            )));
+            return Err(SapphireError::Generic(format!("Invalid tap name: {name}")));
         }
         let user = parts[0].to_string();
         let repo = parts[1].to_string();
@@ -36,7 +33,7 @@ impl Tap {
         let path = prefix
             .join("Library/Taps")
             .join(&user)
-            .join(format!("homebrew-{}", repo));
+            .join(format!("homebrew-{repo}"));
         Ok(Self { user, repo, path })
     }
 
@@ -45,12 +42,12 @@ impl Tap {
         use git2::{FetchOptions, Repository};
 
         let repo = Repository::open(&self.path)
-            .map_err(|e| SapphireError::Generic(format!("Failed to open tap repository: {}", e)))?;
+            .map_err(|e| SapphireError::Generic(format!("Failed to open tap repository: {e}")))?;
 
         // Fetch updates from origin
-        let mut remote = repo.find_remote("origin").map_err(|e| {
-            SapphireError::Generic(format!("Failed to find remote 'origin': {}", e))
-        })?;
+        let mut remote = repo
+            .find_remote("origin")
+            .map_err(|e| SapphireError::Generic(format!("Failed to find remote 'origin': {e}")))?;
 
         let mut fetch_options = FetchOptions::new();
         remote
@@ -59,22 +56,22 @@ impl Tap {
                 Some(&mut fetch_options),
                 None,
             )
-            .map_err(|e| SapphireError::Generic(format!("Failed to fetch updates: {}", e)))?;
+            .map_err(|e| SapphireError::Generic(format!("Failed to fetch updates: {e}")))?;
 
         // Merge changes
         let fetch_head = repo
             .find_reference("FETCH_HEAD")
-            .map_err(|e| SapphireError::Generic(format!("Failed to find FETCH_HEAD: {}", e)))?;
+            .map_err(|e| SapphireError::Generic(format!("Failed to find FETCH_HEAD: {e}")))?;
 
         let fetch_commit = repo
             .reference_to_annotated_commit(&fetch_head)
             .map_err(|e| {
-                SapphireError::Generic(format!("Failed to get commit from FETCH_HEAD: {}", e))
+                SapphireError::Generic(format!("Failed to get commit from FETCH_HEAD: {e}"))
             })?;
 
         let analysis = repo
             .merge_analysis(&[&fetch_commit])
-            .map_err(|e| SapphireError::Generic(format!("Failed to analyze merge: {}", e)))?;
+            .map_err(|e| SapphireError::Generic(format!("Failed to analyze merge: {e}")))?;
 
         if analysis.0.is_up_to_date() {
             println!("Already up-to-date");
@@ -83,15 +80,15 @@ impl Tap {
 
         if analysis.0.is_fast_forward() {
             let mut reference = repo.find_reference("refs/heads/master").map_err(|e| {
-                SapphireError::Generic(format!("Failed to find master branch: {}", e))
+                SapphireError::Generic(format!("Failed to find master branch: {e}"))
             })?;
             reference
                 .set_target(fetch_commit.id(), "Fast-forward")
-                .map_err(|e| SapphireError::Generic(format!("Failed to fast-forward: {}", e)))?;
+                .map_err(|e| SapphireError::Generic(format!("Failed to fast-forward: {e}")))?;
             repo.set_head("refs/heads/master")
-                .map_err(|e| SapphireError::Generic(format!("Failed to set HEAD: {}", e)))?;
+                .map_err(|e| SapphireError::Generic(format!("Failed to set HEAD: {e}")))?;
             repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-                .map_err(|e| SapphireError::Generic(format!("Failed to checkout: {}", e)))?;
+                .map_err(|e| SapphireError::Generic(format!("Failed to checkout: {e}")))?;
         } else {
             return Err(SapphireError::Generic(
                 "Tap requires merge but automatic merging is not implemented".to_string(),

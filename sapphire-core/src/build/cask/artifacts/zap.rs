@@ -97,7 +97,7 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                             for label in arr.iter().filter_map(|v| v.as_str()) {
                                                 let plist = home // Use expanded home
                                                     .join("Library/LaunchAgents")
-                                                    .join(format!("{}.plist", label));
+                                                    .join(format!("{label}.plist"));
                                                 debug!(
                                                     "Unloading launchctl {}...",
                                                     plist.display()

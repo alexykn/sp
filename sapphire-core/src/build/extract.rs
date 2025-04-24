@@ -429,8 +429,7 @@ fn extract_tar_archive<R: Read>(
                     e
                 );
                 return Err(SapphireError::Generic(format!(
-                    "Failed unpack {:?}: {}",
-                    original_path, e
+                    "Failed unpack {original_path:?}: {e}"
                 )));
             }
         }

@@ -170,13 +170,11 @@ impl Config {
         self.get_tap_path(tap_name).and_then(|tap_path| {
             let json_path = tap_path
                 .join("Formula")
-                .join(format!("{}.json", formula_name));
+                .join(format!("{formula_name}.json"));
             if json_path.exists() {
                 return Some(json_path);
             }
-            let rb_path = tap_path
-                .join("Formula")
-                .join(format!("{}.rb", formula_name));
+            let rb_path = tap_path.join("Formula").join(format!("{formula_name}.rb"));
             if rb_path.exists() {
                 return Some(rb_path);
             }
