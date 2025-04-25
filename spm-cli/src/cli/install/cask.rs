@@ -16,7 +16,6 @@ fn join_to_err(e: JoinError) -> SpmError {
 }
 
 pub async fn run_cask_install(token: &str, cache: Arc<Cache>, cfg: &Config) -> Result<()> {
-    info!("Processing cask: {}", token.cyan());
     let cask: Cask = match api::get_cask(token).await {
         Ok(c) => c,
         Err(e) => {
@@ -54,7 +53,7 @@ pub async fn run_cask_install(token: &str, cache: Arc<Cache>, cfg: &Config) -> R
         }
     }
 
-    info!("Downloading artifact for {}", token);
+    info!("Downloading {}", token.cyan());
     let dl_path: PathBuf = match build::cask::download_cask(&cask, cache.as_ref()).await {
         Ok(p) => p,
         Err(e) => {
@@ -63,7 +62,7 @@ pub async fn run_cask_install(token: &str, cache: Arc<Cache>, cfg: &Config) -> R
         }
     };
 
-    debug!("Installing cask {} from {}...", token, dl_path.display());
+    info!("Processing {}", token.cyan());
     tokio::task::spawn_blocking({
         let cask_clone = cask.clone();
         let dl_clone = dl_path.clone();
@@ -73,6 +72,5 @@ pub async fn run_cask_install(token: &str, cache: Arc<Cache>, cfg: &Config) -> R
     .await
     .map_err(join_to_err)??;
 
-    debug!("Cask {} installation task completed successfully", token);
     Ok(())
 }

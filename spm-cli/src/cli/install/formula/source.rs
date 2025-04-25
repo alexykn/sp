@@ -15,7 +15,7 @@ pub async fn run_source_install(info: FormulaInstallInfo, cfg: Config) -> Result
     let resolved_graph = info.resolved_graph;
     let final_opt_path = get_formula_opt_path(formula, &cfg);
 
-    info!("Processing source build for: {}...", name.cyan());
+    info!("Processing source build for: {}", name.cyan());
 
     // Check if already installed (defensive check)
     let keg_registry = spm_core::keg::KegRegistry::new(cfg.clone());
@@ -37,10 +37,10 @@ pub async fn run_source_install(info: FormulaInstallInfo, cfg: Config) -> Result
         }
     }
 
-    info!("Downloading source for {}...", name);
+    info!("Downloading source for {}", name);
     let source_path = build::formula::source::download_source(formula, &cfg).await?;
 
-    info!("Compiling {}...", name);
+    info!("Compiling {}", name);
     let build_dep_paths = resolved_graph.build_dependency_opt_paths.clone();
     let runtime_dep_paths = resolved_graph.runtime_dependency_opt_paths.clone();
     let all_dep_paths = [build_dep_paths, runtime_dep_paths].concat();
@@ -53,9 +53,8 @@ pub async fn run_source_install(info: FormulaInstallInfo, cfg: Config) -> Result
     )
     .await?; // Await the result directly
 
-    info!("Linking artifacts for {}...", name);
+    info!("Linking artifacts for {}", name);
     build::formula::link::link_formula_artifacts(formula, &install_dir, &cfg)?;
 
-    info!("Built and linked {}", name.green());
     Ok(final_opt_path)
 }

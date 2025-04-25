@@ -25,14 +25,12 @@ pub async fn run_bottle_install(
     let name = formula.name();
     let final_opt_path = get_formula_opt_path(formula, &cfg);
 
-    info!("Processing bottle for: {}...", name.cyan());
-
     // Check if already installed (defensive check)
     let keg_registry = spm_core::keg::KegRegistry::new(cfg.clone());
     if let Some(keg) = keg_registry.get_installed_keg(name)? {
         if keg.version == *formula.version() && keg.revision == formula.revision {
             info!(
-                "Formula {} v{} is already installed.",
+                "{} v{} is already installed.",
                 name,
                 formula.version_str_full()
             );
@@ -48,12 +46,12 @@ pub async fn run_bottle_install(
     }
 
     // Download
-    info!("Downloading bottle for {}...", name);
+    info!("Downloading {}", name.cyan());
     let bottle_path =
         build::formula::bottle::download_bottle(formula, &cfg, client.as_ref()).await?;
 
     // Install (blocking)
-    info!("Pouring bottle for {}...", name);
+    info!("Processing {}", name.cyan());
     let install_dir: PathBuf = tokio::task::spawn_blocking({
         let formula_clone = formula.clone();
         let cfg_clone = cfg.clone();
@@ -65,10 +63,7 @@ pub async fn run_bottle_install(
     .await
     .map_err(join_to_err)??;
 
-    // Link
-    info!("Linking artifacts for {}...", name);
     build::formula::link::link_formula_artifacts(formula, &install_dir, &cfg)?;
 
-    info!("Poured and linked {}", name.green());
     Ok(final_opt_path)
 }

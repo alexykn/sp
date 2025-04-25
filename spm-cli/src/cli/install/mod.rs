@@ -125,8 +125,8 @@ impl Install {
             plan_input.formulae_names.iter().cloned().collect();
 
         if !formula_list_to_resolve.is_empty() {
-            info!(
-                "Resolving dependencies for {} potential formula(e)...",
+            debug!(
+                "Resolving dependencies for {} potential formula(e)",
                 formula_list_to_resolve.len()
             );
             let formulary = Formulary::new(cfg.clone());
@@ -188,7 +188,7 @@ impl Install {
                 }
             }
         } else {
-            info!("No formulae identified for resolution.");
+            debug!("No formulae identified for resolution.");
         }
 
         let mut tasks_to_run: HashMap<String, TaskType> = HashMap::new();
@@ -234,7 +234,7 @@ impl Install {
                     debug!("Skipping adding cask task for '{}' due to previous error or unknown status.", name);
                 }
             } else if tasks_to_run.contains_key(name) && !self.cask_only {
-                warn!("Target '{}' identified as both Formula and Cask. Prioritizing Formula install.", name);
+                info!("Target '{}' identified as both Formula and Cask. Prioritizing Formula install.", name);
             }
         }
 
@@ -255,8 +255,7 @@ impl Install {
         }
 
         info!(
-            "Planning to install {} package(s): {:?}",
-            task_list.len(),
+            "Target with dependencies added: {:?}",
             task_list.iter().map(|(n, _)| n).collect::<Vec<_>>()
         );
 
@@ -268,8 +267,6 @@ impl Install {
         let mut task_results: HashMap<String, Result<PathBuf>> = HashMap::new();
 
         let mut task_iter = task_list.into_iter();
-
-        info!("{}", "Starting installation process...".blue().bold());
 
         while pending_tasks > 0 {
             while let Ok(permit) = sem.clone().try_acquire_owned() {
@@ -318,7 +315,7 @@ impl Install {
                         debug!("Task completed for '{}': {:?}", name, result.is_ok());
                         if let Err(SpmError::InstallError(ref msg)) = result {
                             if msg.contains("already installed") {
-                                info!("☑️ Skipping already installed cask: {}", name.yellow());
+                                info!("Skipping installed cask: {}", name.yellow());
                                 task_results.insert(name, Ok(PathBuf::new()));
                             } else {
                                 task_results.insert(name, result);
@@ -349,17 +346,16 @@ impl Install {
             }
         }
 
-        info!("Installation process finished.");
         let mut final_success = true;
 
         for (name, result) in task_results {
             match result {
                 Ok(path) => {
                     if path.as_os_str().is_empty() {
-                        info!("Successfully installed/skipped cask: {}", name.green());
+                        info!("Successfully installed: {}", name.green());
                     } else {
                         info!(
-                            "Successfully installed formula: {} ({})",
+                            "Successfully installed: {} ({})",
                             name.green(),
                             path.display()
                         );
@@ -404,16 +400,16 @@ impl Install {
         let targets_to_check: HashSet<String> = self.names.iter().cloned().collect();
 
         if self.formula_only {
-            info!("--formula-only specified: Treating all targets as formulae.");
+            info!("--formula-only: Treating all targets as formulae");
             plan_input.formulae_names = targets_to_check;
             return Ok(plan_input);
         }
         if self.cask_only {
-            info!("--cask-only specified: Treating all targets as casks.");
+            info!("--cask-only: Treating all targets as casks.");
             plan_input.cask_names = targets_to_check;
             // Proceed to fetch cask deps below
         } else {
-            info!("Classifying initial targets: {:?}", self.names);
+            info!("Initial installation target(s): {:?}", self.names);
 
             // Load formula and cask data concurrently from cache/API
             let formula_data_future =
