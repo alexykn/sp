@@ -1,4 +1,4 @@
-# Contributing to Sapphire
+# Contributing to spm
 
 > We love merge requests! This guide shows the fastest path from **idea** to **merged code**. Skip straight to the *Quick‑Start* if you just want to get going, or dive into the details below.
 
@@ -8,8 +8,8 @@
 
 ### 1. Fork, clone & branch
 ```bash
-git clone https://github.com/<your-username>/sapphire.git
-cd sapphire
+git clone https://github.com/<your-username>/spm.git
+cd spm
 git checkout -b feat/<topic>
 ```
 
@@ -55,8 +55,8 @@ git push origin feat/<topic>
 
 | Crate               | Role                                                     |
 | ------------------- | -------------------------------------------------------- |
-| **`sapphire-core`** | Library: dependency resolution, fetchers, install logic  |
-| **`sapphire-cli`**  | Binary: user‑facing `sapphire` command                   |
+| **`spm-core`** | Library: dependency resolution, fetchers, install logic  |
+| **`spm-cli`**  | Binary: user‑facing `spm` command                   |
 
 All crates live in one Cargo **workspace**, so `cargo <cmd>` from the repo root affects everything.
 
@@ -136,7 +136,7 @@ We follow the [Contributor Covenant][Contributor Covenant]; be kind and inclusiv
 
 -----
 
-Happy coding – and thanks for making Sapphire better! ✨
+Happy coding – and thanks for making spm better! ✨
 
 [rustup.rs]: https://rustup.rs/
 [homebrew]: https://brew.sh/

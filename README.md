@@ -1,12 +1,12 @@
-# Sapphire
+# spm
 
 > [!WARNING]
 > **ALPHA SOFTWARE**
-> Sapphire is experimental, under heavy development, and may be unstable. Use at your own risk!
+> spm is experimental, under heavy development, and may be unstable. Use at your own risk!
 >
-> Uninstalling a cask with brew then reinstalling it with Sapphire will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
+> Uninstalling a cask with brew then reinstalling it with spm will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
-Sapphire is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
+spm is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
@@ -17,9 +17,9 @@ Sapphire is a next‑generation, Rust‑powered package manager inspired by Home
 
 ## ⚙️ Project Structure
 
-- **sapphire‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
+- **spm‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
 
-- **sapphire‑cli** Command‑line interface: `sapphire` executable wrapping the core library.
+- **spm‑cli** Command‑line interface: `spm` executable wrapping the core library.
 
 ---
 
@@ -38,8 +38,8 @@ Sapphire is a next‑generation, Rust‑powered package manager inspired by Home
 1. **Upgrade** command to update installed packages  
 2. **Cleanup** old downloads, versions, caches  
 3. **Reinstall** command for quick re‑pours  
-4. **Prefix isolation:** support `/opt/sapphire` as standalone layout  
-5. **`sapphire init`** helper to bootstrap your environment
+4. **Prefix isolation:** support `/opt/spm` as standalone layout  
+5. **`spm init`** helper to bootstrap your environment
 6. **Ongoing** Bug fixes and stability improvements
 
 ---
@@ -48,31 +48,31 @@ Sapphire is a next‑generation, Rust‑powered package manager inspired by Home
 
 ```sh
 # Print help
-sapphire --help
+spm --help
 
 # Update metadata
-sapphire update
+spm update
 
 # Search for packages
-sapphire search <formula/cask>
+spm search <formula/cask>
 
 # Get package info
-sapphire info <formula/cask>
+spm info <formula/cask>
 
 # Install bottles or casks
-sapphire install <formula/cask>
+spm install <formula/cask>
 
 # Build and install a formula from source
-sapphire install --build-from-source <formula>
+spm install --build-from-source <formula>
 
 # Uninstall
-sapphire uninstall <formula/cask>
+spm uninstall <formula/cask>
 
 # (coming soon)
-sapphire upgrade [--all] <name>
-sapphire cleanup
-sapphire init
-````
+spm upgrade [--all] <name>
+spm cleanup
+spm init
+```
 
 -----
 
@@ -82,17 +82,17 @@ sapphire init
 
 ```sh
 git clone <repo-url>
-cd sapphire
+cd spm
 cargo build --release
 ```
 
-The `sapphire` binary will be at `target/release/sapphire`. Add it to your `PATH`.
+The `spm` binary will be at `target/release/spm`. Add it to your `PATH`.
 
 -----
 
 ## 🤝 Contributing
 
-Sapphire lives and grows by your feedback and code\! We’re particularly looking for:
+spm lives and grows by your feedback and code\! We’re particularly looking for:
 
   - Testing and bug reports for Cask & Bottle installation + `--build-from-source`
   - Test coverage for core and cask modules
@@ -105,7 +105,7 @@ Feel free to open issues or PRs. Every contribution helps\!
 
 ## 📄 License
 
-  - **Sapphire:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
+  - **spm:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
   - Inspired by Homebrew BSD‑2‑Clause — see [NOTICE.md](NOTICE.md)
 
 -----

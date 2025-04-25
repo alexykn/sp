@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "sapphire-cli",
-    "sapphire-core",
+    "spm-cli",
+    "spm-core",
 ]
 
 # Optional: Define shared dependencies or profiles here
