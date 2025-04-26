@@ -38,14 +38,13 @@ async fn main() -> spmResult<()> {
         .init();
 
     // Initialize config *before* auto-update check
-    let config = Config::load().map_err(|e| {
-        SpmError::Config(format!("Could not load config: {}", e))
-    })?;
+    let config =
+        Config::load().map_err(|e| SpmError::Config(format!("Could not load config: {e}")))?;
 
     // Create Cache once and wrap in Arc
     let cache = Arc::new(
         Cache::new(&config.cache_dir)
-            .map_err(|e| SpmError::Cache(format!("Could not initialize cache: {}", e)))?,
+            .map_err(|e| SpmError::Cache(format!("Could not initialize cache: {e}")))?,
     );
 
     let needs_update_check = matches!(
