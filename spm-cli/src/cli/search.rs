@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use clap::Args;
 use colored::Colorize;
-use prettytable::{format, Table};
+use prettytable::{format, Table, Cell, Row}; // Make sure this is imported
 use serde_json::Value;
 use spm_core::fetch::api;
 use spm_core::utils::cache::Cache;
@@ -259,17 +259,6 @@ fn is_cask_match(cask: &Value, query: &str) -> bool {
         }
     }
 
-    // Check aliases if casks have them (add if necessary)
-    if let Some(aliases) = cask.get("aliases").and_then(|a| a.as_array()) {
-        for alias in aliases {
-            if let Some(alias_str) = alias.as_str() {
-                if alias_str.to_lowercase().contains(query) {
-                    return true;
-                }
-            }
-        }
-    }
-
     false
 }
 
@@ -311,65 +300,76 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     // 1) Terminal width
     let term_cols = terminal_size()
         .map(|(Width(w), _)| w as usize)
-        .unwrap_or(120); // Default width if detection fails
+        .unwrap_or(120);
 
-    // 2) Fixed columns: "Formula"/"Cask" plus two " | " separators
-    let type_col = 7; // Max width for "Formula"
-    let sep_width = 3; // Width of " | "
-    let total_fixed = type_col + sep_width * 2;
+    // Fixed columns
+    let type_col = 7;
+    let version_col = 10;
+    let sep_width = 3 * 3; // 3 separators of " | "
+    let total_fixed = type_col + version_col + sep_width;
 
-    // Ensure leftover is not negative
-    let leftover = term_cols.saturating_sub(total_fixed);
+    // Minimums
+    let name_min_width = 10;
+    let desc_min_width = 20;
 
-    // Allocate space, ensuring minimum width for names/desc
-    let name_min_width = 10; // Minimum columns for the name
-    let desc_min_width = 20; // Minimum columns for the description
+    // Calculate widths
+    let leftover = term_cols.saturating_sub(total_fixed + name_min_width + desc_min_width);
+    let name_max = name_min_width + leftover / 3;
+    let desc_max = desc_min_width + leftover - (leftover / 3);
 
-    // Calculate proportional widths, respecting minimums
-    let name_prop_width = leftover / 3;
-    let _desc_prop_width = leftover.saturating_sub(name_prop_width);
-
-    let name_max = std::cmp::max(name_min_width, name_prop_width);
-    // Adjust desc_max based on the actual space name_max takes, ensuring desc gets at least its
-    // minimum
-    let desc_max = std::cmp::max(desc_min_width, leftover.saturating_sub(name_max));
-
-    // Clamp to ensure total doesn't exceed leftover (due to minimums)
-    let name_max = std::cmp::min(name_max, leftover.saturating_sub(desc_min_width));
-    let desc_max = std::cmp::min(desc_max, leftover.saturating_sub(name_max));
-
-    // 3) Build plain table with truncated cells
+    // Build table with header
     let mut tbl = Table::new();
     tbl.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
-    // Don't set titles, we'll manually handle the header coloring later if desired
-    // tbl.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
-    for f in formula_matches {
+        for f in formula_matches {
         let raw_name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
         let raw_desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        let _name = truncate_vis(raw_name, name_max);
         let desc = truncate_vis(raw_desc, desc_max);
-        // Add colored type and name directly
-        tbl.add_row(prettytable::row![
-            "Formula".cyan(),
-            raw_name.blue().bold(), /* Color the full name before potential truncation for
-                                     * simplicity here */
-            desc // Description remains uncolored
-        ]);
+
+// Extract version (adjust if your JSON structure is different)
+        let version = get_version(f);
+
+        tbl.add_row(Row::new(vec![
+            Cell::new("Formula").style_spec("FgC"),
+            Cell::new(raw_name).style_spec("Fb"),
+            Cell::new(version),
+            Cell::new(&desc),
+        ]));
     }
+
+    // Add a separation row if both formulas and casks exist
+    if !formula_matches.is_empty() && !cask_matches.is_empty() {
+        // Use a light horizontal line, spanning all columns
+        tbl.add_row(Row::new(vec![
+            Cell::new(" ").with_hspan(4)
+        ]));
+    }
+
+    // Add cask rows
     for c in cask_matches {
         let raw_name = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
         let raw_desc = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
-        // let name = truncate_vis(raw_name, name_max); // Truncation might hide colored part
         let desc = truncate_vis(raw_desc, desc_max);
-        // Add colored type and name directly
-        tbl.add_row(prettytable::row![
-            "Cask".green(),
-            raw_name.blue().bold(), // Color the full name
-            desc                    // Description remains uncolored
-        ]);
+
+    // Extract version (adjust if your JSON structure is different)
+        let version = get_version(c);
+
+        tbl.add_row(Row::new(vec![
+            Cell::new("Cask").style_spec("FgG"),
+            Cell::new(raw_name).style_spec("Fb"),
+            Cell::new(version),
+            Cell::new(&desc),
+        ]));
     }
 
-    // 4) Print the table directly (coloring is done during row creation)
+// 4) Print the table directly (coloring is done during row creation)
     tbl.printstd();
+}
+
+fn get_version(formula: &Value) -> &str {
+    formula
+        .get("versions")
+        .and_then(|v| v.get("stable"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("-")
 }
