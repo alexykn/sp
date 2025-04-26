@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "spm-cli",
-    "spm-core",
+    "sp-cli",
+    "sp-core",
 ]
 
 # Optional: Define shared dependencies or profiles here

@@ -1,12 +1,12 @@
-# spm
+# sp
 
 > [!WARNING]
 > **ALPHA SOFTWARE**
-> spm is experimental, under heavy development, and may be unstable. Use at your own risk!
+> sp is experimental, under heavy development, and may be unstable. Use at your own risk!
 >
-> Uninstalling a cask with brew then reinstalling it with spm will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
+> Uninstalling a cask with brew then reinstalling it with sp will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
-spm is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
+sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
@@ -17,9 +17,9 @@ spm is a next‑generation, Rust‑powered package manager inspired by Homebrew.
 
 ## ⚙️ Project Structure
 
-- **spm‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
+- **sp‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
 
-- **spm‑cli** Command‑line interface: `spm` executable wrapping the core library.
+- **sp‑cli** Command‑line interface: `sp` executable wrapping the core library.
 
 ---
 
@@ -38,8 +38,8 @@ spm is a next‑generation, Rust‑powered package manager inspired by Homebrew.
 1. **Upgrade** command to update installed packages  
 2. **Cleanup** old downloads, versions, caches  
 3. **Reinstall** command for quick re‑pours  
-4. **Prefix isolation:** support `/opt/spm` as standalone layout  
-5. **`spm init`** helper to bootstrap your environment
+4. **Prefix isolation:** support `/opt/sp` as standalone layout  
+5. **`sp init`** helper to bootstrap your environment
 6. **Ongoing** Bug fixes and stability improvements
 
 ---
@@ -54,30 +54,30 @@ spm is a next‑generation, Rust‑powered package manager inspired by Homebrew.
 
 ```sh
 # Print help
-spm --help
+sp --help
 
 # Update metadata
-spm update
+sp update
 
 # Search for packages
-spm search <formula/cask>
+sp search <formula/cask>
 
 # Get package info
-spm info <formula/cask>
+sp info <formula/cask>
 
 # Install bottles or casks
-spm install <formula/cask>
+sp install <formula/cask>
 
 # Build and install a formula from source
-spm install --build-from-source <formula>
+sp install --build-from-source <formula>
 
 # Uninstall
-spm uninstall <formula/cask>
+sp uninstall <formula/cask>
 
 # (coming soon)
-spm upgrade [--all] <name>
-spm cleanup
-spm init
+sp upgrade [--all] <name>
+sp cleanup
+sp init
 ```
 
 -----
@@ -88,17 +88,17 @@ spm init
 
 ```sh
 git clone <repo-url>
-cd spm
+cd sp
 cargo build --release
 ```
 
-The `spm` binary will be at `target/release/spm`. Add it to your `PATH`.
+The `sp` binary will be at `target/release/sp`. Add it to your `PATH`.
 
 -----
 
 ## 🤝 Contributing
 
-spm lives and grows by your feedback and code\! We’re particularly looking for:
+sp lives and grows by your feedback and code\! We’re particularly looking for:
 
   - Testing and bug reports for Cask & Bottle installation + `--build-from-source`
   - Test coverage for core and cask modules
@@ -111,7 +111,7 @@ Feel free to open issues or PRs. Every contribution helps\!
 
 ## 📄 License
 
-  - **spm:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
+  - **sp:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
   - Inspired by Homebrew BSD‑2‑Clause — see [NOTICE.md](NOTICE.md)
 
 -----
