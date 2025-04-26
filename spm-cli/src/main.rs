@@ -2,12 +2,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{env, fs, process};
 
-use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
 use spm_core::utils::cache::Cache;
 use spm_core::utils::config::Config;
-use spm_core::utils::error::Result as spmResult; // Alias to avoid clash
+use spm_core::utils::error::{Result as spmResult, SpmError}; // Use spmResult for main, SpmError for mapping
 
 mod cli;
 mod ui;
@@ -17,7 +16,7 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> spmResult<()> {
     let cli_args = CliArgs::parse();
 
     // Initialize logger based on verbosity (default to info)
@@ -39,15 +38,14 @@ async fn main() -> Result<()> {
         .init();
 
     // Initialize config *before* auto-update check
-    let config = Config::load().unwrap_or_else(|e| {
-        eprintln!("{}: Could not load config: {}", "Error".red().bold(), e);
-        process::exit(1);
-    });
+    let config = Config::load().map_err(|e| {
+        SpmError::Config(format!("Could not load config: {}", e))
+    })?;
 
     // Create Cache once and wrap in Arc
     let cache = Arc::new(
         Cache::new(&config.cache_dir)
-            .map_err(|e| anyhow::anyhow!("Could not initialize cache: {}", e))?,
+            .map_err(|e| SpmError::Cache(format!("Could not initialize cache: {}", e)))?,
     );
 
     let needs_update_check = matches!(
@@ -135,7 +133,6 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> spmRes
         println!("Running auto-update...");
         // Use the existing update command logic
         match cli::update::Update.run(config, cache).await {
-            // Pass Arc::clone if needed, depends on run_update signature
             Ok(_) => {
                 println!("Auto-update successful.");
                 // 5. Update timestamp file on success

@@ -14,7 +14,6 @@ path = "src/main.rs"
 spm-core = { path = "../spm-core" }
 
 # Inherit from workspace
-anyhow = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
