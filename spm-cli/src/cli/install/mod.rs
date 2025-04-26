@@ -30,9 +30,9 @@ pub struct Install {
     #[arg(long)]
     skip_deps: bool,
     #[arg(long, help = "Force install specified targets as casks")]
-    cask_only: bool,
+    cask: bool,
     #[arg(long, help = "Force install specified targets as formulas")]
-    formula_only: bool,
+    formula: bool,
     #[arg(long)]
     include_optional: bool,
     #[arg(long)]
@@ -98,9 +98,9 @@ impl Install {
         if self.skip_deps {
             warn!("--skip-deps is partially supported; mandatory dependencies are still processed for formulae.");
         }
-        if self.formula_only && self.cask_only {
+        if self.formula && self.cask {
             return Err(SpmError::Generic(
-                "Cannot use --formula-only and --cask-only together.".to_string(),
+                "Cannot use --formula and --cask together.".to_string(),
             ));
         }
 
@@ -225,7 +225,7 @@ impl Install {
         }
 
         for name in &plan_input.cask_names {
-            if self.cask_only || !tasks_to_run.contains_key(name) {
+            if self.cask || !tasks_to_run.contains_key(name) {
                 if !plan_input.initial_errors.iter().any(|(n, _)| n == name)
                     && !plan_input.unknown_targets.contains(name)
                 {
@@ -233,7 +233,7 @@ impl Install {
                 } else {
                     debug!("Skipping adding cask task for '{}' due to previous error or unknown status.", name);
                 }
-            } else if tasks_to_run.contains_key(name) && !self.cask_only {
+            } else if tasks_to_run.contains_key(name) && !self.cask {
                 info!("Target '{}' identified as both Formula and Cask. Prioritizing Formula install.", name);
             }
         }
@@ -399,13 +399,13 @@ impl Install {
         let mut plan_input = InstallPlanInput::default();
         let targets_to_check: HashSet<String> = self.names.iter().cloned().collect();
 
-        if self.formula_only {
-            info!("--formula-only: Treating all targets as formulae");
+        if self.formula {
+            info!("--formula: Treating all targets as formulae");
             plan_input.formulae_names = targets_to_check;
             return Ok(plan_input);
         }
-        if self.cask_only {
-            info!("--cask-only: Treating all targets as casks.");
+        if self.cask {
+            info!("--cask: Treating all targets as casks.");
             plan_input.cask_names = targets_to_check;
             // Proceed to fetch cask deps below
         } else {
