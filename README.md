@@ -44,6 +44,10 @@ spm is a next‑generation, Rust‑powered package manager inspired by Homebrew.
 
 ---
 
+<img width="856" alt="Screenshot 2025-04-26 at 14 04 22" src="https://github.com/user-attachments/assets/df406637-f7a9-4ff6-b61f-e7e15ce674d8" />
+
+---
+
 ## 📦 Usage
 
 ```sh
