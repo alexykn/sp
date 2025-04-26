@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf}; // Import Path
 use std::process::{Command, Stdio};
 
+use regex::Regex;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
@@ -30,6 +31,13 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home); // Pass &Path
+                                                if !is_safe_path(&target, &home) {
+                                                    debug!(
+                                                        "Unsafe trash path {}, skipping",
+                                                        target.display()
+                                                    );
+                                                    continue;
+                                                }
                                                 debug!("Trashing {}...", target.display());
                                                 let _ = Command::new("trash")
                                                     .arg(&target)
@@ -43,6 +51,13 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home); // Pass &Path
+                                                if !is_safe_path(&target, &home) {
+                                                    debug!(
+                                                        "Unsafe delete path {}, skipping",
+                                                        target.display()
+                                                    );
+                                                    continue;
+                                                }
                                                 debug!("Deleting file {}...", target.display());
                                                 if let Err(e) = fs::remove_file(&target) {
                                                     if e.kind() != std::io::ErrorKind::NotFound {
@@ -60,6 +75,13 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
                                                 let target = expand_tilde(item, &home); // Pass &Path
+                                                if !is_safe_path(&target, &home) {
+                                                    debug!(
+                                                        "Unsafe rmdir path {}, skipping",
+                                                        target.display()
+                                                    );
+                                                    continue;
+                                                }
                                                 debug!(
                                                     "Removing directory {}...",
                                                     target.display()
@@ -79,6 +101,13 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     "pkgutil" => {
                                         if let Some(arr) = val.as_array() {
                                             for item in arr.iter().filter_map(|v| v.as_str()) {
+                                                if !is_valid_pkgid(item) {
+                                                    debug!(
+                                                        "Invalid pkgutil id '{}', skipping",
+                                                        item
+                                                    );
+                                                    continue;
+                                                }
                                                 debug!("Forgetting pkgutil receipt {}...", item);
                                                 let _ = Command::new("pkgutil")
                                                     .arg("--forget")
@@ -95,9 +124,20 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     "launchctl" => {
                                         if let Some(arr) = val.as_array() {
                                             for label in arr.iter().filter_map(|v| v.as_str()) {
+                                                if !is_valid_label(label) {
+                                                    debug!(
+                                                        "Invalid launchctl label '{}', skipping",
+                                                        label
+                                                    );
+                                                    continue;
+                                                }
                                                 let plist = home // Use expanded home
                                                     .join("Library/LaunchAgents")
                                                     .join(format!("{label}.plist"));
+                                                if !is_safe_path(&plist, &home) {
+                                                    debug!("Unsafe plist path {} for label {}, skipping", plist.display(), label);
+                                                    continue;
+                                                }
                                                 debug!(
                                                     "Unloading launchctl {}...",
                                                     plist.display()
@@ -117,6 +157,13 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     }
                                     "script" => {
                                         if let Some(cmd) = val.as_str() {
+                                            if !is_valid_command(cmd) {
+                                                debug!(
+                                                    "Invalid zap script command '{}', skipping",
+                                                    cmd
+                                                );
+                                                continue;
+                                            }
                                             debug!("Running zap script: {}...", cmd);
                                             let _ = Command::new("sh")
                                                 .arg("-c")
@@ -129,6 +176,13 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                     "signal" => {
                                         if let Some(arr) = val.as_array() {
                                             for cmd in arr.iter().filter_map(|v| v.as_str()) {
+                                                if !is_valid_command(cmd) {
+                                                    debug!(
+                                                        "Invalid signal command '{}', skipping",
+                                                        cmd
+                                                    );
+                                                    continue;
+                                                }
                                                 debug!("Running signal command: {}...", cmd);
                                                 let _ = Command::new("sh")
                                                     .arg("-c")
@@ -154,9 +208,46 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
     Ok(artifacts)
 }
 
+// New helper functions to validate paths and strings.
+fn is_safe_path(path: &Path, home: &Path) -> bool {
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let path_str = path.to_string_lossy();
+    if path.is_absolute()
+        && (path_str.starts_with("/Applications") || path_str.starts_with("/Library"))
+    {
+        return true;
+    }
+    if path.starts_with(home) {
+        return true;
+    }
+    if path_str.contains("Caskroom/Cellar") {
+        return true;
+    }
+    false
+}
+
+fn is_valid_pkgid(pkgid: &str) -> bool {
+    let re = Regex::new(r"^[a-zA-Z0-9.-]+$").unwrap();
+    re.is_match(pkgid)
+}
+
+fn is_valid_label(label: &str) -> bool {
+    let re = Regex::new(r"^[a-zA-Z0-9.-]+$").unwrap();
+    re.is_match(label)
+}
+
+fn is_valid_command(cmd: &str) -> bool {
+    let re = Regex::new(r"^[a-zA-Z0-9\s\-_./]+$").unwrap();
+    re.is_match(cmd)
+}
+
 /// Expand a path that may start with '~' to the user's home directory
 fn expand_tilde(path: &str, home: &Path) -> PathBuf {
-    // Changed to &Path
     if let Some(stripped) = path.strip_prefix("~/") {
         home.join(stripped)
     } else {

@@ -50,6 +50,9 @@ pub enum SpmError {
     #[error("Checksum Mismatch: {0}")]
     ChecksumMismatch(String), // Keep if used distinctly from ChecksumError
 
+    #[error("Validation Error: {0}")]
+    ValidationError(String),
+
     #[error("Checksum Error: {0}")]
     ChecksumError(String),
 

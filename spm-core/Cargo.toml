@@ -3,8 +3,8 @@ name = "spm-core"
 version = "0.1.0"
 edition = "2021"
 description = "Core library for the spm package manager"
-# repository = "..." # Add your repo URL
-# license = "..." # Add your license
+repository = "https://github.com/alexykn/spm"
+license = "BSD-3 Clause"
 
 [dependencies]
 # Inherit from workspace where possible

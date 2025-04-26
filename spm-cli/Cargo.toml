@@ -1,10 +1,10 @@
 [package]
-name = "spm"
+name = "spm-cli"
 version = "0.1.0"
 edition = "2021"
 description = "Command-line interface for spm"
-# repository = "..."
-# license = "..."
+repository = "https://github.com/alexykn/spm"
+license = "BSD-3 Clause"
 
 [[bin]]
 name = "spm"

@@ -1,7 +1,4 @@
 // ===== spm-core/src/build/extract.rs =====
-// Contains logic for extracting various archive formats.
-// Compatible with tar v0.4.40+: `Entry::unpack` returns `io::Result<tar::Unpacked>`
-// and `Entry::path` returns `io::Result<Cow<Path>>`.
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -17,10 +14,6 @@ use zip::read::ZipArchive;
 
 use crate::utils::error::{Result, SpmError};
 
-/// Infers the single top-level directory within an archive, if one exists.
-/// Returns Ok(Some(PathBuf)) if a single root dir is found (e.g., "foo-1.2/").
-/// Returns Ok(None) if the archive is flat or has multiple top-level items.
-/// Returns Err on I/O or parsing errors.
 pub(crate) fn infer_archive_root_dir(
     archive_path: &Path,
     archive_type: &str,
@@ -59,7 +52,6 @@ pub(crate) fn infer_archive_root_dir(
     }
 }
 
-// Helper for TAR formats
 fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Option<PathBuf>> {
     let mut archive = Archive::new(reader);
     let mut unique_roots = HashSet::new();
@@ -85,7 +77,6 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
             })?
             .into_owned();
 
-        // Ignore metadata-only entries like pax headers if they have no components
         if path.components().next().is_none() {
             continue;
         }
@@ -99,7 +90,6 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
                 }
                 unique_roots.insert(current_root);
 
-                // If we find more than one unique root, we can stop early
                 if unique_roots.len() > 1 {
                     tracing::debug!(
                         "Multiple top-level items found in TAR {}, cannot infer single root.",
@@ -108,15 +98,10 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
                     return Ok(None);
                 }
             } else {
-                // Found a non-Normal component at the top level (e.g., .., /)
-                tracing::debug!(
-                    "Non-standard top-level component ({:?}) found in TAR {}, cannot infer single root.",
-                    first_comp, archive_path_for_log.display()
-                );
-                return Ok(None); // Archive is not structured under a single root dir
+                tracing::debug!("Non-standard top-level component ({:?}) found in TAR {}, cannot infer single root.", first_comp, archive_path_for_log.display());
+                return Ok(None);
             }
         } else {
-            // Path is empty or unusual, treat as non-standard structure
             tracing::debug!(
                 "Empty or unusual path found in TAR {}, cannot infer single root.",
                 archive_path_for_log.display()
@@ -125,9 +110,8 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
         }
     }
 
-    // After checking all entries:
     if unique_roots.len() == 1 && non_empty_entry_found {
-        let inferred_root = first_component_name.unwrap(); // Safe unwrap as len == 1
+        let inferred_root = first_component_name.unwrap();
         tracing::debug!(
             "Inferred single root directory in TAR {}: {}",
             archive_path_for_log.display(),
@@ -139,20 +123,17 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
             "TAR archive {} appears to be empty or contain only metadata.",
             archive_path_for_log.display()
         );
-        Ok(None) // Empty archive doesn't have a root dir
+        Ok(None)
     } else {
-        // This case (len == 0 but non_empty_entry_found is true) shouldn't happen
-        // If len > 1, it was handled in the loop
         tracing::debug!(
             "No single common root directory found in TAR {}. unique_roots count: {}",
             archive_path_for_log.display(),
             unique_roots.len()
         );
-        Ok(None) // Flat archive or multiple roots
+        Ok(None)
     }
 }
 
-// Helper for ZIP format
 fn infer_zip_root<R: Read + Seek>(
     reader: R,
     archive_path_for_log: &Path,
@@ -170,7 +151,6 @@ fn infer_zip_root<R: Read + Seek>(
 
     for i in 0..archive.len() {
         let file = archive.by_index_raw(i).map_err(|e| {
-            // Use by_index_raw to avoid full decompression
             SpmError::Generic(format!(
                 "Error reading ZIP index {} in {}: {}",
                 i,
@@ -179,11 +159,9 @@ fn infer_zip_root<R: Read + Seek>(
             ))
         })?;
 
-        // Use file.name() which is the raw path string from the central directory
         let path_str = file.name();
-        let path = PathBuf::from(path_str); // Convert raw string to PathBuf
+        let path = PathBuf::from(path_str);
 
-        // Ignore metadata-only entries if they have no components
         if path.components().next().is_none() {
             continue;
         }
@@ -218,9 +196,8 @@ fn infer_zip_root<R: Read + Seek>(
         }
     }
 
-    // After checking all entries:
     if unique_roots.len() == 1 && non_empty_entry_found {
-        let inferred_root = first_component_name.unwrap(); // Safe unwrap
+        let inferred_root = first_component_name.unwrap();
         tracing::debug!(
             "Inferred single root directory in ZIP {}: {}",
             archive_path_for_log.display(),
@@ -239,27 +216,18 @@ fn infer_zip_root<R: Read + Seek>(
             archive_path_for_log.display(),
             unique_roots.len()
         );
-        Ok(None) // Flat archive or multiple roots
+        Ok(None)
     }
 }
 
-/// Extracts an archive to the target directory using native Rust crates.
-/// Supports `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, and `.zip`.
-/// `strip_components` behaves like the GNU tar `--strip-components` flag.
-/// `archive_type` should be the determined extension (e.g., "zip", "gz", "bz2", "xz", "tar").
 pub fn extract_archive(
     archive_path: &Path,
     target_dir: &Path,
     strip_components: usize,
-    archive_type: &str, // <-- Parameter added
+    archive_type: &str,
 ) -> Result<()> {
-    debug!(
-        "Extracting archive '{}' (type: {}) to '{}' (strip_components={}) using native Rust crates.",
-        archive_path.display(),
-        archive_type,
-        target_dir.display(),
-        strip_components
-    );
+    debug!("Extracting archive '{}' (type: {}) to '{}' (strip_components={}) using native Rust crates.",
+		archive_path.display(), archive_type, target_dir.display(), strip_components);
 
     fs::create_dir_all(target_dir).map_err(|e| {
         SpmError::Io(std::io::Error::new(
@@ -272,6 +240,21 @@ pub fn extract_archive(
         ))
     })?;
 
+    let temp_extract_dir = tempfile::Builder::new()
+        .prefix(".extract-")
+        .tempdir_in(target_dir)
+        .map_err(|e| {
+            SpmError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed create temp extract dir: {e}"),
+            ))
+        })?;
+    let temp_extract_path = temp_extract_dir.path();
+    debug!(
+        "Extracting archive to temporary location: {}",
+        temp_extract_path.display()
+    );
+
     let file = File::open(archive_path).map_err(|e| {
         SpmError::Io(std::io::Error::new(
             e.kind(),
@@ -279,47 +262,130 @@ pub fn extract_archive(
         ))
     })?;
 
-    // --- Determine archive type and extract ---
-    // Use the provided archive_type instead of inspecting filename/extension here
     match archive_type {
-        "zip" => extract_zip_archive(file, target_dir, strip_components, archive_path),
+        "zip" => extract_zip_archive(file, temp_extract_path, strip_components, archive_path)?,
         "gz" | "tgz" => {
-            // infer often returns "gz" for .tar.gz
             let tar = GzDecoder::new(file);
-            extract_tar_archive(tar, target_dir, strip_components, archive_path)
+            extract_tar_archive(tar, temp_extract_path, strip_components, archive_path)?
         }
         "bz2" | "tbz" | "tbz2" => {
             let tar = BzDecoder::new(file);
-            extract_tar_archive(tar, target_dir, strip_components, archive_path)
+            extract_tar_archive(tar, temp_extract_path, strip_components, archive_path)?
         }
         "xz" | "txz" => {
             let tar = XzDecoder::new(file);
-            extract_tar_archive(tar, target_dir, strip_components, archive_path)
+            extract_tar_archive(tar, temp_extract_path, strip_components, archive_path)?
         }
-        "tar" => {
-            // No decompression needed
-            extract_tar_archive(file, target_dir, strip_components, archive_path)
+        "tar" => extract_tar_archive(file, temp_extract_path, strip_components, archive_path)?,
+        _ => {
+            return Err(SpmError::Generic(format!(
+                "Unsupported archive type provided for extraction: '{}' for file {}",
+                archive_type,
+                archive_path.display()
+            )))
         }
-        // Add other types like "7z" here if you add support
-        _ => Err(SpmError::Generic(format!(
-            "Unsupported archive type provided for extraction: '{}' for file {}",
-            archive_type,
-            archive_path.display()
-        ))),
     }
+
+    use std::path::Component;
+
+    use walkdir::WalkDir;
+    debug!(
+        "Validating extracted contents in {}",
+        temp_extract_path.display()
+    );
+    let abs_temp_extract_path = temp_extract_path.canonicalize().map_err(SpmError::Io)?;
+
+    for entry_result in WalkDir::new(temp_extract_path) {
+        let entry = entry_result.map_err(|e| {
+            SpmError::Io(
+                e.into_io_error()
+                    .unwrap_or_else(|| std::io::Error::other("Walkdir error")),
+            )
+        })?;
+        let path = entry.path();
+
+        for component in path.components() {
+            if matches!(component, Component::ParentDir | Component::RootDir) {
+                if component == Component::ParentDir {
+                    tracing::error!(
+                        "Unsafe '..' component found in extracted path: {}",
+                        path.display()
+                    );
+                    return Err(SpmError::Generic(format!(
+                        "Unsafe '..' component in extracted path: {}",
+                        path.display()
+                    )));
+                }
+                if path.is_absolute() && !path.starts_with(&abs_temp_extract_path) {
+                    tracing::error!(
+                        "Absolute path component found pointing outside temp dir: {}",
+                        path.display()
+                    );
+                    return Err(SpmError::Generic(format!(
+                        "Unsafe absolute path component in extracted path: {}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+
+        if entry.file_type().is_symlink() {
+            let link_target = fs::read_link(path).map_err(SpmError::Io)?;
+            let link_parent = path.parent().unwrap_or(path);
+            let resolved_target_abs = if link_target.is_absolute() {
+                link_target.canonicalize().map_err(SpmError::Io)?
+            } else {
+                link_parent
+                    .join(&link_target)
+                    .canonicalize()
+                    .map_err(SpmError::Io)?
+            };
+
+            if !resolved_target_abs.starts_with(&abs_temp_extract_path) {
+                tracing::error!(
+                    "Symlink points outside the extraction directory: {} -> {} (resolves to {})",
+                    path.display(),
+                    link_target.display(),
+                    resolved_target_abs.display()
+                );
+                return Err(SpmError::Generic(format!(
+                    "Symlink points outside extraction dir: {}",
+                    path.display()
+                )));
+            }
+            tracing::debug!(
+                "Validated symlink: {} -> {}",
+                path.display(),
+                link_target.display()
+            );
+        }
+    }
+    debug!("Extraction validation successful.");
+
+    debug!(
+        "Moving validated contents from {} to {}",
+        temp_extract_path.display(),
+        target_dir.display()
+    );
+    for item_result in fs::read_dir(temp_extract_path)? {
+        let item = item_result?;
+        let source_item_path = item.path();
+        let dest_item_path = target_dir.join(item.file_name());
+        fs::rename(&source_item_path, &dest_item_path).map_err(SpmError::Io)?;
+    }
+    Ok(())
 }
 
-// --- Tar Extraction Helper (unchanged) ---
 fn extract_tar_archive<R: Read>(
     reader: R,
     target_dir: &Path,
     strip_components: usize,
-    archive_path_for_log: &Path, // For logging only
+    archive_path_for_log: &Path,
 ) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
-    archive.set_preserve_permissions(true); // Preserve permissions
-    archive.set_unpack_xattrs(true); // Preserve xattrs
-    archive.set_overwrite(false); // Do not overwrite existing files
+    archive.set_preserve_permissions(true);
+    archive.set_unpack_xattrs(true);
+    archive.set_overwrite(false);
 
     debug!(
         "Starting TAR extraction for {}",
@@ -335,7 +401,6 @@ fn extract_tar_archive<R: Read>(
             ))
         })?;
 
-        // Obtain an owned copy of the path to drop the borrow.
         let original_path: PathBuf = entry
             .path()
             .map_err(|e| {
@@ -347,7 +412,6 @@ fn extract_tar_archive<R: Read>(
             })?
             .into_owned();
 
-        // Strip leading components
         let stripped: Vec<_> = original_path.components().skip(strip_components).collect();
         if stripped.is_empty() {
             debug!(
@@ -399,7 +463,6 @@ fn extract_tar_archive<R: Read>(
             )));
         }
 
-        // Ensure parent directory exists before unpacking
         if let Some(parent) = target_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| {
@@ -411,7 +474,6 @@ fn extract_tar_archive<R: Read>(
             }
         }
 
-        // Unpack entry
         match entry.unpack(&target_path) {
             Ok(_) => debug!("Unpacked TAR entry to: {}", target_path.display()),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
@@ -441,7 +503,6 @@ fn extract_tar_archive<R: Read>(
     Ok(())
 }
 
-// --- Zip Extraction Helper (unchanged) ---
 fn extract_zip_archive<R: Read + Seek>(
     reader: R,
     target_dir: &Path,
@@ -516,7 +577,6 @@ fn extract_zip_archive<R: Read + Seek>(
             )));
         }
 
-        // Ensure parent directory exists
         if let Some(parent) = target_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| {
@@ -529,7 +589,6 @@ fn extract_zip_archive<R: Read + Seek>(
         }
 
         if file.is_dir() {
-            // Directory entry in zip - ensure it exists on filesystem
             if !target_path.exists() {
                 fs::create_dir_all(&target_path).map_err(|e| {
                     SpmError::Io(io::Error::new(
@@ -539,15 +598,13 @@ fn extract_zip_archive<R: Read + Seek>(
                 })?;
             }
         } else if file.is_symlink() {
-            // Symlink entry in zip
             let mut buf = Vec::new();
             file.read_to_end(&mut buf)?;
             let link_target = PathBuf::from(String::from_utf8_lossy(&buf).to_string());
             #[cfg(unix)]
             {
-                // Remove existing file/link at target first
                 if target_path.exists() || target_path.symlink_metadata().is_ok() {
-                    let _ = fs::remove_file(&target_path); // Ignore error if it doesn't exist
+                    let _ = fs::remove_file(&target_path);
                 }
                 std::os::unix::fs::symlink(&link_target, &target_path).map_err(|e| {
                     debug!(
@@ -556,7 +613,7 @@ fn extract_zip_archive<R: Read + Seek>(
                         link_target.display(),
                         e
                     );
-                    SpmError::Io(e) // Propagate error
+                    SpmError::Io(e)
                 })?;
             }
             #[cfg(not(unix))]
@@ -566,11 +623,8 @@ fn extract_zip_archive<R: Read + Seek>(
                     target_path.display(),
                     link_target.display()
                 );
-                // Potentially write a file with the link target path?
             }
         } else {
-            // Regular file entry in zip
-            // Remove existing file at target first to avoid errors
             if target_path.exists() {
                 let _ = fs::remove_file(&target_path);
             }
@@ -582,13 +636,10 @@ fn extract_zip_archive<R: Read + Seek>(
             })?;
             io::copy(&mut file, &mut out_file)?;
         }
-
-        // Set permissions if available (Unix only)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Some(mode) = file.unix_mode() {
-                // Check if it's a symlink; don't chmod symlinks directly
                 if !file.is_symlink() {
                     fs::set_permissions(&target_path, fs::Permissions::from_mode(mode))?;
                 }

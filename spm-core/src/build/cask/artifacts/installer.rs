@@ -10,6 +10,35 @@ use crate::model::cask::Cask;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SpmError};
 
+// Helper to validate that the executable is a filename (relative, no '/' or "..")
+fn validate_filename_or_relative_path(file: &str) -> Result<String> {
+    if file.starts_with("/") || file.contains("..") || file.contains("/") {
+        return Err(SpmError::Generic(format!(
+            "Invalid executable filename: {file}"
+        )));
+    }
+    Ok(file.to_string())
+}
+
+// Helper to validate a command argument based on allowed characters or allowed option form
+fn validate_argument(arg: &str) -> Result<String> {
+    if arg.starts_with("-") {
+        return Ok(arg.to_string());
+    }
+    if arg.starts_with("/") || arg.contains("..") || arg.contains("/") {
+        return Err(SpmError::Generic(format!("Invalid argument: {arg}")));
+    }
+    if !arg
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(SpmError::Generic(format!(
+            "Invalid characters in argument: {arg}"
+        )));
+    }
+    Ok(arg.to_string())
+}
+
 /// Implements the `installer` stanza:
 /// - `manual`: prints instructions to open the staged path.
 /// - `script`: runs the given executable with args, under sudo if requested.
@@ -30,18 +59,14 @@ pub fn run_installer(
                 if let Some(insts) = obj.get("installer").and_then(|v| v.as_array()) {
                     for inst in insts {
                         if let Some(inst_obj) = inst.as_object() {
-                            // Manual installer: user must open the path themselves
                             if let Some(man) = inst_obj.get("manual").and_then(|v| v.as_str()) {
                                 debug!(
                                     "Cask {} requires manual install. To finish:\n    open {}",
                                     cask.token,
                                     stage_path.join(man).display()
                                 );
-                                // Nothing to record in InstalledArtifact for manual
                                 continue;
                             }
-
-                            // Script installer
                             let exe_key = if inst_obj.contains_key("script") {
                                 "script"
                             } else {
@@ -69,7 +94,14 @@ pub fn run_installer(
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
 
-                            let script_path = stage_path.join(executable);
+                            let validated_executable =
+                                validate_filename_or_relative_path(executable)?;
+                            let mut validated_args = Vec::new();
+                            for arg in &args {
+                                validated_args.push(validate_argument(arg)?);
+                            }
+
+                            let script_path = stage_path.join(&validated_executable);
                             if !script_path.exists() {
                                 return Err(SpmError::NotFound(format!(
                                     "Installer script not found: {}",
@@ -82,7 +114,6 @@ pub fn run_installer(
                                 script_path.display(),
                                 cask.token
                             );
-                            // Build the command
                             let mut cmd = if use_sudo {
                                 let mut c = Command::new("sudo");
                                 c.arg(script_path.clone());
@@ -90,13 +121,11 @@ pub fn run_installer(
                             } else {
                                 Command::new(script_path.clone())
                             };
-                            cmd.args(&args);
-                            // Inherit stdout/stderr so user sees progress
+                            cmd.args(&validated_args);
                             cmd.stdin(Stdio::null())
                                 .stdout(Stdio::inherit())
                                 .stderr(Stdio::inherit());
 
-                            // Execute
                             let status = cmd.status().map_err(|e| {
                                 SpmError::Generic(format!("Failed to spawn installer script: {e}"))
                             })?;
@@ -106,7 +135,6 @@ pub fn run_installer(
                                 )));
                             }
 
-                            // No specific files to record here, but we can note the script ran
                             installed
                                 .push(InstalledArtifact::CaskroomReference { path: script_path });
                         }

@@ -33,7 +33,7 @@ pub use perl::perl_build;
 pub use python::python_build;
 
 const SUPPORTED_ARCHIVE_EXTENSIONS: [&str; 5] = ["gz", "bz2", "xz", "tar", "zip"];
-const RECOGNISED_SINGLE_FILE_EXTENSIONS: [&str; 9] =
+pub(crate) const RECOGNISED_SINGLE_FILE_EXTENSIONS: [&str; 9] =
     ["tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zip"];
 
 pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathBuf> {
@@ -298,6 +298,28 @@ pub async fn build_from_source(
         install_single_file(source_path, formula, &install_dir)?;
         crate::build::write_receipt(formula, &install_dir)?;
         return Ok(install_dir);
+    }
+
+    let expected_ext = source_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    if !expected_ext.is_empty() && RECOGNISED_SINGLE_FILE_EXTENSIONS.contains(&expected_ext) {
+        tracing::debug!(
+            "Verifying source content type for {} against expected extension '{}'",
+            source_path.display(),
+            expected_ext
+        );
+        if let Err(e) = crate::fetch::validation::verify_content_type(source_path, expected_ext) {
+            tracing::error!("Source content type verification failed: {}", e);
+            // Cleanup source_path? Maybe let the caller handle it.
+            return Err(e);
+        }
+    } else {
+        tracing::debug!(
+            "Skipping source content type verification (unknown/no expected extension: '{}')",
+            expected_ext
+        );
     }
 
     let source_archive_type_str = determine_archive_type(source_path, "main source archive")?;

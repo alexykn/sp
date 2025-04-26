@@ -1,5 +1,3 @@
-// ===== spm-core/src/build/cask/mod.rs =====
-
 pub mod artifacts;
 pub mod dmg;
 
@@ -8,16 +6,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
-// Add infer crate for file type detection
 use infer;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tempfile::TempDir; // For staging directory
-use tracing::{debug, error}; // For logging
+use tempfile::TempDir;
+use tracing::{debug, error};
 
-use crate::build::extract; // To use extract_archive for ZIP/TAR
-use crate::model::cask::{Cask, UrlField};
+use crate::build::extract;
+use crate::model::cask::{Cask, Sha256Field, UrlField};
 use crate::utils::cache::Cache;
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SpmError};
@@ -42,37 +39,31 @@ pub enum InstalledArtifact {
     Launchd {
         label: String,
         path: Option<PathBuf>,
-    }, // Path might be system-wide
+    },
     CaskroomReference {
         path: PathBuf,
-    }, /* e.g., the copied PKG
-        * Add others as needed based on artifact handlers */
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaskInstallManifest {
-    pub manifest_format_version: String, // e.g., "1.0"
+    pub manifest_format_version: String,
     pub token: String,
     pub version: String,
-    pub installed_at: u64, // Unix timestamp
+    pub installed_at: u64,
     pub artifacts: Vec<InstalledArtifact>,
 }
 
-/// Get installation path for a cask's specific version
 pub fn get_cask_version_path(cask: &Cask, config: &Config) -> PathBuf {
     let version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
     config.cask_version_path(&cask.token, &version)
 }
 
-/// Download a cask
 pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
-    // Extract the URL from the UrlField enum
     let url_field = cask
         .url
         .as_ref()
         .ok_or_else(|| SpmError::Generic(format!("Cask {} has no URL", cask.token)))?;
-
-    // Get the primary URL string
     let url_str = match url_field {
         UrlField::Simple(u) => u.as_str(),
         UrlField::WithSpec { url, .. } => url.as_str(),
@@ -85,30 +76,24 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         )));
     }
 
-    debug!("Downloading cask from {}", url_str); // Use info level for user visibility
-
+    debug!("Downloading cask from {}", url_str);
     let parsed = Url::parse(url_str)
         .map_err(|e| SpmError::Generic(format!("Invalid URL '{url_str}': {e}")))?;
-
-    // Construct a filename, even if the URL has none
+    crate::fetch::validation::validate_url(parsed.as_str())?;
     let file_name = parsed
         .path_segments()
-        .and_then(|mut segments| segments.next_back()) // Use next_back()
+        .and_then(|mut segments| segments.next_back())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
             debug!("URL has no filename component, using fallback name for cache based on token.");
             format!("cask-{}-download.tmp", cask.token.replace('/', "_"))
         });
-
     let cache_key = format!("cask-{}-{}", cask.token, file_name);
     let cache_path = cache.get_dir().join(&cache_key);
 
-    // Checksum logic would go here if implemented
-
     if cache_path.exists() {
-        debug!("Using cached download: {}", cache_path.display()); // Use info
-                                                                   // Verify checksum here if implemented
+        debug!("Using cached download: {}", cache_path.display());
         return Ok(cache_path);
     }
 
@@ -118,35 +103,49 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         .send()
         .await
         .map_err(SpmError::Http)?;
-
     if !response.status().is_success() {
         return Err(SpmError::DownloadError(
-            // Use specific error type
             cask.token.clone(),
             url_str.to_string(),
             format!("HTTP status {}", response.status()),
         ));
     }
-
     let bytes = response.bytes().await.map_err(SpmError::Http)?;
-
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
-
-    // Consider writing to a temporary file first, then renaming for atomicity
     let mut file = fs::File::create(&cache_path)?;
     file.write_all(&bytes)?;
-
-    debug!("Download completed: {}", cache_path.display()); // Use info
-                                                            // Verify checksum here if implemented
+    let expected_sha256 = match cask.sha256.as_ref() {
+        Some(Sha256Field::Hex(s)) => s.as_str(),
+        _ => "",
+    };
+    if !expected_sha256.is_empty() {
+        match crate::fetch::validation::verify_checksum(&cache_path, expected_sha256) {
+            Ok(_) => {
+                tracing::debug!("Cask download checksum verified: {}", cache_path.display());
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Cask download checksum mismatch ({}). Deleting cached file.",
+                    e
+                );
+                let _ = fs::remove_file(&cache_path);
+                return Err(e);
+            }
+        }
+    } else {
+        tracing::warn!(
+            "Skipping checksum verification for cask {} - none provided.",
+            cache_path.display()
+        );
+    }
+    debug!("Download completed: {}", cache_path.display());
     Ok(cache_path)
 }
 
-/// Install a cask from a downloaded file using artifact-driven logic
 pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Result<()> {
     debug!("Installing cask: {}", cask.token);
-
     let cask_version_install_path = get_cask_version_path(cask, config);
     if !cask_version_install_path.exists() {
         fs::create_dir_all(&cask_version_install_path).map_err(|e| {
@@ -164,28 +163,21 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             cask_version_install_path.display()
         );
     }
-
-    // --- Determine file type ---
-    let mut detected_extension = download_path // Try extension first
+    let mut detected_extension = download_path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-
-    // List of common "non-extensions" or generic extensions often used in download URLs
     let non_extensions = ["stable", "latest", "download", "bin", ""];
-
     if non_extensions.contains(&detected_extension.as_str()) {
         debug!(
             "Download path '{}' has no definite extension ('{}'), attempting content detection.",
             download_path.display(),
             detected_extension
         );
-        // Use infer crate to detect type based on content
         match infer::get_from_path(download_path) {
-            // Propagate potential IO errors? Use map_err
             Ok(Some(kind)) => {
-                detected_extension = kind.extension().to_string(); // Get common extension from infer
+                detected_extension = kind.extension().to_string();
                 debug!("Detected file type via content: {}", detected_extension);
             }
             Ok(None) => {
@@ -204,7 +196,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                     download_path.display(),
                     e
                 );
-                return Err(SpmError::Io(e)); // Return IO error
+                return Err(SpmError::Io(e));
             }
         }
     } else {
@@ -213,8 +205,6 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             detected_extension
         );
     }
-
-    // --- Handle PKG directly (before staging) ---
     if detected_extension == "pkg" || detected_extension == "mpkg" {
         debug!("Detected PKG installer, running directly");
         match artifacts::pkg::install_pkg_from_path(
@@ -224,22 +214,18 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             config,
         ) {
             Ok(installed_artifacts) => {
-                // PKG install succeeded, write manifest and return early
                 debug!("Writing PKG install manifest");
                 write_cask_manifest(cask, &cask_version_install_path, installed_artifacts)?;
                 debug!("Successfully installed PKG cask: {}", cask.token);
-                return Ok(()); // Success!
+                return Ok(());
             }
             Err(e) => {
                 error!("PKG installation failed: {}", e);
-                // Attempt to clean up caskroom version directory on PKG failure
                 let _ = fs::remove_dir_all(&cask_version_install_path);
                 return Err(e);
             }
         }
     }
-
-    // --- Staging Area Setup (for DMG/ZIP/etc.) ---
     let stage_dir = TempDir::new().map_err(|e| {
         SpmError::Io(std::io::Error::new(
             e.kind(),
@@ -248,8 +234,38 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     })?;
     let stage_path = stage_dir.path();
     debug!("Created staging directory: {}", stage_path.display());
+    // Determine expected extension (this might need refinement)
+    // Option 1: Parse from URL
+    let expected_ext_from_url = download_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    // Option 2: A new field in Cask JSON definition (preferred)
+    // let expected_ext = cask.expected_extension.as_deref().unwrap_or(expected_ext_from_url);
+    let expected_ext = expected_ext_from_url; // Use URL for now
 
-    // --- Extract to Staging ---
+    if !expected_ext.is_empty()
+        && crate::build::formula::source::RECOGNISED_SINGLE_FILE_EXTENSIONS.contains(&expected_ext)
+    {
+        // Check if it's an archive/installer type we handle
+        tracing::debug!(
+            "Verifying content type for {} against expected extension '{}'",
+            download_path.display(),
+            expected_ext
+        );
+        if let Err(e) = crate::fetch::validation::verify_content_type(download_path, expected_ext) {
+            tracing::error!("Content type verification failed: {}", e);
+            // Attempt cleanup?
+            let _ = fs::remove_dir_all(&cask_version_install_path);
+            return Err(e);
+        }
+    } else {
+        tracing::debug!(
+            "Skipping content type verification for {} (unknown/no expected extension: '{}')",
+            download_path.display(),
+            expected_ext
+        );
+    }
     match detected_extension.as_str() {
         "dmg" => {
             debug!(
@@ -257,7 +273,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                 download_path.display(),
                 stage_path.display()
             );
-            dmg::extract_dmg_to_stage(download_path, stage_path)?; // Pass errors up
+            dmg::extract_dmg_to_stage(download_path, stage_path)?;
             debug!("Successfully extracted DMG to staging area.");
         }
         "zip" => {
@@ -266,13 +282,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                 download_path.display(),
                 stage_path.display()
             );
-            // Pass the detected type!
-            extract::extract_archive(download_path, stage_path, 0, "zip")?; // Pass errors up
+            extract::extract_archive(download_path, stage_path, 0, "zip")?;
             debug!("Successfully extracted ZIP to staging area.");
         }
         "gz" | "bz2" | "xz" | "tar" => {
-            // Handle tarballs potentially (if cask delivers them)
-            // Pass the detected type! (e.g., "gz", "bz2", "xz", "tar")
             let archive_type_for_extraction = detected_extension.as_str();
             debug!(
                 "Extracting TAR archive ({}) {} to stage {}...",
@@ -280,12 +293,9 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                 download_path.display(),
                 stage_path.display()
             );
-            // Pass strip_components=0 for casks unless specified otherwise
             extract::extract_archive(download_path, stage_path, 0, archive_type_for_extraction)?;
             debug!("Successfully extracted TAR archive to staging area.");
         }
-        // PKG handled above, App bundle likely inside DMG/ZIP
-        // Add other container types if necessary (e.g., 7z)
         _ => {
             error!(
                 "Unsupported container/installer type '{}' for staged installation derived from {}",
@@ -297,22 +307,17 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             )));
         }
     }
-
-    // --- Process Staged Artifacts ---
     let mut all_installed_artifacts: Vec<InstalledArtifact> = Vec::new();
     let mut artifact_install_errors = Vec::new();
-
     if let Some(artifacts_def) = &cask.artifacts {
-        // Use the correct variable name
         debug!(
             "Processing {} declared artifacts from staging area...",
             artifacts_def.len()
         );
         for artifact_value in artifacts_def.iter() {
             if let Some(artifact_obj) = artifact_value.as_object() {
-                // Should only be one key per artifact object definition
                 if let Some((key, value)) = artifact_obj.iter().next() {
-                    debug!("Processing artifact type: {}", key); // Log the type being processed
+                    debug!("Processing artifact type: {}", key);
                     let result: Result<Vec<InstalledArtifact>> = match key.as_str() {
                         "app" => {
                             let mut app_artifacts = vec![];
@@ -334,12 +339,6 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                                 app_artifacts.append(&mut artifacts)
                                             }
                                             Err(e) => {
-                                                error!(
-                                                    "Failed to install app artifact '{}': {}",
-                                                    app_name, e
-                                                );
-                                                // Decide how to handle partial failure
-                                                // For now, let's return the error to stop install
                                                 return Err(e);
                                             }
                                         }
@@ -356,7 +355,6 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                             Ok(app_artifacts)
                         }
                         "pkg" => {
-                            // Handle PKG found *inside* DMG/ZIP
                             let mut installed_pkgs = vec![];
                             if let Some(pkg_names) = value.as_array() {
                                 for pkg_val in pkg_names {
@@ -376,8 +374,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                                 installed_pkgs.append(&mut artifacts)
                                             }
                                             Err(e) => {
-                                                error!("Failed to install staged pkg artifact '{}': {}", pkg_name, e);
-                                                return Err(e); // Fail fast on inner pkg error
+                                                return Err(e);
                                             }
                                         }
                                     } else {
@@ -502,24 +499,19 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                             &cask_version_install_path,
                             config,
                         ),
-                        // Stanzas processed at install time but don't move files from stage
-                        "zap" => artifacts::zap::install_zap(cask, config), /* Zap doesn't use */
-                        // stage_path
+                        "zap" => artifacts::zap::install_zap(cask, config),
                         "preflight" => {
                             artifacts::preflight::run_preflight(cask, stage_path, config)
-                        } // Uses stage_path
-                        "uninstall" => artifacts::uninstall::record_uninstall(cask), /* Doesn't use stage_path, just records */
-                        // Ignore keys we don't handle or understand
+                        }
+                        "uninstall" => artifacts::uninstall::record_uninstall(cask),
                         other => {
                             debug!("Artifact type '{}' not supported yet — skipping.", other);
-                            Ok(vec![]) // Return empty Ok result
+                            Ok(vec![])
                         }
                     };
-                    // Handle result of artifact installation
                     match result {
                         Ok(installed) => {
                             if !installed.is_empty() {
-                                // Only log if artifacts were actually added
                                 debug!(
                                     "Successfully processed artifact '{}', added {} items.",
                                     key,
@@ -533,8 +525,6 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                         Err(e) => {
                             error!("Error processing artifact '{}': {}", key, e);
                             artifact_install_errors.push(e);
-                            // Decide if you want to stop on first error or collect all
-                            // For now, let's collect all errors and fail at the end
                         }
                     }
                 } else {
@@ -548,30 +538,21 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             }
         }
     } else {
-        // This case means the cask JSON itself is missing the 'artifacts' array, which is unusual.
         error!("Cask {} definition is missing the required 'artifacts' array. Cannot determine what to install.", cask.token);
         return Err(SpmError::InstallError(format!(
             "Cask '{}' has no artifacts defined.",
             cask.token
         )));
     }
-
-    // --- Finalize and Write Manifest ---
     if !artifact_install_errors.is_empty() {
         error!(
             "Encountered {} errors installing artifacts for cask '{}'. Installation incomplete.",
             artifact_install_errors.len(),
             cask.token
         );
-        // Attempt to clean up caskroom version directory on failure
         let _ = fs::remove_dir_all(&cask_version_install_path);
-        // Return the first error encountered
-        // TODO: Maybe return a combined error?
         return Err(artifact_install_errors.remove(0));
     }
-
-    // Check if any *installable* artifacts were actually processed.
-    // Filter out artifacts like 'uninstall' or 'zap' which don't represent installed files.
     let actual_install_count = all_installed_artifacts
         .iter()
         .filter(|a| {
@@ -581,54 +562,39 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             )
         })
         .count();
-
     if actual_install_count == 0 {
         debug!("No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.", cask.token);
-        // Decide if this is an error or just a warning. Let's allow it but warn.
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
-    // Write potentially empty installable manifest
     } else {
         debug!("Writing cask installation manifest");
-        // Use the new function with the detailed artifact list
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     }
-
-    // Staging directory cleanup happens automatically when `stage_dir` goes out of scope
-    // Ensure temp_dir crate cleans up correctly
-
     debug!("Successfully installed cask: {}", cask.token);
     Ok(())
 }
 
-// --- write_receipt (Deprecated but kept for reference) ---
-/// Write a legacy receipt file for the cask installation (DEPRECATED - use write_cask_manifest)
 #[deprecated(note = "Use write_cask_manifest with detailed InstalledArtifact enum instead")]
 pub fn write_receipt(
     cask: &Cask,
     cask_version_install_path: &Path,
-    artifacts: Vec<String>, // List of installed paths/identifiers
+    artifacts: Vec<String>,
 ) -> Result<()> {
     let receipt_path = cask_version_install_path.join("INSTALL_RECEIPT.json");
     debug!("Writing legacy cask receipt: {}", receipt_path.display());
-
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e: SystemTimeError| SpmError::Generic(format!("System time error: {e}")))?
         .as_secs();
-
     let receipt_data = json!({
         "token": cask.token,
         "name": cask.name.as_ref().and_then(|n| n.first()).cloned(),
         "version": cask.version.as_ref().unwrap_or(&"latest".to_string()),
         "installed_at": timestamp,
-        "artifacts_installed": artifacts // Simple list of strings
+        "artifacts_installed": artifacts
     });
-
-    // Ensure parent directory exists
     if let Some(parent) = receipt_path.parent() {
         fs::create_dir_all(parent).map_err(SpmError::Io)?;
     }
-
     let mut file = fs::File::create(&receipt_path).map_err(SpmError::Io)?;
     serde_json::to_writer_pretty(&mut file, &receipt_data).map_err(SpmError::Json)?;
     debug!(
@@ -638,30 +604,24 @@ pub fn write_receipt(
     Ok(())
 }
 
-/// Writes the installation manifest for a cask using the detailed artifact structure.
 pub fn write_cask_manifest(
     cask: &Cask,
     cask_version_install_path: &Path,
-    artifacts: Vec<InstalledArtifact>, // Use the detailed enum
+    artifacts: Vec<InstalledArtifact>,
 ) -> Result<()> {
-    // Use a more specific manifest filename
     let manifest_path = cask_version_install_path.join("CASK_INSTALL_MANIFEST.json");
     debug!("Writing cask manifest: {}", manifest_path.display());
-
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e: SystemTimeError| SpmError::Generic(format!("System time error: {e}")))?
         .as_secs();
-
     let manifest_data = CaskInstallManifest {
-        manifest_format_version: "1.0".to_string(), // Add versioning
+        manifest_format_version: "1.0".to_string(),
         token: cask.token.clone(),
         version: cask.version.clone().unwrap_or_else(|| "latest".to_string()),
         installed_at: timestamp,
-        artifacts, // Store the detailed artifact list
+        artifacts,
     };
-
-    // Ensure parent directory exists
     if let Some(parent) = manifest_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             SpmError::Io(std::io::Error::new(
@@ -670,25 +630,20 @@ pub fn write_cask_manifest(
             ))
         })?;
     }
-
-    // Write the JSON data
     let file = fs::File::create(&manifest_path).map_err(|e| {
         SpmError::Io(std::io::Error::new(
             e.kind(),
             format!("Failed create manifest {}: {}", manifest_path.display(), e),
         ))
     })?;
-    // Use a buffered writer for potentially large manifests
     let writer = std::io::BufWriter::new(file);
-
     serde_json::to_writer_pretty(writer, &manifest_data).map_err(|e| {
         error!(
             "Failed to serialize cask manifest JSON for {}: {}",
             cask.token, e
         );
-        SpmError::Json(e) // Convert serde error
+        SpmError::Json(e)
     })?;
-
     debug!(
         "Successfully wrote cask manifest with {} artifact entries.",
         manifest_data.artifacts.len()

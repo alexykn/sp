@@ -31,6 +31,19 @@ impl Uninstall {
         let mut errors: Vec<(String, SpmError)> = Vec::new(); // Store errors per package name
 
         for name in names {
+            // Validate package name to prevent path traversal
+            if name.contains('/') || name.contains("..") {
+                tracing::error!(
+                    "Invalid package name '{}': contains disallowed characters",
+                    name
+                );
+                errors.push((
+                    name.to_string(),
+                    SpmError::Generic("Invalid package name".into()),
+                ));
+                continue;
+            }
+
             let pb = ui::create_spinner(&format!("Uninstalling {name}"));
 
             let formula_result = info::get_formula_info(name, config, Arc::clone(&cache)).await;
@@ -39,6 +52,18 @@ impl Uninstall {
             if is_formula {
                 // --- Formula Uninstall Logic (largely unchanged, uses existing manifest) ---
                 let formula = formula_result.unwrap(); // Safe unwrap due to is_ok() check
+
+                // Validate formula name from info
+                if formula.name().contains('/') || formula.name().contains("..") {
+                    tracing::error!("Invalid formula name '{}' from info", formula.name());
+                    errors.push((
+                        name.to_string(),
+                        SpmError::Generic("Invalid formula name".into()),
+                    ));
+                    pb.finish_and_clear();
+                    continue;
+                }
+
                 tracing::debug!("Attempting to uninstall formula: {}", name);
                 let cellar_path =
                     config.formula_keg_path(formula.name(), &formula.version_str_full());
@@ -128,6 +153,22 @@ impl Uninstall {
                             continue;
                         }
                     };
+
+                    // Validate cask token to prevent path traversal
+                    if cask.token.contains('/') || cask.token.contains("..") {
+                        tracing::error!(
+                            "Invalid cask token '{}' for package '{}'",
+                            cask.token,
+                            name
+                        );
+                        errors.push((
+                            name.to_string(),
+                            SpmError::Generic("Invalid cask token".into()),
+                        ));
+                        pb.finish_and_clear();
+                        continue;
+                    }
+
                     tracing::debug!("Attempting to uninstall cask: {}", name);
 
                     let installed_version = match cask.installed_version(config) {
@@ -429,6 +470,12 @@ fn remove_filesystem_artifact(path: &Path, use_sudo: bool) -> bool {
 
 /// Helper to forget a pkgutil receipt using sudo.
 fn forget_pkgutil_receipt(id: &str) -> bool {
+    // Validate id to prevent path traversal
+    if id.contains('/') || id.contains("..") {
+        tracing::error!("Invalid pkgutil receipt id: {}", id);
+        return false;
+    }
+
     tracing::info!("Forgetting package receipt (requires sudo): {}", id);
     let output = Command::new("sudo")
         .arg("pkgutil")
@@ -461,6 +508,22 @@ fn forget_pkgutil_receipt(id: &str) -> bool {
 
 /// Helper to unload and optionally remove launchd plists.
 fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
+    // Validate label to prevent path traversal
+    if label.contains('/') || label.contains("..") {
+        tracing::error!("Invalid launchd label: {}", label);
+        return false;
+    }
+
+    // Validate path components if provided
+    if let Some(plist_path) = path {
+        for component in plist_path.components() {
+            if let std::path::Component::ParentDir = component {
+                tracing::error!("Invalid launchd plist path: {}", plist_path.display());
+                return false;
+            }
+        }
+    }
+
     tracing::info!("Unloading launchd agent/daemon (requires sudo): {}", label);
     let mut success = true;
 

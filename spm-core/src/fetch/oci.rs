@@ -1,7 +1,5 @@
-// File: spm-core/src/fetch/oci.rs
-
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{remove_file, File};
 use std::path::Path;
 use std::time::Duration;
 
@@ -16,7 +14,6 @@ use url::Url;
 
 use crate::utils::config::Config;
 use crate::utils::error::{Result, SpmError};
-// ────────────────────────────────────────────────────────────────────────────────
 
 const OCI_MANIFEST_V1_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 const OCI_LAYER_V1_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
@@ -25,7 +22,7 @@ pub const DEFAULT_GHCR_DOMAIN: &str = "ghcr.io";
 
 const CONNECT_TIMEOUT_SECS: u64 = 30;
 const REQUEST_TIMEOUT_SECS: u64 = 300;
-const USER_AGENT_STRING: &str = "spm Package Manager (Rust; +https://github.com/your/spm)";
+const USER_AGENT_STRING: &str = "spm package manager (Rust; +https://github.com/alexykn/spm)";
 
 #[derive(Deserialize, Debug)]
 struct OciTokenResponse {
@@ -78,6 +75,7 @@ async fn fetch_oci_resource<T: serde::de::DeserializeOwned>(
 ) -> Result<T> {
     let url = Url::parse(resource_url)
         .map_err(|e| SpmError::Generic(format!("Invalid URL '{resource_url}': {e}")))?;
+    crate::fetch::validation::validate_url(url.as_str())?;
     let registry_domain = url.host_str().unwrap_or(DEFAULT_GHCR_DOMAIN);
     let repo_path = extract_repo_path_from_url(&url).unwrap_or("");
 
@@ -97,17 +95,18 @@ pub async fn download_oci_blob(
     destination_path: &Path,
     config: &Config,
     client: &Client,
+    expected_digest: &str,
 ) -> Result<()> {
     debug!("Downloading OCI blob: {}", blob_url);
     let url = Url::parse(blob_url)
         .map_err(|e| SpmError::Generic(format!("Invalid URL '{blob_url}': {e}")))?;
+    crate::fetch::validation::validate_url(url.as_str())?;
     let registry_domain = url.host_str().unwrap_or(DEFAULT_GHCR_DOMAIN);
     let repo_path = extract_repo_path_from_url(&url).unwrap_or("");
 
     let auth = determine_auth(config, client, registry_domain, repo_path).await?;
     let resp = execute_oci_request(client, blob_url, OCI_LAYER_V1_TYPE, &auth).await?;
 
-    // Write to a temporary file, then rename
     let tmp = destination_path.with_file_name(format!(
         ".{}.download",
         destination_path.file_name().unwrap().to_string_lossy()
@@ -120,6 +119,27 @@ pub async fn download_oci_blob(
         std::io::Write::write_all(&mut out, &b).map_err(SpmError::Io)?;
     }
     std::fs::rename(&tmp, destination_path).map_err(SpmError::Io)?;
+
+    if !expected_digest.is_empty() {
+        match crate::fetch::validation::verify_checksum(destination_path, expected_digest) {
+            Ok(_) => {
+                tracing::debug!("OCI Blob checksum verified: {}", destination_path.display());
+            }
+            Err(e) => {
+                tracing::error!(
+                    "OCI Blob checksum mismatch ({}). Deleting downloaded file.",
+                    e
+                );
+                let _ = remove_file(destination_path);
+                return Err(e);
+            }
+        }
+    } else {
+        tracing::warn!(
+            "Skipping checksum verification for OCI blob {} - no checksum provided.",
+            destination_path.display()
+        );
+    }
 
     debug!("Blob saved to {}", destination_path.display());
     Ok(())
@@ -236,7 +256,6 @@ async fn fetch_anonymous_token(
             }
         }
 
-        // back‑off with jitter
         let jitter = rng.random_range(0..(base_delay.as_millis() as u64 / 2));
         tokio::time::sleep(delay + Duration::from_millis(jitter)).await;
         delay *= 2;
