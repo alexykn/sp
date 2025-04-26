@@ -44,7 +44,7 @@ sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 ---
 
-<img width="856" alt="Screenshot 2025-04-26 at 14 04 22" src="https://github.com/user-attachments/assets/df406637-f7a9-4ff6-b61f-e7e15ce674d8" />
+<img width="856" alt="Screenshot 2025-04-26 at 22 09 41" src="https://github.com/user-attachments/assets/bd4a39ed-d4b3-4d19-9b1c-2edcba5f472d" />
 
 > I know this does not follow one defined style yet. Still thinking about how I actually want it to look so... we'll get there
 
