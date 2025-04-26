@@ -41,10 +41,10 @@ pub fn install_pkg_from_path(
     );
     if let Some(parent) = caskroom_pkg_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!("Failed create parent dir {}: {}", parent.display(), e),
-            ))
+            )))
         })?;
     }
     if let Err(e) = fs::copy(pkg_path, &caskroom_pkg_path) {
@@ -54,10 +54,10 @@ pub fn install_pkg_from_path(
             caskroom_pkg_path.display(),
             e
         );
-        return Err(SpmError::Io(std::io::Error::new(
+        return Err(SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed copy PKG to caskroom: {e}"),
-        )));
+        ))));
     } else {
         // Record the reference copy artifact
         installed_artifacts.push(InstalledArtifact::CaskroomReference {
@@ -79,10 +79,10 @@ pub fn install_pkg_from_path(
         .arg("/")
         .output()
         .map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!("Failed to execute sudo installer: {e}"),
-            ))
+            )))
         })?;
 
     if !output.status.success() {

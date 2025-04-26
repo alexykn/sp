@@ -1,24 +1,24 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use semver::Version; // Changed from crate::model::version::Version
+use semver::Version;
 
 use crate::utils::config::Config;
-use crate::utils::error::{Result, SpmError};
+use crate::utils::error::Result;
 
 /// Represents information about an installed package (Keg).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledKeg {
     pub name: String,
-    pub version: Version, // Use semver::Version
-    pub path: PathBuf,    // Path to the versioned installation directory (e.g., Cellar/foo/1.2.3)
-    pub revision: u32,    // Store revision separately
+    pub version: Version,
+    pub path: PathBuf,
+    pub revision: u32,
 }
 
 /// Manages querying installed packages in the Cellar.
 #[derive(Debug)]
 pub struct KegRegistry {
-    config: Config, // Holds paths like cellar and prefix
+    config: Config,
 }
 
 impl KegRegistry {
@@ -48,13 +48,12 @@ impl KegRegistry {
 
         let mut latest_keg: Option<InstalledKeg> = None;
 
-        for entry_result in fs::read_dir(&formula_dir).map_err(SpmError::Io)? {
-            let entry = entry_result.map_err(SpmError::Io)?;
+        for entry_result in fs::read_dir(&formula_dir)? {
+            let entry = entry_result?;
             let path = entry.path();
 
             if path.is_dir() {
                 if let Some(version_str_full) = path.file_name().and_then(|n| n.to_str()) {
-                    // Separate version and revision
                     let mut parts = version_str_full.splitn(2, '_');
                     let version_part = parts.next().unwrap_or(version_str_full);
                     let revision = parts
@@ -62,7 +61,6 @@ impl KegRegistry {
                         .and_then(|s| s.parse::<u32>().ok())
                         .unwrap_or(0);
 
-                    // Attempt to parse the version part (pad if necessary)
                     let version_str_padded = if version_part.split('.').count() < 3 {
                         let v_parts: Vec<&str> = version_part.split('.').collect();
                         match v_parts.len() {
@@ -82,7 +80,6 @@ impl KegRegistry {
                             path: path.clone(),
                         };
 
-                        // Compare with the latest found so far
                         match latest_keg {
                             Some(ref latest) => {
                                 if version > latest.version
@@ -96,7 +93,6 @@ impl KegRegistry {
                             }
                         }
                     }
-                    // else: Ignore directories that don't parse as versions
                 }
             }
         }
@@ -106,32 +102,28 @@ impl KegRegistry {
 
     /// Lists all installed kegs.
     /// Reads the cellar directory and parses all valid keg structures found.
-    // Ensure this method is public
     pub fn list_installed_kegs(&self) -> Result<Vec<InstalledKeg>> {
         let mut installed_kegs = Vec::new();
         let cellar_dir = self.cellar_path();
 
         if !cellar_dir.is_dir() {
-            return Ok(installed_kegs); // Cellar doesn't exist
+            return Ok(installed_kegs);
         }
 
-        // Iterate over formula name directories
-        for formula_entry_res in fs::read_dir(cellar_dir).map_err(SpmError::Io)? {
-            let formula_entry = formula_entry_res.map_err(SpmError::Io)?;
+        for formula_entry in fs::read_dir(cellar_dir)? {
+            let formula_entry = formula_entry?;
             let formula_path = formula_entry.path();
 
             if formula_path.is_dir() {
                 if let Some(formula_name) = formula_path.file_name().and_then(|n| n.to_str()) {
-                    // Iterate over version directories within the formula dir
-                    for version_entry_res in fs::read_dir(&formula_path).map_err(SpmError::Io)? {
-                        let version_entry = version_entry_res.map_err(SpmError::Io)?;
+                    for version_entry in fs::read_dir(&formula_path)? {
+                        let version_entry = version_entry?;
                         let version_path = version_entry.path();
 
                         if version_path.is_dir() {
                             if let Some(version_str_full) =
                                 version_path.file_name().and_then(|n| n.to_str())
                             {
-                                // Parse version and revision
                                 let mut parts = version_str_full.splitn(2, '_');
                                 let version_part = parts.next().unwrap_or(version_str_full);
                                 let revision = parts
@@ -172,7 +164,7 @@ impl KegRegistry {
         &self.config.cellar
     }
 
-    /// Returns the path for a *specific* versioned keg (whether installed or not).
+    /// Returns the path for a specific versioned keg (whether installed or not).
     /// Includes revision in the path name if revision > 0.
     pub fn get_keg_path(&self, name: &str, version: &Version, revision: u32) -> PathBuf {
         let version_string = if revision > 0 {

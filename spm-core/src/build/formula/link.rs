@@ -37,10 +37,10 @@ pub fn link_formula_artifacts(
 
     remove_existing_link_target(&opt_link_path)?;
     unix_fs::symlink(target_keg_dir, &opt_link_path).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed to create opt symlink for {}: {}", formula.name(), e),
-        ))
+        )))
     })?;
     symlinks_created.push(opt_link_path.to_string_lossy().to_string());
     debug!(
@@ -273,16 +273,16 @@ fn create_wrapper_script(
     ));
 
     let mut file = fs::File::create(wrapper_path).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed create wrapper {}: {}", wrapper_path.display(), e),
-        ))
+        )))
     })?;
     file.write_all(script_content.as_bytes()).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed write wrapper {}: {}", wrapper_path.display(), e),
-        ))
+        )))
     })?;
 
     #[cfg(unix)]
@@ -291,14 +291,14 @@ fn create_wrapper_script(
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(wrapper_path, permissions).map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!(
                     "Failed set wrapper executable {}: {}",
                     wrapper_path.display(),
                     e
                 ),
-            ))
+            )))
         })?;
     }
 
@@ -419,7 +419,7 @@ fn remove_existing_link_target(path: &Path) -> Result<()> {
                     path.display(),
                     e
                 );
-                return Err(SpmError::Io(e));
+                return Err(SpmError::Io(std::sync::Arc::new(e)));
             }
             Ok(())
         }
@@ -430,7 +430,7 @@ fn remove_existing_link_target(path: &Path) -> Result<()> {
                 path.display(),
                 e
             );
-            Err(SpmError::Io(e))
+            Err(SpmError::Io(std::sync::Arc::new(e)))
         }
     }
 }
@@ -453,12 +453,12 @@ fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]
                     manifest_path.display(),
                     e
                 );
-                return Err(SpmError::Io(e));
+                return Err(SpmError::Io(std::sync::Arc::new(e)));
             }
         },
         Err(e) => {
             error!("Failed to serialize install manifest data: {}", e);
-            return Err(SpmError::Json(e));
+            return Err(SpmError::Json(std::sync::Arc::new(e)));
         }
     }
     Ok(())
@@ -786,7 +786,7 @@ fn unlink_executables_from_dir(source_exec_dir: &Path, target_link_dir: &Path) -
                 source_exec_dir.display(),
                 e
             );
-            return Err(SpmError::Io(e));
+            return Err(SpmError::Io(std::sync::Arc::new(e)));
         }
     }
     Ok(unlinked_count)
@@ -799,7 +799,7 @@ fn is_executable(path: &Path) -> Result<bool> {
         use std::os::unix::fs::PermissionsExt;
         match fs::metadata(path) {
             Ok(metadata) => Ok(metadata.permissions().mode() & 0o111 != 0),
-            Err(e) => Err(SpmError::Io(e)),
+            Err(e) => Err(SpmError::Io(std::sync::Arc::new(e))),
         }
     } else {
         Ok(true)
@@ -844,7 +844,7 @@ fn is_symlink_to(link: &Path, target: &Path) -> Result<bool> {
                 },
                 Err(e) => {
                     debug!("Failed to read link target for {}: {}", link.display(), e);
-                    Err(SpmError::Io(e))
+                    Err(SpmError::Io(std::sync::Arc::new(e)))
                 }
             }
         }
@@ -855,7 +855,7 @@ fn is_symlink_to(link: &Path, target: &Path) -> Result<bool> {
                 link.display(),
                 e
             );
-            Err(SpmError::Io(e))
+            Err(SpmError::Io(std::sync::Arc::new(e)))
         }
     }
 }

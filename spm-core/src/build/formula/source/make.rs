@@ -199,10 +199,10 @@ pub fn simple_make(
 
             let target_path = bin_dir.join(formula_name);
             fs::copy(&potential_binary_path, &target_path).map_err(|e| {
-                SpmError::Io(std::io::Error::new(
+                SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                     e.kind(),
                     format!("Failed copy binary: {e}"),
-                ))
+                )))
             })?;
 
             #[cfg(unix)]

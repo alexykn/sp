@@ -156,7 +156,7 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
 
     // Ensure the stage directory exists (though TempDir should handle it)
     if !stage_dir.exists() {
-        fs::create_dir_all(stage_dir).map_err(SpmError::Io)?;
+        fs::create_dir_all(stage_dir).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
     }
 
     debug!(

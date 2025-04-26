@@ -84,7 +84,8 @@ pub async fn get_formula_info(name: &str, _config: &Config, cache: Arc<Cache>) -
     let raw_info = get_formula_info_raw(Arc::clone(&cache), name).await?;
     // Replace map_err closure with direct conversion since SpmError implements
     // From<serde_json::Error>
-    let formula: Formula = serde_json::from_value(raw_info).map_err(SpmError::Json)?;
+    let formula: Formula =
+        serde_json::from_value(raw_info).map_err(|e| SpmError::Json(Arc::new(e)))?;
     Ok(formula)
 }
 

@@ -419,7 +419,7 @@ fn write_patched_buffer(original_path: &Path, buffer: &[u8]) -> Result<()> {
         ))
     })?;
     // Ensure the directory exists
-    fs::create_dir_all(dir).map_err(SpmError::Io)?;
+    fs::create_dir_all(dir).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
 
     // Create a named temporary file in the same directory to facilitate atomic rename
     let mut temp_file = NamedTempFile::new_in(dir)?;
@@ -446,7 +446,7 @@ fn write_patched_buffer(original_path: &Path, buffer: &[u8]) -> Result<()> {
             e.error // Log the underlying IO error
         );
         // Return the IO error wrapped in our error type
-        SpmError::Io(e.error)
+        SpmError::Io(std::sync::Arc::new(e.error))
     })?;
     debug!(
         "    Atomically replaced {} with patched version",
@@ -477,7 +477,7 @@ fn resign_binary(path: &Path) -> Result<()> {
                 path.display(),
                 e
             );
-            SpmError::Io(e)
+            SpmError::Io(std::sync::Arc::new(e))
         })?;
     if status.success() {
         // Suppressed: debug!("Successfully re-signed {}", path.display());

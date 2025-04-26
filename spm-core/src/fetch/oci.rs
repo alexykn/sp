@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{remove_file, File};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -81,12 +82,12 @@ async fn fetch_oci_resource<T: serde::de::DeserializeOwned>(
 
     let auth = determine_auth(config, client, registry_domain, repo_path).await?;
     let resp = execute_oci_request(client, resource_url, accept_header, &auth).await?;
-    let txt = resp.text().await.map_err(SpmError::Http)?;
+    let txt = resp.text().await.map_err(|e| SpmError::Http(Arc::new(e)))?;
 
     debug!("OCI response ({} bytes) from {}", txt.len(), resource_url);
     serde_json::from_str(&txt).map_err(|e| {
         error!("JSON parse error from {}: {}", resource_url, e);
-        SpmError::Json(e)
+        SpmError::Json(Arc::new(e))
     })
 }
 
@@ -111,14 +112,14 @@ pub async fn download_oci_blob(
         ".{}.download",
         destination_path.file_name().unwrap().to_string_lossy()
     ));
-    let mut out = File::create(&tmp).map_err(SpmError::Io)?;
+    let mut out = File::create(&tmp).map_err(|e| SpmError::Io(Arc::new(e)))?;
 
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let b = chunk.map_err(SpmError::Http)?;
-        std::io::Write::write_all(&mut out, &b).map_err(SpmError::Io)?;
+        let b = chunk.map_err(|e| SpmError::Http(Arc::new(e)))?;
+        std::io::Write::write_all(&mut out, &b).map_err(|e| SpmError::Io(Arc::new(e)))?;
     }
-    std::fs::rename(&tmp, destination_path).map_err(SpmError::Io)?;
+    std::fs::rename(&tmp, destination_path).map_err(|e| SpmError::Io(Arc::new(e)))?;
 
     if !expected_digest.is_empty() {
         match crate::fetch::validation::verify_checksum(destination_path, expected_digest) {
@@ -160,7 +161,7 @@ pub fn build_oci_client() -> Result<Client> {
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .redirect(reqwest::redirect::Policy::default())
         .build()
-        .map_err(SpmError::Http)
+        .map_err(|e| SpmError::Http(Arc::new(e)))
 }
 
 fn extract_repo_path_from_url(url: &Url) -> Option<&str> {
@@ -251,7 +252,7 @@ async fn fetch_anonymous_token(
             Err(e) => {
                 error!("Network error on token fetch {}: {}", attempt + 1, e);
                 if attempt == MAX_RETRIES {
-                    return Err(SpmError::Http(e));
+                    return Err(SpmError::Http(Arc::new(e)));
                 }
             }
         }
@@ -287,7 +288,7 @@ async fn execute_oci_request(
         _ => {}
     }
 
-    let resp = req.send().await.map_err(SpmError::Http)?;
+    let resp = req.send().await.map_err(|e| SpmError::Http(Arc::new(e)))?;
     let status = resp.status();
     if status.is_success() {
         Ok(resp)

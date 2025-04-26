@@ -19,7 +19,7 @@ pub fn cmake_build(
     debug!("Building with CMake in {}", build_dir.display());
     let cmake_build_subdir_name = "spm-cmake-build";
     let cmake_build_dir = build_dir.join(cmake_build_subdir_name);
-    fs::create_dir_all(&cmake_build_dir).map_err(SpmError::Io)?;
+    fs::create_dir_all(&cmake_build_dir).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
 
     let cmake_exe =
         which::which_in("cmake", build_env.get_path_string(), build_dir).map_err(|_| {

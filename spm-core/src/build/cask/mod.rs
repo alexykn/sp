@@ -102,7 +102,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         .get(parsed.clone())
         .send()
         .await
-        .map_err(SpmError::Http)?;
+        .map_err(|e| SpmError::Http(std::sync::Arc::new(e)))?;
     if !response.status().is_success() {
         return Err(SpmError::DownloadError(
             cask.token.clone(),
@@ -110,7 +110,10 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
             format!("HTTP status {}", response.status()),
         ));
     }
-    let bytes = response.bytes().await.map_err(SpmError::Http)?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| SpmError::Http(std::sync::Arc::new(e)))?;
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -149,14 +152,14 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     let cask_version_install_path = get_cask_version_path(cask, config);
     if !cask_version_install_path.exists() {
         fs::create_dir_all(&cask_version_install_path).map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!(
                     "Failed create cask dir {}: {}",
                     cask_version_install_path.display(),
                     e
                 ),
-            ))
+            )))
         })?;
         debug!(
             "Created cask version directory: {}",
@@ -196,7 +199,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                     download_path.display(),
                     e
                 );
-                return Err(SpmError::Io(e));
+                return Err(SpmError::Io(std::sync::Arc::new(e)));
             }
         }
     } else {
@@ -227,10 +230,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         }
     }
     let stage_dir = TempDir::new().map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed to create staging directory: {e}"),
-        ))
+        )))
     })?;
     let stage_path = stage_dir.path();
     debug!("Created staging directory: {}", stage_path.display());
@@ -593,10 +596,12 @@ pub fn write_receipt(
         "artifacts_installed": artifacts
     });
     if let Some(parent) = receipt_path.parent() {
-        fs::create_dir_all(parent).map_err(SpmError::Io)?;
+        fs::create_dir_all(parent).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
     }
-    let mut file = fs::File::create(&receipt_path).map_err(SpmError::Io)?;
-    serde_json::to_writer_pretty(&mut file, &receipt_data).map_err(SpmError::Json)?;
+    let mut file =
+        fs::File::create(&receipt_path).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
+    serde_json::to_writer_pretty(&mut file, &receipt_data)
+        .map_err(|e| SpmError::Json(std::sync::Arc::new(e)))?;
     debug!(
         "Successfully wrote legacy receipt with {} artifact entries.",
         artifacts.len()
@@ -624,17 +629,17 @@ pub fn write_cask_manifest(
     };
     if let Some(parent) = manifest_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!("Failed create parent dir {}: {}", parent.display(), e),
-            ))
+            )))
         })?;
     }
     let file = fs::File::create(&manifest_path).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed create manifest {}: {}", manifest_path.display(), e),
-        ))
+        )))
     })?;
     let writer = std::io::BufWriter::new(file);
     serde_json::to_writer_pretty(writer, &manifest_data).map_err(|e| {
@@ -642,7 +647,7 @@ pub fn write_cask_manifest(
             "Failed to serialize cask manifest JSON for {}: {}",
             cask.token, e
         );
-        SpmError::Json(e)
+        SpmError::Json(std::sync::Arc::new(e))
     })?;
     debug!(
         "Successfully wrote cask manifest with {} artifact entries.",

@@ -23,10 +23,10 @@ pub(crate) fn infer_archive_root_dir(
         archive_path.display()
     );
     let file = File::open(archive_path).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed to open archive {}: {}", archive_path.display(), e),
-        ))
+        )))
     })?;
 
     match archive_type {
@@ -230,24 +230,24 @@ pub fn extract_archive(
 		archive_path.display(), archive_type, target_dir.display(), strip_components);
 
     fs::create_dir_all(target_dir).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!(
                 "Failed to create target directory {}: {}",
                 target_dir.display(),
                 e
             ),
-        ))
+        )))
     })?;
 
     let temp_extract_dir = tempfile::Builder::new()
         .prefix(".extract-")
         .tempdir_in(target_dir)
         .map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!("Failed create temp extract dir: {e}"),
-            ))
+            )))
         })?;
     let temp_extract_path = temp_extract_dir.path();
     debug!(
@@ -256,10 +256,10 @@ pub fn extract_archive(
     );
 
     let file = File::open(archive_path).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed to open archive {}: {}", archive_path.display(), e),
-        ))
+        )))
     })?;
 
     match archive_type {
@@ -293,14 +293,16 @@ pub fn extract_archive(
         "Validating extracted contents in {}",
         temp_extract_path.display()
     );
-    let abs_temp_extract_path = temp_extract_path.canonicalize().map_err(SpmError::Io)?;
+    let abs_temp_extract_path = temp_extract_path
+        .canonicalize()
+        .map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
 
     for entry_result in WalkDir::new(temp_extract_path) {
         let entry = entry_result.map_err(|e| {
-            SpmError::Io(
+            SpmError::Io(std::sync::Arc::new(
                 e.into_io_error()
                     .unwrap_or_else(|| std::io::Error::other("Walkdir error")),
-            )
+            ))
         })?;
         let path = entry.path();
 
@@ -330,15 +332,18 @@ pub fn extract_archive(
         }
 
         if entry.file_type().is_symlink() {
-            let link_target = fs::read_link(path).map_err(SpmError::Io)?;
+            let link_target =
+                fs::read_link(path).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
             let link_parent = path.parent().unwrap_or(path);
             let resolved_target_abs = if link_target.is_absolute() {
-                link_target.canonicalize().map_err(SpmError::Io)?
+                link_target
+                    .canonicalize()
+                    .map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?
             } else {
                 link_parent
                     .join(&link_target)
                     .canonicalize()
-                    .map_err(SpmError::Io)?
+                    .map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?
             };
 
             if !resolved_target_abs.starts_with(&abs_temp_extract_path) {
@@ -371,7 +376,8 @@ pub fn extract_archive(
         let item = item_result?;
         let source_item_path = item.path();
         let dest_item_path = target_dir.join(item.file_name());
-        fs::rename(&source_item_path, &dest_item_path).map_err(SpmError::Io)?;
+        fs::rename(&source_item_path, &dest_item_path)
+            .map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
     }
     Ok(())
 }
@@ -466,10 +472,10 @@ fn extract_tar_archive<R: Read>(
         if let Some(parent) = target_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    SpmError::Io(io::Error::new(
+                    SpmError::Io(std::sync::Arc::new(io::Error::new(
                         e.kind(),
                         format!("Failed create parent dir {}: {}", parent.display(), e),
-                    ))
+                    )))
                 })?;
             }
         }
@@ -580,10 +586,10 @@ fn extract_zip_archive<R: Read + Seek>(
         if let Some(parent) = target_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    SpmError::Io(io::Error::new(
+                    SpmError::Io(std::sync::Arc::new(io::Error::new(
                         e.kind(),
                         format!("Failed create dir {}: {}", parent.display(), e),
-                    ))
+                    )))
                 })?;
             }
         }
@@ -591,10 +597,10 @@ fn extract_zip_archive<R: Read + Seek>(
         if file.is_dir() {
             if !target_path.exists() {
                 fs::create_dir_all(&target_path).map_err(|e| {
-                    SpmError::Io(io::Error::new(
+                    SpmError::Io(std::sync::Arc::new(io::Error::new(
                         e.kind(),
                         format!("Failed create dir {}: {}", target_path.display(), e),
-                    ))
+                    )))
                 })?;
             }
         } else if file.is_symlink() {
@@ -613,7 +619,7 @@ fn extract_zip_archive<R: Read + Seek>(
                         link_target.display(),
                         e
                     );
-                    SpmError::Io(e)
+                    SpmError::Io(std::sync::Arc::new(e))
                 })?;
             }
             #[cfg(not(unix))]
@@ -629,10 +635,10 @@ fn extract_zip_archive<R: Read + Seek>(
                 let _ = fs::remove_file(&target_path);
             }
             let mut out_file = File::create(&target_path).map_err(|e| {
-                SpmError::Io(io::Error::new(
+                SpmError::Io(std::sync::Arc::new(io::Error::new(
                     e.kind(),
                     format!("Failed create file {}: {}", target_path.display(), e),
-                ))
+                )))
             })?;
             io::copy(&mut file, &mut out_file)?;
         }

@@ -47,10 +47,10 @@ pub fn go_build(
 
     let target_bin_dir = install_dir.join("bin");
     fs::create_dir_all(&target_bin_dir).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed create target bin dir: {e}"),
-        ))
+        )))
     })?;
     let output_binary_path = target_bin_dir.join(formula_name);
 

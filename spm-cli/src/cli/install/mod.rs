@@ -87,7 +87,7 @@ async fn load_or_fetch_json(
             }
             serde_json::from_str(&raw_data).map_err(|e| {
                 error!("Failed to parse API response for {}: {}", filename, e);
-                SpmError::Json(e)
+                SpmError::Json(Arc::new(e))
             })
         }
     }

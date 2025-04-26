@@ -116,10 +116,10 @@ impl Uninstall {
 
                 tracing::debug!("Removing formula keg directory: {}", cellar_path.display());
                 if let Err(e) = fs::remove_dir_all(&cellar_path) {
-                    let removal_error = SpmError::Io(std::io::Error::new(
+                    let removal_error = SpmError::Io(Arc::new(std::io::Error::new(
                         e.kind(),
                         format!("Failed remove keg {}: {}", cellar_path.display(), e),
-                    ));
+                    )));
                     tracing::error!("{}", removal_error);
                     errors.push((name.to_string(), removal_error));
                     pb.finish_and_clear();
@@ -148,7 +148,7 @@ impl Uninstall {
                         Ok(c) => c,
                         Err(e) => {
                             tracing::error!("Failed to parse cask JSON for {}: {}", name, e);
-                            errors.push((name.to_string(), SpmError::Json(e)));
+                            errors.push((name.to_string(), SpmError::Json(Arc::new(e))));
                             pb.finish_and_clear();
                             continue;
                         }
@@ -276,10 +276,10 @@ impl Uninstall {
                         );
                         errors.push((
                             name.to_string(),
-                            SpmError::Io(std::io::Error::new(
+                            SpmError::Io(Arc::new(std::io::Error::new(
                                 e.kind(),
                                 format!("Failed to remove cask version dir for '{name}'"),
-                            )),
+                            ))),
                         ));
                         // If dir removal fails, stop processing this cask.
                         pb.finish_and_clear();

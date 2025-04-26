@@ -25,7 +25,7 @@ pub struct Cache {
 impl Cache {
     pub fn new(cache_dir: &Path) -> Result<Self> {
         if !cache_dir.exists() {
-            fs::create_dir_all(cache_dir).map_err(SpmError::Io)?; // Replaced closure
+            fs::create_dir_all(cache_dir)?;
         }
 
         Ok(Self {
@@ -42,7 +42,7 @@ impl Cache {
     pub fn store_raw(&self, filename: &str, data: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
         tracing::debug!("Saving raw data to cache file: {:?}", path);
-        fs::write(&path, data).map_err(SpmError::Io)?;
+        fs::write(&path, data)?;
         Ok(())
     }
 
@@ -57,7 +57,7 @@ impl Cache {
             )));
         }
 
-        fs::read_to_string(&path).map_err(SpmError::Io)
+        fs::read_to_string(&path).map_err(|e| SpmError::Cache(format!("IO error: {e}")))
     }
 
     /// Checks if a cache file exists and is valid (within TTL)
@@ -80,7 +80,7 @@ impl Cache {
     pub fn clear_file(&self, filename: &str) -> Result<()> {
         let path = self.cache_dir.join(filename);
         if path.exists() {
-            fs::remove_file(&path).map_err(SpmError::Io)?;
+            fs::remove_file(&path)?;
         }
         Ok(())
     }
@@ -88,8 +88,8 @@ impl Cache {
     /// Clears all cache files
     pub fn clear_all(&self) -> Result<()> {
         if self.cache_dir.exists() {
-            fs::remove_dir_all(&self.cache_dir).map_err(SpmError::Io)?;
-            fs::create_dir_all(&self.cache_dir).map_err(SpmError::Io)?;
+            fs::remove_dir_all(&self.cache_dir)?;
+            fs::create_dir_all(&self.cache_dir)?;
         }
         Ok(())
     }
@@ -104,11 +104,7 @@ pub fn get_cache_dir() -> Result<PathBuf> {
 
     if !app_cache_dir.exists() {
         tracing::debug!("Creating cache directory at {:?}", app_cache_dir);
-        fs::create_dir_all(&app_cache_dir).map_err(|e| {
-            SpmError::Io(e)
-            // Consider a specific Cache error variant: Cache(format!("Failed to create cache dir:
-            // {}", e))
-        })?;
+        fs::create_dir_all(&app_cache_dir)?;
     }
     Ok(app_cache_dir)
 }

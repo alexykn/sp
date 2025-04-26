@@ -271,7 +271,7 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
                 receipt_path.display(),
                 e
             );
-            return Err(SpmError::Io(e));
+            return Err(SpmError::Io(std::sync::Arc::new(e)));
         }
     };
 
@@ -306,13 +306,13 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
                 "Failed to serialize receipt JSON for {}: {}",
                 formula.name, e
             );
-            return Err(SpmError::Json(e));
+            return Err(SpmError::Json(std::sync::Arc::new(e)));
         }
     };
 
     if let Err(e) = receipt_file.write_all(receipt_json.as_bytes()) {
         error!("Failed to write receipt file for {}: {}", formula.name, e);
-        return Err(SpmError::Io(e));
+        return Err(SpmError::Io(std::sync::Arc::new(e)));
     }
 
     Ok(())

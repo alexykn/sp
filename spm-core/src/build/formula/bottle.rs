@@ -41,7 +41,7 @@ pub async fn download_bottle(
         formula.name, standard_version_str, platform_tag
     );
     let cache_dir = config.cache_dir.join("bottles");
-    fs::create_dir_all(&cache_dir).map_err(SpmError::Io)?;
+    fs::create_dir_all(&cache_dir).map_err(|e| SpmError::Io(std::sync::Arc::new(e)))?;
     let bottle_cache_path = cache_dir.join(&filename);
     if bottle_cache_path.is_file() {
         debug!("Bottle found in cache: {}", bottle_cache_path.display());
@@ -308,14 +308,14 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     }
     if let Some(parent_dir) = install_dir.parent() {
         fs::create_dir_all(parent_dir).map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!(
                     "Failed to create parent dir {}: {}",
                     parent_dir.display(),
                     e
                 ),
-            ))
+            )))
         })?;
     } else {
         return Err(SpmError::InstallError(format!(
@@ -324,10 +324,10 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
         )));
     }
     fs::create_dir_all(&install_dir).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed to create keg dir {}: {}", install_dir.display(), e),
-        ))
+        )))
     })?;
     let strip_components = 2;
     debug!(
@@ -699,7 +699,7 @@ fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
             original_path.display(),
             e.error
         );
-        SpmError::Io(e.error)
+        SpmError::Io(std::sync::Arc::new(e.error))
     })?;
     if let Some(perms) = original_perms {
         let _ = fs::set_permissions(original_path, perms);

@@ -1,19 +1,23 @@
-// spm-core/src/utils/error.rs
-// *** Added MachO related error variants *** [cite: 142]
+use std::sync::Arc;
 
 use thiserror::Error;
 
-// Define a top-level error enum for the application using thiserror
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum SpmError {
     #[error("I/O Error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] Arc<std::io::Error>),
 
     #[error("HTTP Request Error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] Arc<reqwest::Error>),
 
     #[error("JSON Parsing Error: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(#[from] Arc<serde_json::Error>),
+
+    #[error("Semantic Versioning Error: {0}")]
+    SemVer(#[from] Arc<semver::Error>),
+
+    #[error("Object File Error: {0}")]
+    Object(#[from] Arc<object::read::Error>),
 
     #[error("Configuration Error: {0}")]
     Config(String),
@@ -24,12 +28,8 @@ pub enum SpmError {
     #[error("API Request Error: {0}")]
     ApiRequestError(String),
 
-    #[error("Semantic Versioning Error: {0}")]
-    SemVer(#[from] semver::Error),
-
-    // Updated DownloadError to match previous structure if needed, or keep simple
     #[error("DownloadError: Failed to download '{0}' from '{1}': {2}")]
-    DownloadError(String, String, String), // name, url, reason
+    DownloadError(String, String, String),
 
     #[error("Cache Error: {0}")]
     Cache(String),
@@ -43,12 +43,11 @@ pub enum SpmError {
     #[error("Generic Error: {0}")]
     Generic(String),
 
-    // Keep HttpError if distinct from Http(reqwest::Error) is needed
     #[error("HttpError: {0}")]
     HttpError(String),
 
     #[error("Checksum Mismatch: {0}")]
-    ChecksumMismatch(String), // Keep if used distinctly from ChecksumError
+    ChecksumMismatch(String),
 
     #[error("Validation Error: {0}")]
     ValidationError(String),
@@ -68,31 +67,53 @@ pub enum SpmError {
     #[error("Build environment setup failed: {0}")]
     BuildEnvError(String),
 
-    // Kept IoError if distinct from Io(std::io::Error) is useful
     #[error("IoError: {0}")]
     IoError(String),
 
     #[error("Failed to execute command: {0}")]
     CommandExecError(String),
 
-    // --- Added Mach-O Relocation Errors (Based on Plan) --- [cite: 142]
     #[error("Mach-O Error: {0}")]
-    MachOError(String), // General Mach-O processing error
+    MachOError(String),
 
     #[error("Mach-O Modification Error: {0}")]
-    MachOModificationError(String), // Specific error during modification step
+    MachOModificationError(String),
 
     #[error("Mach-O Relocation Error: Path too long - {0}")]
-    PathTooLongError(String), /* Specifically for path length issues during patching [cite:
-                               * 115, 142] */
+    PathTooLongError(String),
 
     #[error("Codesign Error: {0}")]
-    CodesignError(String), // For errors during re-signing on Apple Silicon [cite: 138, 142]
-
-    // --- Added object crate error integration --- [cite: 142]
-    #[error("Object File Error: {0}")]
-    Object(#[from] object::read::Error), // Error from object crate parsing
+    CodesignError(String),
 }
 
-// Define a convenience Result type alias using our custom error
+impl From<std::io::Error> for SpmError {
+    fn from(err: std::io::Error) -> Self {
+        SpmError::Io(Arc::new(err))
+    }
+}
+
+impl From<reqwest::Error> for SpmError {
+    fn from(err: reqwest::Error) -> Self {
+        SpmError::Http(Arc::new(err))
+    }
+}
+
+impl From<serde_json::Error> for SpmError {
+    fn from(err: serde_json::Error) -> Self {
+        SpmError::Json(Arc::new(err))
+    }
+}
+
+impl From<semver::Error> for SpmError {
+    fn from(err: semver::Error) -> Self {
+        SpmError::SemVer(Arc::new(err))
+    }
+}
+
+impl From<object::read::Error> for SpmError {
+    fn from(err: object::read::Error) -> Self {
+        SpmError::Object(Arc::new(err))
+    }
+}
+
 pub type Result<T> = std::result::Result<T, SpmError>;

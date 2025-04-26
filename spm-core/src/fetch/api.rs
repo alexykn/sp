@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::Client;
 use serde_json::Value;
@@ -29,10 +31,7 @@ fn build_api_client(config: &Config) -> Result<Client> {
     } else {
         debug!("No GitHub API token found in config.");
     }
-    Client::builder()
-        .default_headers(headers)
-        .build()
-        .map_err(SpmError::Http)
+    Ok(Client::builder().default_headers(headers).build()?)
 }
 
 pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
@@ -40,11 +39,10 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
     debug!("Fetching data from Homebrew Formulae API: {}", url);
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT_STRING)
-        .build()
-        .map_err(SpmError::Http)?;
+        .build()?;
     let response = client.get(&url).send().await.map_err(|e| {
         error!("HTTP request failed for {}: {}", url, e);
-        SpmError::Http(e)
+        SpmError::Http(Arc::new(e))
     })?;
     if !response.status().is_success() {
         let status = response.status();
@@ -59,7 +57,7 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
         debug!("Response body for failed request to {}: {}", url, body);
         return Err(SpmError::Api(format!("HTTP status {status} from {url}")));
     }
-    let body = response.text().await.map_err(SpmError::Http)?;
+    let body = response.text().await?;
     if body.trim().is_empty() {
         error!("Response body for {} was empty.", url);
         return Err(SpmError::Api(format!(
@@ -80,7 +78,7 @@ pub async fn fetch_all_casks() -> Result<String> {
 pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
     let direct_fetch_result = fetch_raw_formulae_json(&format!("formula/{name}.json")).await;
     if let Ok(body) = direct_fetch_result {
-        let formula: serde_json::Value = serde_json::from_str(&body).map_err(SpmError::Json)?;
+        let formula: serde_json::Value = serde_json::from_str(&body)?;
         Ok(formula)
     } else {
         debug!(
@@ -107,7 +105,7 @@ pub async fn fetch_formula(name: &str) -> Result<serde_json::Value> {
 pub async fn fetch_cask(token: &str) -> Result<serde_json::Value> {
     let direct_fetch_result = fetch_raw_formulae_json(&format!("cask/{token}.json")).await;
     if let Ok(body) = direct_fetch_result {
-        let cask: serde_json::Value = serde_json::from_str(&body).map_err(SpmError::Json)?;
+        let cask: serde_json::Value = serde_json::from_str(&body)?;
         Ok(cask)
     } else {
         debug!(
@@ -134,7 +132,7 @@ async fn fetch_github_api_json(endpoint: &str, config: &Config) -> Result<Value>
     let client = build_api_client(config)?;
     let response = client.get(&url).send().await.map_err(|e| {
         error!("GitHub API request failed for {}: {}", url, e);
-        SpmError::Http(e)
+        SpmError::Http(Arc::new(e))
     })?;
     if !response.status().is_success() {
         let status = response.status();
@@ -172,53 +170,47 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
         name, url
     );
     let client = reqwest::Client::new();
-    let response_result = client.get(&url).send().await;
-    match response_result {
-        Ok(response) => {
-            let status = response.status();
-            let text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| format!("(Failed to read body: {e})"));
-            if !status.is_success() {
-                error!("Failed to fetch formula {} (Status {})", name, status);
-                debug!("Response body for failed formula fetch {}: {}", name, text);
-                return Err(SpmError::Api(format!(
-                    "Failed to fetch formula {name}: Status {status}"
-                )));
+    let response = client.get(&url).send().await.map_err(|e| {
+        error!("HTTP request failed when fetching formula {}: {}", name, e);
+        SpmError::Http(Arc::new(e))
+    })?;
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {
+        error!("Failed to fetch formula {} (Status {})", name, status);
+        debug!("Response body for failed formula fetch {}: {}", name, text);
+        return Err(SpmError::Api(format!(
+            "Failed to fetch formula {name}: Status {status}"
+        )));
+    }
+    if text.trim().is_empty() {
+        error!("Received empty body when fetching formula {}", name);
+        return Err(SpmError::Api(format!(
+            "Empty response body for formula {name}"
+        )));
+    }
+    match serde_json::from_str::<Formula>(&text) {
+        Ok(formula) => Ok(formula),
+        Err(_) => {
+            match serde_json::from_str::<Vec<Formula>>(&text) {
+                Ok(mut formulas) if !formulas.is_empty() => {
+                    debug!(
+                        "Parsed formula {} from a single-element array response.",
+                        name
+                    );
+                    Ok(formulas.remove(0))
+                }
+                Ok(_) => {
+                    error!("Received empty array when fetching formula {}", name);
+                    Err(SpmError::NotFound(format!(
+                        "Formula '{name}' not found (empty array returned)"
+                    )))
+                }
+                Err(e_vec) => {
+                    error!("Failed to parse formula {} as object or array. Error: {}. Body (sample): {}", name, e_vec, text.chars().take(500).collect::<String>());
+                    Err(SpmError::Json(Arc::new(e_vec)))
+                }
             }
-            if text.trim().is_empty() {
-                error!("Received empty body when fetching formula {}", name);
-                return Err(SpmError::Api(format!(
-                    "Empty response body for formula {name}"
-                )));
-            }
-            match serde_json::from_str::<Formula>(&text) {
-                Ok(formula) => Ok(formula),
-                Err(_) => match serde_json::from_str::<Vec<Formula>>(&text) {
-                    Ok(mut formulas) if !formulas.is_empty() => {
-                        debug!(
-                            "Parsed formula {} from a single-element array response.",
-                            name
-                        );
-                        Ok(formulas.remove(0))
-                    }
-                    Ok(_) => {
-                        error!("Received empty array when fetching formula {}", name);
-                        Err(SpmError::NotFound(format!(
-                            "Formula '{name}' not found (empty array returned)"
-                        )))
-                    }
-                    Err(e_vec) => {
-                        error!("Failed to parse formula {} as object or array. Error: {}. Body (sample): {}", name, e_vec, text.chars().take(500).collect::<String>());
-                        Err(SpmError::Json(e_vec))
-                    }
-                },
-            }
-        }
-        Err(e) => {
-            error!("HTTP request failed when fetching formula {}: {}", name, e);
-            Err(SpmError::Http(e))
         }
     }
 }
@@ -227,7 +219,7 @@ pub async fn get_all_formulas() -> Result<Vec<Formula>> {
     let raw_data = fetch_all_formulas().await?;
     serde_json::from_str(&raw_data).map_err(|e| {
         error!("Failed to parse all_formulas response: {}", e);
-        SpmError::Json(e)
+        SpmError::Json(Arc::new(e))
     })
 }
 
@@ -257,7 +249,7 @@ pub async fn get_cask(name: &str) -> Result<Cask> {
                     tracing::debug!("Raw problematic value: {:?}", raw_json);
                 }
             }
-            Err(SpmError::Json(e))
+            Err(SpmError::Json(Arc::new(e)))
         }
     }
 }
@@ -266,7 +258,7 @@ pub async fn get_all_casks() -> Result<CaskList> {
     let raw_data = fetch_all_casks().await?;
     let casks: Vec<Cask> = serde_json::from_str(&raw_data).map_err(|e| {
         error!("Failed to parse all_casks response: {}", e);
-        SpmError::Json(e)
+        SpmError::Json(Arc::new(e))
     })?;
     Ok(CaskList { casks })
 }

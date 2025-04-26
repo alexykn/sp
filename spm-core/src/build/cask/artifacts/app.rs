@@ -86,7 +86,7 @@ pub fn install_app_from_staged(
                     final_app_destination.display(),
                     e
                 );
-                return Err(SpmError::Io(e));
+                return Err(SpmError::Io(std::sync::Arc::new(e)));
             }
         } else {
             debug!("Successfully removed existing app.");

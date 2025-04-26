@@ -72,10 +72,10 @@ pub async fn download_source(formula: &Formula, config: &Config) -> Result<PathB
 
 fn create_dir_all_with_context(path: &Path, context: &str) -> Result<()> {
     fs::create_dir_all(path).map_err(|e| {
-        SpmError::Io(std::io::Error::new(
+        SpmError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
             format!("Failed to create {} {}: {}", context, path.display(), e),
-        ))
+        )))
     })
 }
 
@@ -101,10 +101,10 @@ fn determine_source_root(build_dir: &Path) -> Result<PathBuf> {
             }
         }
         Err(e) => {
-            return Err(SpmError::Io(std::io::Error::new(
+            return Err(SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!("Failed read build dir {}: {}", build_dir.display(), e),
-            )));
+            ))));
         }
     }
 
@@ -435,10 +435,10 @@ pub async fn build_from_source(
     if !install_dir.exists() {
         debug!("Creating installation directory: {}", install_dir.display());
         fs::create_dir_all(&install_dir).map_err(|e| {
-            SpmError::Io(std::io::Error::new(
+            SpmError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!("Failed create install dir: {e}"),
-            ))
+            )))
         })?;
     } else {
         debug!(
