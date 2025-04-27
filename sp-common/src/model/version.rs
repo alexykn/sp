@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::utils::error::{Result, SpError};
+use crate::error::{Result, SpError};
 
 /// Wrapper around semver::Version for formula versions.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

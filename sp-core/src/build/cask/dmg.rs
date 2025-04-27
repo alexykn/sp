@@ -5,9 +5,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tracing::{debug, error};
-
-use crate::utils::error::{Result, SpError}; // Added log imports
+use sp_common::error::{Result, SpError};
+use tracing::{debug, error}; // Added log imports
 
 // --- Keep Existing Helpers ---
 pub fn mount_dmg(dmg_path: &Path) -> Result<PathBuf> {

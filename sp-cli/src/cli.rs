@@ -2,9 +2,8 @@
 use std::sync::Arc;
 
 use clap::{ArgAction, Parser, Subcommand};
-use sp_core::utils::error::Result;
-use sp_core::utils::Cache;
-use sp_core::Config;
+use sp_common::error::Result;
+use sp_common::{Cache, Config};
 
 use crate::cli::info::Info;
 use crate::cli::install::InstallArgs;

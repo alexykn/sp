@@ -8,13 +8,13 @@ use std::{
 };
 
 use serde_json;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
 use tracing::{debug, error, warn};
 
 use crate::build;
 use crate::build::cask::{CaskInstallManifest, InstalledArtifact};
 use crate::installed::InstalledPackageInfo;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 #[derive(Debug, Clone, Default)]
 pub struct UninstallOptions {

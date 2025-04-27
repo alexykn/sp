@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use semver::Version;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 use tracing::{debug, error};
 
 use crate::dependency::{Dependency, DependencyTag, Requirement};
-use crate::utils::error::Result; // <-- Import only Result // Use log crate imports
+use crate::error::Result; // <-- Import only Result // Use log crate imports
 
 // --- Resource Spec Struct ---
 // *** Added struct definition, REMOVED #[derive(Deserialize)] ***
@@ -181,7 +181,10 @@ impl<'de> Deserialize<'de> for Formula {
                 match Version::parse(&version_str_padded) {
                     Ok(v) => v,
                     Err(_) => {
-                        error!( "Warning: Could not parse version '{}' (sanitized to '{}') for formula '{}'. Using 0.0.0.", stable_version_str, version_str_padded, raw.name );
+                        error!(
+                            "Warning: Could not parse version '{}' (sanitized to '{}') for formula '{}'. Using 0.0.0.",
+                            stable_version_str, version_str_padded, raw.name
+                        );
                         Version::new(0, 0, 0)
                     }
                 }
@@ -252,12 +255,18 @@ impl<'de> Deserialize<'de> for Formula {
                             if res_spec.name.is_empty() {
                                 res_spec.name = res_name;
                             } else if res_spec.name != res_name {
-                                debug!("Resource name mismatch in formula '{}': key '{}' vs spec '{}'. Using key.", raw.name, res_name, res_spec.name);
+                                debug!(
+                                    "Resource name mismatch in formula '{}': key '{}' vs spec '{}'. Using key.",
+                                    raw.name, res_name, res_spec.name
+                                );
                                 res_spec.name = res_name; // Prefer key name
                             }
                             // Ensure required fields are present
                             if res_spec.url.is_empty() || res_spec.sha256.is_empty() {
-                                debug!("Resource '{}' for formula '{}' is missing URL or SHA256. Skipping.", res_spec.name, raw.name);
+                                debug!(
+                                    "Resource '{}' for formula '{}' is missing URL or SHA256. Skipping.",
+                                    res_spec.name, raw.name
+                                );
                                 continue;
                             }
                             debug!(
@@ -268,14 +277,20 @@ impl<'de> Deserialize<'de> for Formula {
                         }
                         Err(e) => {
                             // Use display for the error which comes from serde::de::Error::custom
-                            debug!("Failed to parse resource spec value for key '{}' in formula '{}': {}. Value: {:?}", res_name, raw.name, e, res_spec_val);
+                            debug!(
+                                "Failed to parse resource spec value for key '{}' in formula '{}': {}. Value: {:?}",
+                                res_name, raw.name, e, res_spec_val
+                            );
                         }
                     }
                 } else {
                     debug!("Empty resource object found in formula '{}'.", raw.name);
                 }
             } else {
-                debug!("Unexpected format for resource entry in formula '{}': expected object, got {:?}", raw.name, res_val);
+                debug!(
+                    "Unexpected format for resource entry in formula '{}': expected object, got {:?}",
+                    raw.name, res_val
+                );
             }
         }
 

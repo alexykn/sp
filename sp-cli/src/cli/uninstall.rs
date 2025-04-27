@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use clap::Args;
 use colored::Colorize;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::{Result, SpError};
-use sp_core::utils::Cache;
-use sp_core::{installed, uninstall as core_uninstall, PackageType, UninstallOptions};
+use sp_common::Cache;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_core::{PackageType, UninstallOptions, installed, uninstall as core_uninstall};
 use tracing::{debug, error}; // Removed warn
 use walkdir;
 

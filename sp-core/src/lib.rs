@@ -2,31 +2,16 @@
 
 // Declare the top-level modules within the library crate
 pub mod build;
-pub mod dependency;
-pub mod fetch;
-pub mod formulary;
 pub mod installed; // New
-pub mod keg;
-pub mod model;
 pub mod tap;
 pub mod uninstall; // New
 pub mod update_check; // New
-pub mod utils;
+//pub mod utils;
 
 // Re-export key types for easier use by the CLI crate
 // Define InstallTargetIdentifier here or ensure it's public from cli/pipeline
 // For simplicity, let's define it here for now:
-use std::sync::Arc;
 
 pub use installed::{InstalledPackageInfo, PackageType}; // New
-pub use model::cask::Cask;
-pub use model::formula::Formula;
 pub use uninstall::UninstallOptions; // New
 pub use update_check::UpdateInfo; // New
-pub use utils::config::Config;
-pub use utils::error::{Result, SpError};
-#[derive(Debug, Clone)]
-pub enum InstallTargetIdentifier {
-    Formula(Arc<Formula>),
-    Cask(Arc<Cask>),
-}

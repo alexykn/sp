@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{remove_file, File};
+use std::fs::{File, remove_file};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,11 +10,10 @@ use rand::{Rng, SeedableRng};
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
 use tracing::{debug, error};
 use url::Url;
-
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 const OCI_MANIFEST_V1_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 const OCI_LAYER_V1_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
@@ -76,7 +75,7 @@ async fn fetch_oci_resource<T: serde::de::DeserializeOwned>(
 ) -> Result<T> {
     let url = Url::parse(resource_url)
         .map_err(|e| SpError::Generic(format!("Invalid URL '{resource_url}': {e}")))?;
-    crate::fetch::validation::validate_url(url.as_str())?;
+    crate::validation::validate_url(url.as_str())?;
     let registry_domain = url.host_str().unwrap_or(DEFAULT_GHCR_DOMAIN);
     let repo_path = extract_repo_path_from_url(&url).unwrap_or("");
 
@@ -101,7 +100,7 @@ pub async fn download_oci_blob(
     debug!("Downloading OCI blob: {}", blob_url);
     let url = Url::parse(blob_url)
         .map_err(|e| SpError::Generic(format!("Invalid URL '{blob_url}': {e}")))?;
-    crate::fetch::validation::validate_url(url.as_str())?;
+    crate::validation::validate_url(url.as_str())?;
     let registry_domain = url.host_str().unwrap_or(DEFAULT_GHCR_DOMAIN);
     let repo_path = extract_repo_path_from_url(&url).unwrap_or("");
 
@@ -122,7 +121,7 @@ pub async fn download_oci_blob(
     std::fs::rename(&tmp, destination_path).map_err(|e| SpError::Io(Arc::new(e)))?;
 
     if !expected_digest.is_empty() {
-        match crate::fetch::validation::verify_checksum(destination_path, expected_digest) {
+        match crate::validation::verify_checksum(destination_path, expected_digest) {
             Ok(_) => {
                 tracing::debug!("OCI Blob checksum verified: {}", destination_path.display());
             }

@@ -6,11 +6,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::error::{Result, SpError};
 use tracing::{debug, error};
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
-use crate::utils::error::{Result, SpError};
 
 fn is_gnu_autotools_configure(script_path: &Path) -> bool {
     const READ_BUFFER_SIZE: usize = 4096;
@@ -226,7 +226,10 @@ pub fn simple_make(
             // Return the original error by propagating it
             return install_output_result.map(|_| ());
         } else if !found_and_installed_manually && make_install_succeeded {
-            debug!("make install reported success, but '{}' was not populated and no executable found manually.", bin_dir.display());
+            debug!(
+                "make install reported success, but '{}' was not populated and no executable found manually.",
+                bin_dir.display()
+            );
         }
     } else {
         debug!(

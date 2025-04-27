@@ -6,10 +6,10 @@ use std::sync::Arc;
 // Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
 use tracing::debug;
 
-use crate::model::formula::Formula;
-use crate::utils::cache::Cache;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError}; // Import the Cache struct // Import Arc for thread-safe shared ownership
+use super::cache::Cache;
+use super::config::Config;
+use super::error::{Result, SpError};
+use super::model::formula::Formula; // Import the Cache struct // Import Arc for thread-safe shared ownership
 
 /// Responsible for finding and loading Formula definitions from the API cache.
 #[derive()]

@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf}; // Import Path
 use std::process::{Command, Stdio};
 
 use regex::Regex;
+use sp_common::config::Config;
+use sp_common::error::Result;
+use sp_common::model::cask::Cask;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
 
 /// Implements the `zap` stanza by performing deep-clean actions
 /// such as trash, delete, rmdir, pkgutil forget, launchctl unload,
@@ -135,7 +135,11 @@ pub fn install_zap(cask: &Cask, config: &Config) -> Result<Vec<InstalledArtifact
                                                     .join("Library/LaunchAgents")
                                                     .join(format!("{label}.plist"));
                                                 if !is_safe_path(&plist, &home) {
-                                                    debug!("Unsafe plist path {} for label {}, skipping", plist.display(), label);
+                                                    debug!(
+                                                        "Unsafe plist path {} for label {}, skipping",
+                                                        plist.display(),
+                                                        label
+                                                    );
                                                     continue;
                                                 }
                                                 debug!(

@@ -2,9 +2,8 @@
 
 use std::path::PathBuf;
 
+use sp_common::error::{Result, SpError};
 use tracing::debug;
-
-use crate::utils::error::{Result, SpError};
 
 /// Represents a source of packages (formulas and casks)
 pub struct Tap {

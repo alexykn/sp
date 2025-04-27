@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::Cask;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 /// Execute any `preflight` commands listed in the Cask’s JSON artifact stanza.
 /// Returns an empty Vec since preflight does not produce install artifacts.

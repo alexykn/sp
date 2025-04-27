@@ -7,13 +7,13 @@ use std::{env, fs, process};
 
 use clap::Parser;
 use colored::Colorize;
-use sp_core::utils::cache::Cache;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::{Result as spResult, SpError};
-use tracing::level_filters::LevelFilter;
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::error::{Result as spResult, SpError};
 use tracing::Level; // Import the Level type
-use tracing_subscriber::fmt::writer::MakeWriterExt;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 mod cli;
 mod ui;
@@ -190,11 +190,11 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> spResu
     // 4. Run update if needed
     if needs_update {
         println!("Running auto-update..."); // Keep user feedback on stderr
-                                            // Use the existing update command logic
+        // Use the existing update command logic
         match cli::update::Update.run(config, cache).await {
             Ok(_) => {
                 println!("Auto-update successful."); // Keep user feedback on stderr
-                                                     // 5. Update timestamp file on success
+                // 5. Update timestamp file on success
                 match fs::File::create(&timestamp_file) {
                     Ok(_) => {
                         tracing::debug!("Updated timestamp file: {}", timestamp_file.display());
@@ -213,7 +213,7 @@ async fn check_and_run_auto_update(config: &Config, cache: Arc<Cache>) -> spResu
                 // Log error but don't prevent the main command from running
                 tracing::error!("Auto-update failed: {}", e);
                 eprintln!("{} Auto-update failed: {}", "Warning:".yellow(), e); // Also inform user
-                                                                                // on stderr
+                // on stderr
             }
         }
     } else {

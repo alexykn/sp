@@ -4,11 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sp_common::error::{Result, SpError};
 use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir;
-use crate::utils::error::{Result, SpError};
 
 pub fn go_build(
     source_dir: &Path,

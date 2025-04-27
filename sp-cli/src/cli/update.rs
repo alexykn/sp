@@ -2,10 +2,10 @@
 use std::fs;
 use std::sync::Arc;
 
-use sp_core::fetch::api;
-use sp_core::utils::cache::Cache;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::Result;
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::error::Result;
+use sp_net::fetch::api;
 
 use crate::ui;
 

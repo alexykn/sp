@@ -5,11 +5,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::formula::Formula;
 use tracing::{debug, error};
-
-use crate::model::formula::Formula;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 // Declare submodules
 pub mod bottle;

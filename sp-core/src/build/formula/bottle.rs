@@ -4,23 +4,24 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::Arc; // Import Arc
 
 use reqwest::Client;
 use semver;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
+use sp_net::fetch::oci;
+use sp_net::validation::verify_checksum;
 use tempfile::NamedTempFile;
 use tracing::{debug, error, warn};
 use walkdir::WalkDir;
 
 use super::macho;
 use crate::build::formula::get_current_platform;
-use crate::fetch::{self, oci};
-use crate::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 pub async fn download_bottle(
     formula: &Formula,
@@ -51,7 +52,7 @@ pub async fn download_bottle(
     if bottle_cache_path.is_file() {
         debug!("Bottle found in cache: {}", bottle_cache_path.display());
         if !bottle_file_spec.sha256.is_empty() {
-            match fetch::verify_checksum(&bottle_cache_path, &bottle_file_spec.sha256) {
+            match verify_checksum(&bottle_cache_path, &bottle_file_spec.sha256) {
                 Ok(_) => {
                     debug!("Using valid cached bottle: {}", bottle_cache_path.display());
                     return Ok(bottle_cache_path);
@@ -129,7 +130,7 @@ pub async fn download_bottle(
             "Detected standard HTTPS URL, using direct download for: {}",
             bottle_url_str
         );
-        match crate::fetch::http::fetch_formula_source_or_bottle(
+        match sp_net::fetch::http::fetch_formula_source_or_bottle(
             formula.name(),
             bottle_url_str,
             &bottle_file_spec.sha256,
@@ -140,7 +141,11 @@ pub async fn download_bottle(
         {
             Ok(downloaded_path) => {
                 if downloaded_path != bottle_cache_path {
-                    debug!("fetch_formula_source_or_bottle returned path {}. Expected: {}. Assuming correct.", downloaded_path.display(), bottle_cache_path.display());
+                    debug!(
+                        "fetch_formula_source_or_bottle returned path {}. Expected: {}. Assuming correct.",
+                        downloaded_path.display(),
+                        bottle_cache_path.display()
+                    );
                     if !bottle_cache_path.exists() {
                         error!(
                             "Downloaded path {} exists, but expected final cache path {} does not!",
@@ -197,7 +202,10 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
     }
     let current_platform = get_current_platform();
     if current_platform == "unknown" || current_platform.contains("unknown") {
-        debug!("Could not reliably determine current platform ('{}'). Bottle selection might be incorrect.", current_platform);
+        debug!(
+            "Could not reliably determine current platform ('{}'). Bottle selection might be incorrect.",
+            current_platform
+        );
     }
     debug!(
         "Determining bottle for current platform: {}",
@@ -238,7 +246,10 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
                         target_os_name.to_string()
                     };
                     if let Some(spec) = stable_spec.files.get(&target_tag) {
-                        debug!("No bottle found for exact platform '{}'. Using compatible older bottle '{}'.", current_platform, target_tag);
+                        debug!(
+                            "No bottle found for exact platform '{}'. Using compatible older bottle '{}'.",
+                            current_platform, target_tag
+                        );
                         return Ok((target_tag, spec));
                     }
                 }
@@ -564,7 +575,9 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                         // Log expected "failures" as debug
                         debug!(
                             "install_name_tool -change: old path '{}' likely not found or target '{}' not relevant (stderr: {}).",
-                             old, target.display(), stderr.trim()
+                            old,
+                            target.display(),
+                            stderr.trim()
                         );
                     }
                 }
@@ -993,7 +1006,13 @@ fn original_relocation_scan_and_patch(
         text_replaced_count, macho_patched_count
     );
     if permission_errors > 0 || macho_errors > 0 || io_errors > 0 {
-        debug!("Bottle relocation finished with issues: {} chmod errors, {} Mach-O errors, {} IO errors in {}.", permission_errors, macho_errors, io_errors, install_dir.display());
+        debug!(
+            "Bottle relocation finished with issues: {} chmod errors, {} Mach-O errors, {} IO errors in {}.",
+            permission_errors,
+            macho_errors,
+            io_errors,
+            install_dir.display()
+        );
         if macho_errors > 0 {
             // Treat Mach-O errors (path too long, codesign failure) as potentially fatal
             return Err(SpError::InstallError(format!(
@@ -1111,7 +1130,7 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
                         }
                     } else {
                         format!("{version_part}.0.0") // e.g., perl@5 -> 5.0.0 (handles case with no
-                                                      // dot)
+                        // dot)
                     };
 
                     if let Ok(v) = semver::Version::parse(&version_str_padded) {

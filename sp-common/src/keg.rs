@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
-use crate::utils::config::Config;
-use crate::utils::error::Result;
+use super::config::Config;
+use super::error::Result;
 
 /// Represents information about an installed package (Keg).
 #[derive(Debug, Clone, PartialEq, Eq)]

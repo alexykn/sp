@@ -1,7 +1,7 @@
 [package]
 name = "sp-cli"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Command-line interface for sp"
 repository = "https://github.com/alexykn/sp"
 license = "BSD-3 Clause"
@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 sp-core = { path = "../sp-core" }
+sp-net = { path = "../sp-net" }
+sp-common ={ path = "../sp-common" }
 
 # Inherit from workspace
 serde = { workspace = true }

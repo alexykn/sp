@@ -3,11 +3,11 @@
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::error::{Result, SpError};
 use tracing::debug;
 
 use crate::build::env::BuildEnvironment;
 use crate::build::formula::source::run_command_in_dir; // Ensure helper is imported if used
-use crate::utils::error::{Result, SpError};
 
 // Corrected signature: Added source_dir argument
 pub fn python_build(

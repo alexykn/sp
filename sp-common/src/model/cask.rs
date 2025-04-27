@@ -4,7 +4,7 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::config::Config; // <-- Added import
+use crate::config::Config; // <-- Added import
 
 pub type Artifact = serde_json::Value;
 

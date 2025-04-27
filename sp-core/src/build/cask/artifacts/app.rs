@@ -4,12 +4,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::Cask;
 use tracing::{debug, error}; // Added log imports
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 /// Installs an app bundle from a staged location to /Applications and creates a symlink in the
 /// caskroom. Returns a Vec containing the details of artifacts created.

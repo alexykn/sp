@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
-use crate::model::formula::Formula;
-use crate::utils::config::Config;
+use sp_common::config::Config;
+use sp_common::model::formula::Formula;
 
 // --- Submodules ---
 pub mod cask;

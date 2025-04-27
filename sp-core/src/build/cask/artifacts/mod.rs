@@ -43,5 +43,5 @@ pub use self::screen_saver::install_screen_saver;
 pub use self::service::install_service;
 pub use self::suite::install_suite;
 pub use self::uninstall::record_uninstall;
-pub use self::vst3_plugin::install_vst3_plugin;
 pub use self::vst_plugin::install_vst_plugin;
+pub use self::vst3_plugin::install_vst3_plugin;

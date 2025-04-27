@@ -10,14 +10,14 @@ use infer;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::{Cask, Sha256Field, UrlField};
 use tempfile::TempDir;
 use tracing::{debug, error};
 
 use crate::build::extract;
-use crate::model::cask::{Cask, Sha256Field, UrlField};
-use crate::utils::cache::Cache;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -91,7 +91,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     debug!("Downloading cask from {}", url_str);
     let parsed = Url::parse(url_str)
         .map_err(|e| SpError::Generic(format!("Invalid URL '{url_str}': {e}")))?;
-    crate::fetch::validation::validate_url(parsed.as_str())?;
+    sp_net::validation::validate_url(parsed.as_str())?;
     let file_name = parsed
         .path_segments()
         .and_then(|mut segments| segments.next_back())
@@ -136,7 +136,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
         _ => "",
     };
     if !expected_sha256.is_empty() {
-        match crate::fetch::validation::verify_checksum(&cache_path, expected_sha256) {
+        match sp_net::validation::verify_checksum(&cache_path, expected_sha256) {
             Ok(_) => {
                 tracing::debug!("Cask download checksum verified: {}", cache_path.display());
             }
@@ -268,7 +268,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             download_path.display(),
             expected_ext
         );
-        if let Err(e) = crate::fetch::validation::verify_content_type(download_path, expected_ext) {
+        if let Err(e) = sp_net::validation::verify_content_type(download_path, expected_ext) {
             tracing::error!("Content type verification failed: {}", e);
             // Attempt cleanup?
             let _ = fs::remove_dir_all(&cask_version_install_path);
@@ -534,7 +534,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                 );
                                 all_installed_artifacts.extend(installed);
                             } else {
-                                debug!("Artifact handler for '{}' completed successfully but returned no artifacts.", key);
+                                debug!(
+                                    "Artifact handler for '{}' completed successfully but returned no artifacts.",
+                                    key
+                                );
                             }
                         }
                         Err(e) => {
@@ -553,7 +556,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             }
         }
     } else {
-        error!("Cask {} definition is missing the required 'artifacts' array. Cannot determine what to install.", cask.token);
+        error!(
+            "Cask {} definition is missing the required 'artifacts' array. Cannot determine what to install.",
+            cask.token
+        );
         return Err(SpError::InstallError(format!(
             "Cask '{}' has no artifacts defined.",
             cask.token
@@ -578,7 +584,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         })
         .count();
     if actual_install_count == 0 {
-        debug!("No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.", cask.token);
+        debug!(
+            "No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.",
+            cask.token
+        );
         write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
     } else {
         debug!("Writing cask installation manifest");

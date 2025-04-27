@@ -7,11 +7,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json;
+use sp_common::config::Config; // Import Config
+use sp_common::error::{Result, SpError};
+use sp_common::model::formula::Formula;
 use tracing::{debug, error};
-
-use crate::model::formula::Formula;
-use crate::utils::config::Config; // Import Config
-use crate::utils::error::{Result, SpError};
 
 const STANDARD_KEG_DIRS: [&str; 6] = ["bin", "lib", "share", "include", "etc", "Frameworks"];
 
@@ -354,7 +353,11 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
             }
         }
         Err(e) => {
-            debug!("Could not read keg directory {} to check for intermediate dir: {}. Assuming keg path is content root.", installed_keg_path.display(), e);
+            debug!(
+                "Could not read keg directory {} to check for intermediate dir: {}. Assuming keg path is content root.",
+                installed_keg_path.display(),
+                e
+            );
             return Ok(installed_keg_path.to_path_buf());
         }
     }
@@ -384,7 +387,10 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
     } else {
         // Handle multiple subdirs or top-level files found case (no change needed here)
         if potential_subdirs.len() > 1 {
-            debug!("Multiple potential content directories found under keg {}. Using main keg directory as content root.", installed_keg_path.display());
+            debug!(
+                "Multiple potential content directories found under keg {}. Using main keg directory as content root.",
+                installed_keg_path.display()
+            );
         } else if top_level_files_found {
             debug!(
                 "Top-level files found in keg {}. Using main keg directory as content root.",
@@ -392,7 +398,10 @@ fn determine_content_root(installed_keg_path: &Path) -> Result<PathBuf> {
             );
         } else if potential_subdirs.is_empty() {
             // Changed from else if to else
-            debug!("No subdirectories or files found (excluding ignored ones) in keg {}. Using main keg directory as content root.", installed_keg_path.display());
+            debug!(
+                "No subdirectories or files found (excluding ignored ones) in keg {}. Using main keg directory as content root.",
+                installed_keg_path.display()
+            );
         }
         Ok(installed_keg_path.to_path_buf()) // Use main keg path in these cases too
     }
@@ -486,7 +495,10 @@ pub fn unlink_formula_artifacts(
                         let mut unlinked_count = 0;
                         let mut removal_errors = 0;
                         if links_to_remove.is_empty() {
-                            debug!("Install manifest {} is empty. Cannot perform manifest-based unlink.", manifest_path.display());
+                            debug!(
+                                "Install manifest {} is empty. Cannot perform manifest-based unlink.",
+                                manifest_path.display()
+                            );
                         } else {
                             // Use Config to get base paths for checking ownership/safety
                             let opt_base = config.opt_dir();
@@ -524,7 +536,10 @@ pub fn unlink_formula_artifacts(
                                 } else {
                                     // This indicates a potentially corrupted manifest or a link
                                     // outside expected areas
-                                    error!("Manifest contains unexpected link path, skipping removal: {}", link_path.display());
+                                    error!(
+                                        "Manifest contains unexpected link path, skipping removal: {}",
+                                        link_path.display()
+                                    );
                                     removal_errors += 1; // Count as an error/problem
                                 }
                             }
@@ -545,14 +560,22 @@ pub fn unlink_formula_artifacts(
                         Ok(()) // Return Ok even if some links failed, keg removal will happen next
                     }
                     Err(e) => {
-                        error!("Failed to parse formula install manifest {}: {}. Proceeding without detailed unlink.", manifest_path.display(), e);
+                        error!(
+                            "Failed to parse formula install manifest {}: {}. Proceeding without detailed unlink.",
+                            manifest_path.display(),
+                            e
+                        );
                         // Don't error out, allow keg removal to proceed.
                         Ok(())
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to read formula install manifest {}: {}. Proceeding without detailed unlink.", manifest_path.display(), e);
+                error!(
+                    "Failed to read formula install manifest {}: {}. Proceeding without detailed unlink.",
+                    manifest_path.display(),
+                    e
+                );
                 // Don't error out, allow keg removal to proceed.
                 Ok(())
             }

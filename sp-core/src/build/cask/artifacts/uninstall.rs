@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
+use sp_common::error::Result;
+use sp_common::model::cask::Cask;
+
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::error::Result;
 
 /// At install time, scan the `uninstall` stanza and turn each directive
 /// into an InstalledArtifact variant, so it can later be torn down.

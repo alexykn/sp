@@ -6,12 +6,12 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use sp_common::config::Config;
+use sp_common::error::Result;
+use sp_common::model::cask::Cask;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
 
 // --- Moved Regex Creation Outside ---
 static MANPAGE_RE: LazyLock<Regex> =
@@ -62,7 +62,7 @@ pub fn install_manpage(
 
                             // Determine the target path
                             let file_name = Path::new(man_file).file_name().ok_or_else(|| {
-                                crate::utils::error::SpError::Generic(format!(
+                                sp_common::error::SpError::Generic(format!(
                                     "Invalid manpage filename: {man_file}"
                                 ))
                             })?; // Handle potential None

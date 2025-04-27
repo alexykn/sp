@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::Client;
+use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde_json::Value;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::{Cask, CaskList};
+use sp_common::model::formula::Formula;
 use tracing::{debug, error};
-
-use crate::model::cask::{Cask, CaskList};
-use crate::model::formula::Formula;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 const FORMULAE_API_BASE_URL: &str = "https://formulae.brew.sh/api";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
@@ -191,27 +190,30 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
     }
     match serde_json::from_str::<Formula>(&text) {
         Ok(formula) => Ok(formula),
-        Err(_) => {
-            match serde_json::from_str::<Vec<Formula>>(&text) {
-                Ok(mut formulas) if !formulas.is_empty() => {
-                    debug!(
-                        "Parsed formula {} from a single-element array response.",
-                        name
-                    );
-                    Ok(formulas.remove(0))
-                }
-                Ok(_) => {
-                    error!("Received empty array when fetching formula {}", name);
-                    Err(SpError::NotFound(format!(
-                        "Formula '{name}' not found (empty array returned)"
-                    )))
-                }
-                Err(e_vec) => {
-                    error!("Failed to parse formula {} as object or array. Error: {}. Body (sample): {}", name, e_vec, text.chars().take(500).collect::<String>());
-                    Err(SpError::Json(Arc::new(e_vec)))
-                }
+        Err(_) => match serde_json::from_str::<Vec<Formula>>(&text) {
+            Ok(mut formulas) if !formulas.is_empty() => {
+                debug!(
+                    "Parsed formula {} from a single-element array response.",
+                    name
+                );
+                Ok(formulas.remove(0))
             }
-        }
+            Ok(_) => {
+                error!("Received empty array when fetching formula {}", name);
+                Err(SpError::NotFound(format!(
+                    "Formula '{name}' not found (empty array returned)"
+                )))
+            }
+            Err(e_vec) => {
+                error!(
+                    "Failed to parse formula {} as object or array. Error: {}. Body (sample): {}",
+                    name,
+                    e_vec,
+                    text.chars().take(500).collect::<String>()
+                );
+                Err(SpError::Json(Arc::new(e_vec)))
+            }
+        },
     }
 }
 

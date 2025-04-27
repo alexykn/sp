@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use dirs;
 use tracing::debug;
 
-use crate::utils::cache;
-use crate::utils::error::Result; // for home directory lookup
+use super::cache;
+use super::error::Result; // for home directory lookup
 
 /// Default installation prefixes
 const DEFAULT_LINUX_PREFIX: &str = "/home/linuxbrew/.linuxbrew";

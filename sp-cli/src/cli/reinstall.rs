@@ -2,9 +2,9 @@
 use std::sync::Arc;
 
 use clap::Args;
-use sp_core::utils::cache::Cache;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::Result;
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::error::Result;
 
 use crate::cli::pipeline::{CommandType, PipelineExecutor, PipelineFlags};
 

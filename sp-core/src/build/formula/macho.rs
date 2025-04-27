@@ -13,7 +13,10 @@ use std::process::{Command as StdCommand, Stdio}; // Keep for codesign
 #[cfg(target_os = "macos")]
 use object::{
     self,
+    Endianness,                          // Import the Endianness enum
+    FileKind,                            // For checking FAT/single arch
     macho::{MachHeader32, MachHeader64}, // Keep for Mach-O parsing
+    read::ReadRef,                       // Import ReadRef trait
     read::macho::{
         FatArch,
         LoadCommandVariant, // Correct import path
@@ -22,16 +25,12 @@ use object::{
         MachOFatFile64, // Core Mach-O types + FAT types
         MachOFile,
     },
-    read::ReadRef, // Import ReadRef trait
-    Endianness,    // Import the Endianness enum
-    FileKind,      // For checking FAT/single arch
 };
+use sp_common::error::Result; // Keep top-level Result
+#[cfg(target_os = "macos")]
+use sp_common::error::SpError;
 use tempfile::NamedTempFile; // Keep for write_patched_buffer
 use tracing::{debug, error};
-
-use crate::utils::error::Result; // Keep top-level Result
-#[cfg(target_os = "macos")]
-use crate::utils::error::SpError;
 
 // Constants for Mach-O header sizes
 #[cfg(target_os = "macos")]
@@ -374,11 +373,7 @@ fn find_and_replace_placeholders(
         }
     }
     // Return the modified string only if changes occurred
-    if path_modified {
-        Some(new_path)
-    } else {
-        None
-    }
+    if path_modified { Some(new_path) } else { None }
 }
 
 /// Write a new (null‑padded) path into the mutable buffer.  

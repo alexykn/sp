@@ -1,8 +1,8 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
-    "sp-cli",
-    "sp-core",
+    "sp-cli", "sp-common",
+    "sp-core", "sp-net"
 ]
 
 # Optional: Define shared dependencies or profiles here

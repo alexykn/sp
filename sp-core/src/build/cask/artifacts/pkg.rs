@@ -2,12 +2,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::Cask;
 use tracing::{debug, error};
 
-use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask; // Artifact type alias is just Value
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
+use crate::build::cask::InstalledArtifact; // Artifact type alias is just Value
 
 /// Installs a PKG file and returns details of artifacts created/managed.
 pub fn install_pkg_from_path(

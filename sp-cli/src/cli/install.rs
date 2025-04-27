@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use clap::Args;
-use sp_core::utils::cache::Cache;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::Result;
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::error::Result;
 use tracing::instrument;
 
 // Import pipeline components from the new module
@@ -47,7 +47,7 @@ impl InstallArgs {
 
         // --- Argument Validation (moved from old run) ---
         if self.formula && self.cask {
-            return Err(sp_core::utils::error::SpError::Generic(
+            return Err(sp_common::error::SpError::Generic(
                 "Cannot use --formula and --cask together.".to_string(),
             ));
         }

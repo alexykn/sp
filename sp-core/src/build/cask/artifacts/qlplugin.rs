@@ -5,12 +5,12 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::config::Config;
+use sp_common::error::Result;
+use sp_common::model::cask::Cask;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
 
 /// Installs `qlplugin` bundles from the staging area into
 /// `~/Library/QuickLook`, then symlinks them into the Caskroom.

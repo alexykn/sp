@@ -5,12 +5,12 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::Cask;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 /// Installs `binary` artifacts, which can be declared as:
 ///  - a simple string: `"foo"` (source and target both `"foo"`)

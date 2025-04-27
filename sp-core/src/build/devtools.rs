@@ -3,10 +3,9 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use sp_common::error::{Result, SpError};
 use tracing::debug;
 use which;
-
-use crate::utils::error::{Result, SpError};
 /// Finds the path to the specified compiler executable (e.g., "cc", "c++").
 ///
 /// Tries environment variables (e.g., `CC`, `CXX`) first, then `xcrun` on macOS,
@@ -100,7 +99,9 @@ pub fn find_sdk_path() -> Result<PathBuf> {
             Ok(out) if out.status.success() => {
                 let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if path_str.is_empty() || path_str == "/" {
-                    debug!("xcrun returned empty or invalid SDK path ('{path_str}'). Check Xcode/CLT installation.");
+                    debug!(
+                        "xcrun returned empty or invalid SDK path ('{path_str}'). Check Xcode/CLT installation."
+                    );
                     // Fallback or error? Homebrew errors here. Let's error.
                     return Err(SpError::BuildEnvError(
                         "xcrun returned empty or invalid SDK path. Is Xcode or Command Line Tools installed correctly?".to_string()
@@ -194,7 +195,9 @@ pub fn get_arch_flag() -> String {
             "-arch arm64".to_string()
         } else {
             let arch = env::consts::ARCH;
-            debug!("Unknown target architecture on macOS: {arch}, cannot determine -arch flag. Build might fail.");
+            debug!(
+                "Unknown target architecture on macOS: {arch}, cannot determine -arch flag. Build might fail."
+            );
             // Provide no flag in this unknown case? Or default to native?
             // Homebrew might error or try native. Let's return empty for safety.
             String::new()

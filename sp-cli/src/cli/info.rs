@@ -5,10 +5,10 @@ use std::sync::Arc;
 use clap::Args;
 use colored::Colorize;
 use serde_json::Value;
-use sp_core::fetch::api;
-use sp_core::utils::cache::Cache;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::{Result, SpError};
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_net::fetch::api;
 
 use crate::ui;
 

@@ -7,10 +7,10 @@ use std::sync::Arc;
 use tracing::{debug, error, warn};
 
 use crate::dependency::{Dependency, DependencyTag};
+use crate::error::{Result, SpError};
 use crate::formulary::Formulary;
 use crate::keg::KegRegistry;
 use crate::model::formula::Formula;
-use crate::utils::error::{Result, SpError};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedDependency {

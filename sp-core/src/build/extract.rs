@@ -7,12 +7,11 @@ use std::path::{Component, Path, PathBuf};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
+use sp_common::error::{Result, SpError};
 use tar::Archive;
 use tracing::{debug, error};
 use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
-
-use crate::utils::error::{Result, SpError};
 
 pub(crate) fn infer_archive_root_dir(
     archive_path: &Path,
@@ -98,7 +97,11 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
                     return Ok(None);
                 }
             } else {
-                tracing::debug!("Non-standard top-level component ({:?}) found in TAR {}, cannot infer single root.", first_comp, archive_path_for_log.display());
+                tracing::debug!(
+                    "Non-standard top-level component ({:?}) found in TAR {}, cannot infer single root.",
+                    first_comp,
+                    archive_path_for_log.display()
+                );
                 return Ok(None);
             }
         } else {
@@ -183,7 +186,11 @@ fn infer_zip_root<R: Read + Seek>(
                     return Ok(None);
                 }
             } else {
-                tracing::debug!("Non-standard top-level component ({:?}) found in ZIP {}, cannot infer single root.", first_comp, archive_path_for_log.display());
+                tracing::debug!(
+                    "Non-standard top-level component ({:?}) found in ZIP {}, cannot infer single root.",
+                    first_comp,
+                    archive_path_for_log.display()
+                );
                 return Ok(None);
             }
         } else {

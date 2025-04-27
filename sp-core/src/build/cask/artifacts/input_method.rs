@@ -4,10 +4,11 @@ use std::fs;
 use std::os::unix::fs as unix_fs;
 use std::path::Path;
 
-use crate::build::cask::{write_cask_manifest, InstalledArtifact};
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::Result;
+use sp_common::config::Config;
+use sp_common::error::Result;
+use sp_common::model::cask::Cask;
+
+use crate::build::cask::{InstalledArtifact, write_cask_manifest};
 
 /// Install `input_method` artifacts from the staged directory into
 /// `~/Library/Input Methods` and record installed artifacts.

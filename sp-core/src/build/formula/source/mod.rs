@@ -7,14 +7,14 @@ use std::process::{Command, Output, Stdio};
 
 use futures::future::try_join_all;
 use infer;
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::formula::{Formula, FormulaDependencies, ResourceSpec};
+use sp_net::fetch::http as http_fetch;
 use tracing::{debug, error};
 
 use crate::build::env::BuildEnvironment;
 use crate::build::extract;
-use crate::fetch::http as http_fetch;
-use crate::model::formula::{Formula, FormulaDependencies, ResourceSpec};
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 mod cargo;
 mod cmake;
@@ -138,7 +138,9 @@ fn check_and_run_autoreconf(source_dir: &Path, build_env: &BuildEnvironment) -> 
                 }
             }
             Err(_) => {
-                debug!("configure.ac/in found but configure script and autoreconf command are missing.");
+                debug!(
+                    "configure.ac/in found but configure script and autoreconf command are missing."
+                );
             }
         }
     }
@@ -310,7 +312,7 @@ pub async fn build_from_source(
             source_path.display(),
             expected_ext
         );
-        if let Err(e) = crate::fetch::validation::verify_content_type(source_path, expected_ext) {
+        if let Err(e) = sp_net::validation::verify_content_type(source_path, expected_ext) {
             tracing::error!("Source content type verification failed: {}", e);
             // Cleanup source_path? Maybe let the caller handle it.
             return Err(e);

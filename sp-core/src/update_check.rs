@@ -2,16 +2,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use sp_common::cache::Cache;
+use sp_common::error::{Result, SpError};
+use sp_common::model::InstallTargetIdentifier;
+use sp_common::model::cask::Cask;
+use sp_common::model::formula::Formula;
+use sp_common::model::version::Version;
+use sp_net::fetch::api;
 use tracing::{debug, warn};
 
-use crate::fetch::api;
 use crate::installed::{InstalledPackageInfo, PackageType};
-use crate::model::cask::Cask;
-use crate::model::formula::Formula;
-use crate::model::version::Version;
-use crate::utils::cache::Cache;
-use crate::utils::error::{Result, SpError};
-use crate::InstallTargetIdentifier;
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {

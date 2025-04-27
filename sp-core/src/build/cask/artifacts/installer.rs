@@ -3,12 +3,12 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use sp_common::config::Config;
+use sp_common::error::{Result, SpError};
+use sp_common::model::cask::Cask;
 use tracing::debug;
 
 use crate::build::cask::InstalledArtifact;
-use crate::model::cask::Cask;
-use crate::utils::config::Config;
-use crate::utils::error::{Result, SpError};
 
 // Helper to validate that the executable is a filename (relative, no '/' or "..")
 fn validate_filename_or_relative_path(file: &str) -> Result<String> {

@@ -7,33 +7,35 @@ use std::sync::Arc;
 
 // use tokio::sync::Mutex; // For async-aware locking if needed later
 use colored::Colorize;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use futures::executor::block_on;
 use num_cpus;
 use serde_json::Value;
-use sp_core::build::{self};
-use sp_core::dependency::{DependencyResolver, ResolutionContext, ResolutionStatus, ResolvedGraph};
-use sp_core::fetch::api;
-use sp_core::formulary::Formulary;
-use sp_core::installed::{InstalledPackageInfo, PackageType}; // Needs implementing in sp-core
-use sp_core::keg::KegRegistry;
-use sp_core::model::formula::{Formula, FormulaDependencies};
-use sp_core::model::Cask;
-use sp_core::uninstall as core_uninstall; // Alias for the new module
-use sp_core::uninstall::UninstallOptions; // Needs implementing in sp-core
-use sp_core::update_check::{self, UpdateInfo}; // Needs implementing in sp-core
-use sp_core::utils::cache::Cache;
-use sp_core::utils::config::Config;
-use sp_core::utils::error::{Result, SpError};
+use sp_common::cache::Cache;
+use sp_common::config::Config;
+use sp_common::dependency::{
+    DependencyResolver, ResolutionContext, ResolutionStatus, ResolvedGraph,
+};
+use sp_common::error::{Result, SpError};
+use sp_common::formulary::Formulary;
+use sp_common::keg::KegRegistry;
+use sp_common::model::Cask;
 // --- Shared Data Structures ---
 
 // Reusable enum to identify target type, potentially moved from sp-core if made public
 // Or defined locally here if InstallTargetIdentifier from core isn't suitable.
 // Assuming we use the one from core for now:
-use sp_core::InstallTargetIdentifier;
+use sp_common::model::InstallTargetIdentifier;
+use sp_common::model::formula::{Formula, FormulaDependencies};
+use sp_core::build::{self};
+use sp_core::installed::{InstalledPackageInfo, PackageType}; // Needs implementing in sp-core
+use sp_core::uninstall as core_uninstall; // Alias for the new module
+use sp_core::uninstall::UninstallOptions; // Needs implementing in sp-core
+use sp_core::update_check::{self, UpdateInfo}; // Needs implementing in sp-core
+use sp_net::fetch::api;
 use threadpool::ThreadPool;
 use tokio::task::JoinSet;
-use tracing::{debug, error, instrument, warn, Instrument}; // Placeholder: Ensure this is accessible
+use tracing::{Instrument, debug, error, instrument, warn}; // Placeholder: Ensure this is accessible
 
 // Represents the specific action for a pipeline job
 #[derive(Debug, Clone)]
@@ -308,7 +310,7 @@ impl PipelineExecutor {
                             None => {
                                 let msg = format!("Cannot upgrade '{name}': not installed.");
                                 warn!("! {msg}"); // Warn, maybe user meant install?
-                                                  // Don't add error here, let install handle it if they meant install
+                                // Don't add error here, let install handle it if they meant install
                                 processed.insert(name.clone());
                             }
                         }
@@ -592,7 +594,7 @@ impl PipelineExecutor {
                 if errors.iter().any(|(n, _)| n == name) {
                     continue;
                 } // Skip errored deps
-                  // Add only if it wasn't an initial target already added
+                // Add only if it wasn't an initial target already added
                 if !jobs.iter().any(|j| match &j.target {
                     InstallTargetIdentifier::Formula(f) => f.name() == name,
                     _ => false,
@@ -697,7 +699,7 @@ impl PipelineExecutor {
             futures.spawn(async move {
                 let formulae_map = formulae_map_clone; // Use the cloned map
                 let casks_map = casks_map_clone; // Use the cloned map
-                                                 // Check formulae map first
+                // Check formulae map first
                 if let Some(map) = formulae_map {
                     if let Some(f_arc) = map.get(&name) {
                         return (name, Ok(InstallTargetIdentifier::Formula(f_arc.clone())));
@@ -718,7 +720,7 @@ impl PipelineExecutor {
                         return (
                             name,
                             Ok(InstallTargetIdentifier::Formula(Arc::new(formula))),
-                        )
+                        );
                     }
                     Err(SpError::NotFound(_)) | Err(SpError::Api(_)) | Err(SpError::Http(_)) => {
                         // Formula fetch failed, try cask

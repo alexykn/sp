@@ -3,10 +3,9 @@ use std::io;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
+use sp_common::error::{Result, SpError};
 use url::Url;
 use {hex, infer};
-
-use crate::utils::error::{Result, SpError};
 
 pub fn verify_checksum(path: &Path, expected: &str) -> Result<()> {
     tracing::debug!("Verifying checksum for: {}", path.display());

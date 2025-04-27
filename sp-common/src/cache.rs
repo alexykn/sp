@@ -5,10 +5,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
-use crate::utils::error::{Result, SpError};
+use super::error::{Result, SpError};
 
 // TODO: Define cache directory structure (e.g., ~/.cache/sp)
 // TODO: Implement functions for storing, retrieving, and clearing cached data.
