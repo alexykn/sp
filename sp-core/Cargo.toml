@@ -1,55 +1,54 @@
+# sp-core: ./sp-core/Cargo.toml
+
 [package]
 name = "sp-core"
 version = "0.1.0"
-edition = "2024"
+edition = "2024" # Or "2021" if not using nightly
 description = "Core library for the sp package manager"
 repository = "https://github.com/alexykn/sp"
 license = "BSD-3 Clause"
 
 [dependencies]
-# Inherit from workspace where possible
+sp-net = { path = "../sp-net" }
+sp-common = { path = "../sp-common" }
+
+# Inherited from workspace
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-serde = { version = "1.0.219", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+env_logger = { workspace = true }
+semver = { workspace = true }
+dirs = { workspace = true }
+walkdir = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+sha2 = { workspace = true }
+indicatif = { workspace = true }
+hex = { workspace = true }
+object = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+infer = { workspace = true }
+num_cpus = { workspace = true }
+humantime = { workspace = true }
+bitflags = { workspace = true }
+tracing = { workspace = true }
 
-# Core-specific dependencies (add others identified from moved code)
-serde_json = "1.0.140"
 devtools = "0.3.3"
-toml = "0.8.20"
-env_logger = "0.11.8"
 which = "7.0.3"
-semver = "1.0.26"
-dirs = "6.0"
-walkdir = "2.5.0"
+toml = "0.8.21"
 fs_extra = "1.3"
-reqwest = { version = "0.12.15", features = ["json", "stream", "blocking"] }
-url = "2.5.4"
 git2 = "0.20.1"
 cmd_lib = "1.9.5"
-sha2 = "0.10.8"
 tempfile = "3.19.1"
-indicatif = "0.17.11"
 regex = "1.11.1"
 glob = "0.3.2"
-hex = "0.4.3"
-object = { version = "0.36.7", features = ["read_core", "write_core", "macho"] }
-tokio = { version = "1.44.2", features = ["full"] }
-futures = "0.3.31"
 flate2 = "1.1.1"
 bzip2 = "0.5.2"
 xz2 = "0.1.7"
 tar = "0.4.44"
 zip = "2.6.1"
-rand = "0.9.1"
-infer = "0.19.0"
-
-# Added from check errors
-chrono = { version = "0.4.40", features = ["serde"] } # Added serde feature for potential use
-num_cpus = "1.16.0"
-humantime = "2.2.0"
-bitflags = { version = "2.9.0", features = ["serde"] }
+chrono = { version = "0.4.40", features = ["serde"] }
 async-recursion = "1.1.1"
-tracing = "0.1.41"
-
-sp-net = { path = "../sp-net" } 
-sp-common ={ path = "../sp-common" }
