@@ -1,6 +1,6 @@
 BSD 3-Clause License
 
-Copyright 2025 spm Contributors
+Copyright 2025 sp Contributors
 
 All rights reserved.
 

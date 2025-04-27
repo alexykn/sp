@@ -63,5 +63,5 @@ jobs:
       - name: Upload compiled binary
         uses: actions/upload-artifact@v4
         with:
-          name: spm-macos-arm64
-          path: target/release/spm
+          name: sp-macos-arm64
+          path: target/release/sp
