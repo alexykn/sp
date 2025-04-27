@@ -1234,6 +1234,49 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
                 );
             }
         }
+
+        // ----- NEW: also create symlinks inside lib/rustlib/*/lib -----
+        let rustlib_dir = install_dir.join("lib").join("rustlib");
+        if rustlib_dir.is_dir() {
+            // Iterate over each target‑triple directory (e.g. aarch64‑apple‑darwin)
+            if let Ok(entries) = fs::read_dir(&rustlib_dir) {
+                for entry in entries.flatten() {
+                    let triple_path = entry.path();
+                    if triple_path.is_dir() {
+                        let triple_lib_dir = triple_path.join("lib");
+                        if triple_lib_dir.is_dir() {
+                            let nested_symlink = triple_lib_dir.join(llvm_lib_filename);
+                            // Skip if symlink or file already exists
+                            if nested_symlink.exists() || nested_symlink.symlink_metadata().is_ok() {
+                                debug!(
+                                    "Symlink or file already exists at {}, skipping.",
+                                    nested_symlink.display()
+                                );
+                                continue;
+                            }
+                            // Ensure the parent directory exists (should already, but be safe)
+                            if let Some(parent) = nested_symlink.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            match symlink(&llvm_lib_path_in_opt, &nested_symlink) {
+                                Ok(_) => debug!(
+                                    "Created symlink {} -> {}",
+                                    nested_symlink.display(),
+                                    llvm_lib_path_in_opt.display()
+                                ),
+                                Err(e) => warn!(
+                                    "Failed to create LLVM symlink {} -> {}: {}",
+                                    nested_symlink.display(),
+                                    llvm_lib_path_in_opt.display(),
+                                    e
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ----- END NEW -----
     }
     #[cfg(not(unix))]
     {
