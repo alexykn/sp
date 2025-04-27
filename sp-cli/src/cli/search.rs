@@ -312,26 +312,38 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     let name_min_width = 10;
     let desc_min_width = 20;
 
+    let leftover = term_cols.saturating_sub(total_fixed);
+
     // Calculate widths
-    let leftover = term_cols.saturating_sub(total_fixed + name_min_width + desc_min_width);
-    let name_max = name_min_width + leftover / 3;
-    let desc_max = desc_min_width + leftover - (leftover / 3);
+    let name_prop_width = leftover / 3;
+    
+    // TODO: not sure what it is, and what is the purpose of this.
+    // let _desc_prop_width = leftover.saturating_sub(name_prop_width);
+
+    let name_max = std::cmp::max(name_min_width, name_prop_width);
+    let desc_max = std::cmp::max(desc_min_width, leftover.saturating_sub(name_max));
+
+    let name_max = std::cmp::min(name_max, leftover.saturating_sub(desc_min_width));
+    let desc_max = std::cmp::min(desc_max, leftover.saturating_sub(name_max));
 
     // Build table with header
     let mut tbl = Table::new();
     tbl.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    // Don't set titles, we'll manually handle the header coloring later if desired
+    // tbl.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
-        for formula in formula_matches {
+    for formula in formula_matches {
         let raw_name = formula.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
         let raw_desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        let _name = truncate_vis(raw_name, name_max);
         let desc = truncate_vis(raw_desc, desc_max);
 
-    // Extract version (adjust if your JSON structure is different)
+        // Extract version 
         let version = get_version(formula);
 
         tbl.add_row(Row::new(vec![
             Cell::new("Formula").style_spec("FgC"),
-            Cell::new(raw_name).style_spec("Fb"),
+            Cell::new(&_name).style_spec("Fb"),
             Cell::new(version),
             Cell::new(&desc),
         ]));
@@ -351,7 +363,7 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
         let raw_desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
         let desc = truncate_vis(raw_desc, desc_max);
 
-    // Extract version (adjust if your JSON structure is different)
+        // Extract version
         let version = get_version(cask);
 
         tbl.add_row(Row::new(vec![
@@ -362,7 +374,7 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
         ]));
     }
 
-// 4) Print the table directly (coloring is done during row creation)
+    // Print the table directly (coloring is done during row creation)
     tbl.printstd();
 }
 
