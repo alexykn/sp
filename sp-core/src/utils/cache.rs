@@ -10,10 +10,10 @@ use serde::Serialize;
 
 use crate::utils::error::{Result, SpError};
 
-// TODO: Define cache directory structure (e.g., ~/.cache/brew-rs-client)
+// TODO: Define cache directory structure (e.g., ~/.cache/sp)
 // TODO: Implement functions for storing, retrieving, and clearing cached data.
 
-const CACHE_SUBDIR: &str = "brew-rs-client";
+const CACHE_SUBDIR: &str = "sp";
 // Define how long cache entries are considered valid
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
 

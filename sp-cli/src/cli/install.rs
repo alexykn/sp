@@ -39,9 +39,9 @@ pub struct Install {
     include_optional: bool,
     #[arg(long)]
     skip_recommended: bool,
-    #[arg(long, value_name = "SPM_WORKERS")]
+    #[arg(long, value_name = "SP_WORKERS")]
     max_workers: Option<usize>,
-    #[arg(long, value_name = "SPM_QUEUE")]
+    #[arg(long, value_name = "SP_QUEUE")]
     queue_size: Option<usize>,
     #[arg(
         long,

@@ -14,9 +14,9 @@ const DEFAULT_MACOS_INTEL_PREFIX: &str = "/usr/local";
 const DEFAULT_MACOS_ARM_PREFIX: &str = "/opt/homebrew";
 
 /// Determines the active prefix for installation.
-/// Checks SAPPHIRE_PREFIX/HOMEBREW_PREFIX env vars, then OS-specific defaults.
+/// Checks SP_PREFIX/HOMEBREW_PREFIX env vars, then OS-specific defaults.
 fn determine_prefix() -> PathBuf {
-    if let Ok(prefix) = env::var("SAPPHIRE_PREFIX").or_else(|_| env::var("HOMEBREW_PREFIX")) {
+    if let Ok(prefix) = env::var("SP_PREFIX").or_else(|_| env::var("HOMEBREW_PREFIX")) {
         debug!("Using prefix from environment variable: {}", prefix);
         return PathBuf::from(prefix);
     }

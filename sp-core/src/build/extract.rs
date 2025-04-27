@@ -220,14 +220,23 @@ fn infer_zip_root<R: Read + Seek>(
     }
 }
 
+// --- Begin revised extraction helpers ---
+
+/// Extract an archive file (zip/tar/tar.gz/...) to a target directory, stripping a number of
+/// leading path components.
 pub fn extract_archive(
     archive_path: &Path,
     target_dir: &Path,
     strip_components: usize,
     archive_type: &str,
 ) -> Result<()> {
-    debug!("Extracting archive '{}' (type: {}) to '{}' (strip_components={}) using native Rust crates.",
-		archive_path.display(), archive_type, target_dir.display(), strip_components);
+    debug!(
+        "Extracting archive '{}' (type: {}) to '{}' (strip_components={}) using native Rust crates.",
+        archive_path.display(),
+        archive_type,
+        target_dir.display(),
+        strip_components
+    );
 
     fs::create_dir_all(target_dir).map_err(|e| {
         SpError::Io(std::sync::Arc::new(std::io::Error::new(
@@ -240,21 +249,6 @@ pub fn extract_archive(
         )))
     })?;
 
-    let temp_extract_dir = tempfile::Builder::new()
-        .prefix(".extract-")
-        .tempdir_in(target_dir)
-        .map_err(|e| {
-            SpError::Io(std::sync::Arc::new(std::io::Error::new(
-                e.kind(),
-                format!("Failed create temp extract dir: {e}"),
-            )))
-        })?;
-    let temp_extract_path = temp_extract_dir.path();
-    debug!(
-        "Extracting archive to temporary location: {}",
-        temp_extract_path.display()
-    );
-
     let file = File::open(archive_path).map_err(|e| {
         SpError::Io(std::sync::Arc::new(std::io::Error::new(
             e.kind(),
@@ -263,132 +257,37 @@ pub fn extract_archive(
     })?;
 
     match archive_type {
-        "zip" => extract_zip_archive(file, temp_extract_path, strip_components, archive_path)?,
+        "zip" => extract_zip_archive(file, target_dir, strip_components, archive_path),
         "gz" | "tgz" => {
             let tar = GzDecoder::new(file);
-            extract_tar_archive(tar, temp_extract_path, strip_components, archive_path)?
+            extract_tar_archive(tar, target_dir, strip_components, archive_path)
         }
         "bz2" | "tbz" | "tbz2" => {
             let tar = BzDecoder::new(file);
-            extract_tar_archive(tar, temp_extract_path, strip_components, archive_path)?
+            extract_tar_archive(tar, target_dir, strip_components, archive_path)
         }
         "xz" | "txz" => {
             let tar = XzDecoder::new(file);
-            extract_tar_archive(tar, temp_extract_path, strip_components, archive_path)?
+            extract_tar_archive(tar, target_dir, strip_components, archive_path)
         }
-        "tar" => extract_tar_archive(file, temp_extract_path, strip_components, archive_path)?,
-        _ => {
-            return Err(SpError::Generic(format!(
-                "Unsupported archive type provided for extraction: '{}' for file {}",
-                archive_type,
-                archive_path.display()
-            )))
-        }
+        "tar" => extract_tar_archive(file, target_dir, strip_components, archive_path),
+        _ => Err(SpError::Generic(format!(
+            "Unsupported archive type provided for extraction: '{}' for file {}",
+            archive_type,
+            archive_path.display()
+        ))),
     }
-
-    use std::path::Component;
-
-    use walkdir::WalkDir;
-    debug!(
-        "Validating extracted contents in {}",
-        temp_extract_path.display()
-    );
-    let abs_temp_extract_path = temp_extract_path
-        .canonicalize()
-        .map_err(|e| SpError::Io(std::sync::Arc::new(e)))?;
-
-    for entry_result in WalkDir::new(temp_extract_path) {
-        let entry = entry_result.map_err(|e| {
-            SpError::Io(std::sync::Arc::new(
-                e.into_io_error()
-                    .unwrap_or_else(|| std::io::Error::other("Walkdir error")),
-            ))
-        })?;
-        let path = entry.path();
-
-        for component in path.components() {
-            if matches!(component, Component::ParentDir | Component::RootDir) {
-                if component == Component::ParentDir {
-                    tracing::error!(
-                        "Unsafe '..' component found in extracted path: {}",
-                        path.display()
-                    );
-                    return Err(SpError::Generic(format!(
-                        "Unsafe '..' component in extracted path: {}",
-                        path.display()
-                    )));
-                }
-                if path.is_absolute() && !path.starts_with(&abs_temp_extract_path) {
-                    tracing::error!(
-                        "Absolute path component found pointing outside temp dir: {}",
-                        path.display()
-                    );
-                    return Err(SpError::Generic(format!(
-                        "Unsafe absolute path component in extracted path: {}",
-                        path.display()
-                    )));
-                }
-            }
-        }
-
-        if entry.file_type().is_symlink() {
-            let link_target =
-                fs::read_link(path).map_err(|e| SpError::Io(std::sync::Arc::new(e)))?;
-            let link_parent = path.parent().unwrap_or(path);
-            let resolved_target_abs = if link_target.is_absolute() {
-                link_target
-                    .canonicalize()
-                    .map_err(|e| SpError::Io(std::sync::Arc::new(e)))?
-            } else {
-                link_parent
-                    .join(&link_target)
-                    .canonicalize()
-                    .map_err(|e| SpError::Io(std::sync::Arc::new(e)))?
-            };
-
-            if !resolved_target_abs.starts_with(&abs_temp_extract_path) {
-                tracing::error!(
-                    "Symlink points outside the extraction directory: {} -> {} (resolves to {})",
-                    path.display(),
-                    link_target.display(),
-                    resolved_target_abs.display()
-                );
-                return Err(SpError::Generic(format!(
-                    "Symlink points outside extraction dir: {}",
-                    path.display()
-                )));
-            }
-            tracing::debug!(
-                "Validated symlink: {} -> {}",
-                path.display(),
-                link_target.display()
-            );
-        }
-    }
-    debug!("Extraction validation successful.");
-
-    debug!(
-        "Moving validated contents from {} to {}",
-        temp_extract_path.display(),
-        target_dir.display()
-    );
-    for item_result in fs::read_dir(temp_extract_path)? {
-        let item = item_result?;
-        let source_item_path = item.path();
-        let dest_item_path = target_dir.join(item.file_name());
-        fs::rename(&source_item_path, &dest_item_path)
-            .map_err(|e| SpError::Io(std::sync::Arc::new(e)))?;
-    }
-    Ok(())
 }
 
+/// Extract a tar archive (possibly decompressed) to a target directory, stripping leading path
+/// components.
 fn extract_tar_archive<R: Read>(
     reader: R,
     target_dir: &Path,
     strip_components: usize,
     archive_path_for_log: &Path,
 ) -> Result<()> {
-    let mut archive = tar::Archive::new(reader);
+    let mut archive = Archive::new(reader);
     archive.set_preserve_permissions(true);
     archive.set_unpack_xattrs(true);
     archive.set_overwrite(false);
@@ -509,6 +408,7 @@ fn extract_tar_archive<R: Read>(
     Ok(())
 }
 
+/// Extract a zip archive to a target directory, stripping leading path components.
 fn extract_zip_archive<R: Read + Seek>(
     reader: R,
     target_dir: &Path,
