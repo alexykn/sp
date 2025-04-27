@@ -1,0 +1,23 @@
+[package]
+name = "sp-aio"
+version = "0.1.0"
+edition = "2024"
+description = "IO operations for sp (cache, manifests, checksums, config loading)"
+repository = "https://github.com/alexykn/sp"
+license = "BSD-3 Clause"
+
+[dependencies]
+# Workspace crates
+sp-common = { path = "../sp-common" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dirs = { workspace = true } # For cache/config default paths
+sha2 = { workspace = true } # For checksums
+hex = { workspace = true } # For checksums
+tempfile = { workspace = true } # For atomic writes
+
+humantime = "2.2.0"
+git2 = "0.20.1"

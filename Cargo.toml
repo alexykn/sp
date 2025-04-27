@@ -36,6 +36,7 @@ sha2 = "0.10.8" # Used in core, net
 hex = "0.4.3" # Used in core, net
 rand = "0.9.1" # Used in core, net
 infer = "0.19.0" # Used in core, net
+tempfile = "3.19.1"
 
 # Workspace-wide release profile
 [profile.release]
