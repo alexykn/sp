@@ -99,6 +99,26 @@ cargo build --release
 
 The `sp` binary will be at `target/release/sp`. Add it to your `PATH`.
 
+
+-----
+
+## 📥 Using the Latest Nightly Build
+
+You can download the latest nightly build from [`actions/workflows/rust.yml`](actions/workflows/rust.yml) inside this repository (select a successful build and scroll down to `Artifacts`).
+
+Before running the downloaded binary, remove the quarantine attribute:
+
+```sh
+xattr -d com.apple.quarantine ./sp
+```
+
+Then, you can run the binary directly:
+
+```sh
+./sp --help
+```
+
+
 -----
 
 ## 🤝 Contributing
