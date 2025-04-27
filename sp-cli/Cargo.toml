@@ -35,6 +35,10 @@ textwrap      = "0.16"
 unicode-width = "0.2.0"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+crossbeam-channel = "0.5.15"
+threadpool = "1.8.1"
+once_cell = "1.21.3" # For the Lazy semaphore
+num_cpus = "1.16.0" # For default queue/worker sizing
 
 [build-dependencies]
 clap_complete = "4.3"
