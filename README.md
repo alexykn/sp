@@ -27,6 +27,8 @@ sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 - Bottle installation and uninstallation  
 - Cask installation and uninstallation
+- Reinstall command for reinstalls
+- Upgrade command for updates (very careful. I ran into no system breakers, my Perl install got nuked though)
 - Parallel downloads and installs for speed  
 - Automatic dependency resolution and installation
 - Building Formulae from source (very early impl)
@@ -35,12 +37,10 @@ sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 ## 🚀 Roadmap
 
-1. **Upgrade** command to update installed packages  
-2. **Cleanup** old downloads, versions, caches  
-3. **Reinstall** command for quick re‑pours  
-4. **Prefix isolation:** support `/opt/sp` as standalone layout  
-5. **`sp init`** helper to bootstrap your environment
-6. **Ongoing** Bug fixes and stability improvements
+- **Cleanup** old downloads, versions, caches  
+- **Prefix isolation:** support `/opt/sp` as standalone layout  
+- **`sp init`** helper to bootstrap your environment
+- **Ongoing** Bug fixes and stability improvements
 
 ---
 
@@ -74,8 +74,13 @@ sp install --build-from-source <formula>
 # Uninstall
 sp uninstall <formula/cask>
 
+# Reinstall
+sp reinstall <formula/cask>
+
+#Upgrade
+sp upgrade <formula/cask> or --all
+
 # (coming soon)
-sp upgrade [--all] <name>
 sp cleanup
 sp init
 ```
