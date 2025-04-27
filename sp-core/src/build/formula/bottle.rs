@@ -1247,7 +1247,8 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
                         if triple_lib_dir.is_dir() {
                             let nested_symlink = triple_lib_dir.join(llvm_lib_filename);
                             // Skip if symlink or file already exists
-                            if nested_symlink.exists() || nested_symlink.symlink_metadata().is_ok() {
+                            if nested_symlink.exists() || nested_symlink.symlink_metadata().is_ok()
+                            {
                                 debug!(
                                     "Symlink or file already exists at {}, skipping.",
                                     nested_symlink.display()
