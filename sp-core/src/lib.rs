@@ -1,22 +1,32 @@
 // sp-core/src/lib.rs
-// This is the main library file for the sp-core crate.
-// It declares and re-exports the public modules and types.
 
 // Declare the top-level modules within the library crate
-// These are directories with their own mod.rs files
 pub mod build;
 pub mod dependency;
 pub mod fetch;
 pub mod formulary;
+pub mod installed; // New
 pub mod keg;
 pub mod model;
 pub mod tap;
+pub mod uninstall; // New
+pub mod update_check; // New
 pub mod utils;
 
 // Re-export key types for easier use by the CLI crate
+// Define InstallTargetIdentifier here or ensure it's public from cli/pipeline
+// For simplicity, let's define it here for now:
+use std::sync::Arc;
+
+pub use installed::{InstalledPackageInfo, PackageType}; // New
 pub use model::cask::Cask;
 pub use model::formula::Formula;
+pub use uninstall::UninstallOptions; // New
+pub use update_check::UpdateInfo; // New
 pub use utils::config::Config;
 pub use utils::error::{Result, SpError};
-
-// No need to redefine the Error type since we're re-exporting the existing one
+#[derive(Debug, Clone)]
+pub enum InstallTargetIdentifier {
+    Formula(Arc<Formula>),
+    Cask(Arc<Cask>),
+}

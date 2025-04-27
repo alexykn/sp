@@ -43,6 +43,18 @@ pub enum InstalledArtifact {
     CaskroomReference {
         path: PathBuf,
     },
+    ZapTarget {
+        target_path: PathBuf,
+        action: ZapAction,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ZapAction {
+    Delete,
+    Trash,
+    Rmdir,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

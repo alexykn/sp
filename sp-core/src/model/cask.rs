@@ -112,7 +112,7 @@ pub struct DependsOn {
 }
 
 /// The main Cask model matching Homebrew JSON v2
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Cask {
     pub token: String,
 

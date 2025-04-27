@@ -1279,12 +1279,5 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
         }
         // ----- END NEW -----
     }
-    #[cfg(not(unix))]
-    {
-        debug!(
-            "LLVM Symlink creation not supported on this platform for {}.",
-            formula.name()
-        );
-    }
     Ok(())
 }

@@ -6,17 +6,22 @@ use sp_core::utils::error::Result;
 use sp_core::utils::Cache;
 use sp_core::Config;
 
-use self::info::Info;
-use self::install::Install;
-use self::search::Search;
-use self::uninstall::Uninstall;
-use self::update::Update;
+use crate::cli::info::Info;
+use crate::cli::install::InstallArgs;
+use crate::cli::reinstall::ReinstallArgs;
+use crate::cli::search::Search;
+use crate::cli::uninstall::Uninstall;
+use crate::cli::update::Update;
+use crate::cli::upgrade::UpgradeArgs;
 
 pub mod info;
 pub mod install;
+pub mod pipeline;
+pub mod reinstall;
 pub mod search;
 pub mod uninstall;
 pub mod update;
+pub mod upgrade;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, name = "sp", bin_name = "sp")]
@@ -42,10 +47,16 @@ pub enum Command {
     Update(Update),
 
     /// Install a formula or cask
-    Install(Install),
+    Install(InstallArgs),
 
     /// Uninstall one or more formulas or casks
     Uninstall(Uninstall),
+
+    /// Reinstall one or more formulas or casks
+    Reinstall(ReinstallArgs),
+
+    /// Upgrade one or more formulas or casks
+    Upgrade(UpgradeArgs),
 }
 
 impl Command {
@@ -56,6 +67,8 @@ impl Command {
             Self::Update(command) => command.run(config, cache).await,
             Self::Install(command) => command.run(config, cache).await,
             Self::Uninstall(command) => command.run(config, cache).await,
+            Self::Reinstall(command) => command.run(config, cache).await,
+            Self::Upgrade(command) => command.run(config, cache).await,
         }
     }
 }

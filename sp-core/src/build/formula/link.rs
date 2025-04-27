@@ -464,13 +464,18 @@ fn write_install_manifest(installed_keg_path: &Path, symlinks_created: &[String]
     Ok(())
 }
 
-/// Unlink artifacts based on the manifest file.
-// Added Config parameter
-pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()> {
-    debug!("Unlinking artifacts for {}", formula.name());
-    // Use config method to get expected keg path
-    let expected_keg_path = config.formula_keg_path(formula.name(), &formula.version_str_full());
-    let manifest_path = expected_keg_path.join("INSTALL_MANIFEST.json");
+pub fn unlink_formula_artifacts(
+    formula_name: &str,
+    version_str_full: &str, // e.g., "1.2.3_1"
+    config: &Config,
+) -> Result<()> {
+    debug!(
+        "Unlinking artifacts for {} version {}",
+        formula_name, version_str_full
+    );
+    // Use config method to get expected keg path based on name and version string
+    let expected_keg_path = config.formula_keg_path(formula_name, version_str_full);
+    let manifest_path = expected_keg_path.join("INSTALL_MANIFEST.json"); // Manifest *inside* the keg
 
     if manifest_path.is_file() {
         debug!("Reading install manifest: {}", manifest_path.display());
@@ -482,315 +487,86 @@ pub fn unlink_formula_artifacts(formula: &Formula, config: &Config) -> Result<()
                         let mut removal_errors = 0;
                         if links_to_remove.is_empty() {
                             debug!("Install manifest {} is empty. Cannot perform manifest-based unlink.", manifest_path.display());
-                            debug!("No links recorded in manifest, unlink complete.");
-                            Ok(())
                         } else {
-                            // Use Config to get base paths for checking
+                            // Use Config to get base paths for checking ownership/safety
                             let opt_base = config.opt_dir();
                             let bin_base = config.bin_dir();
                             let lib_base = config.prefix().join("lib");
                             let include_base = config.prefix().join("include");
                             let share_base = config.prefix().join("share");
+                            // Add etc, sbin etc. if needed
 
                             for link_str in links_to_remove {
                                 let link_path = PathBuf::from(link_str);
-                                match link_path.symlink_metadata() {
-                                    Ok(_) => {
-                                        // Check if it's under a managed directory
-                                        if link_path.starts_with(&opt_base)
-                                            || link_path.starts_with(&bin_base)
-                                            || link_path.starts_with(&lib_base)
-                                            || link_path.starts_with(&include_base)
-                                            || link_path.starts_with(&share_base)
-                                        {
-                                            match fs::remove_file(&link_path) {
-                                                Ok(_) => {
-                                                    debug!(
-                                                        "Removed link/wrapper: {}",
-                                                        link_path.display()
-                                                    );
-                                                    unlinked_count += 1;
-                                                }
-                                                Err(e) => {
-                                                    debug!(
-                                                        "Failed to remove link/wrapper {}: {}",
-                                                        link_path.display(),
-                                                        e
-                                                    );
-                                                    removal_errors += 1;
-                                                }
-                                            }
-                                        } else {
+                                // Check if it's under a managed directory (safety check)
+                                if link_path.starts_with(&opt_base)
+                                    || link_path.starts_with(&bin_base)
+                                    || link_path.starts_with(&lib_base)
+                                    || link_path.starts_with(&include_base)
+                                    || link_path.starts_with(&share_base)
+                                {
+                                    match remove_existing_link_target(&link_path) {
+                                        // Use helper
+                                        Ok(_) => {
+                                            debug!("Removed link/wrapper: {}", link_path.display());
+                                            unlinked_count += 1;
+                                        }
+                                        Err(e) => {
+                                            // Log error but continue trying to remove others
                                             debug!(
-                                                "Manifest contains unexpected link path: {}",
-                                                link_path.display()
+                                                "Failed to remove link/wrapper {}: {}",
+                                                link_path.display(),
+                                                e
                                             );
+                                            removal_errors += 1;
                                         }
                                     }
-                                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                                        debug!(
-                                            "Link listed in manifest not found: {}",
-                                            link_path.display()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        debug!(
-                                            "Failed to get metadata for link {}: {}",
-                                            link_path.display(),
-                                            e
-                                        );
-                                        removal_errors += 1;
-                                    }
+                                } else {
+                                    // This indicates a potentially corrupted manifest or a link
+                                    // outside expected areas
+                                    error!("Manifest contains unexpected link path, skipping removal: {}", link_path.display());
+                                    removal_errors += 1; // Count as an error/problem
                                 }
                             }
-                            debug!(
-                                "Successfully unlinked {} artifacts based on manifest.",
-                                unlinked_count
-                            );
-                            if removal_errors > 0 {
-                                debug!("Encountered {} errors while removing links listed in manifest.", removal_errors);
-                            }
-                            Ok(())
                         }
+                        debug!(
+                            "Attempted to unlink {} artifacts based on manifest.",
+                            unlinked_count
+                        );
+                        if removal_errors > 0 {
+                            error!(
+                                "Encountered {} errors while removing links listed in manifest.",
+                                removal_errors
+                            );
+                            // Decide if this should be a hard error - perhaps not if keg is being
+                            // removed anyway? For now, just log
+                            // warnings.
+                        }
+                        Ok(()) // Return Ok even if some links failed, keg removal will happen next
                     }
                     Err(e) => {
-                        error!("Failed to parse formula install manifest {}: {}. Falling back to legacy unlink", manifest_path.display(), e);
-                        unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
-                        // Pass config
+                        error!("Failed to parse formula install manifest {}: {}. Proceeding without detailed unlink.", manifest_path.display(), e);
+                        // Don't error out, allow keg removal to proceed.
+                        Ok(())
                     }
                 }
             }
             Err(e) => {
-                error!(
-                    "Failed to read formula install manifest {}: {}. Falling back to legacy unlink",
-                    manifest_path.display(),
-                    e
-                );
-                unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
-                // Pass config
+                error!("Failed to read formula install manifest {}: {}. Proceeding without detailed unlink.", manifest_path.display(), e);
+                // Don't error out, allow keg removal to proceed.
+                Ok(())
             }
         }
     } else {
         debug!(
-            "Warning: No install manifest found at {}. Falling back to legacy unlink",
+            "Warning: No install manifest found at {}. Cannot perform detailed unlink.",
             manifest_path.display()
         );
-        unlink_formula_binaries_legacy(formula, &expected_keg_path, config)
-        // Pass config
+        // Don't error out, allow keg removal to proceed.
+        Ok(())
     }
 }
 
-// Legacy unlink needs Config now
-fn unlink_formula_binaries_legacy(
-    formula: &Formula,
-    expected_keg_path: &Path,
-    config: &Config,
-) -> Result<()> {
-    debug!("Using legacy unlink for {}", formula.name());
-    // Use config method
-    let bin_dir = config.bin_dir();
-    if !bin_dir.exists() {
-        debug!(
-            "Target bin directory {} does not exist, nothing to do for legacy unlink.",
-            bin_dir.display()
-        );
-        return Ok(());
-    }
-    if !expected_keg_path.is_dir() {
-        debug!(
-            "Expected keg path {} does not exist. Cannot perform legacy unlink.",
-            expected_keg_path.display()
-        );
-        // Use config method
-        let opt_link_path = config.formula_opt_link_path(formula.name());
-        if opt_link_path.symlink_metadata().is_ok() {
-            debug!(
-                "Attempting to remove opt link {} even though keg is missing.",
-                opt_link_path.display()
-            );
-            if let Err(e) = fs::remove_file(&opt_link_path) {
-                debug!(
-                    "Failed to remove legacy opt symlink {}: {}",
-                    opt_link_path.display(),
-                    e
-                );
-            } else {
-                debug!("Removed legacy opt symlink: {}", opt_link_path.display());
-            }
-        }
-        return Ok(());
-    }
-    let formula_content_root = match determine_content_root(expected_keg_path) {
-        Ok(root) => root,
-        Err(_) => {
-            debug!(
-                "Could not determine content root for legacy unlink of {}. Assuming top level.",
-                expected_keg_path.display()
-            );
-            expected_keg_path.to_path_buf()
-        }
-    };
-    debug!(
-        "Legacy unlink using content root: {}",
-        formula_content_root.display()
-    );
-    let formula_bin_dir = formula_content_root.join("bin");
-    let formula_libexec_dir = formula_content_root.join("libexec");
-    let mut unlinked_count = 0;
-    let mut unlink_errors = 0;
-    if formula_bin_dir.is_dir() {
-        match unlink_executables_from_dir(&formula_bin_dir, &bin_dir) {
-            Ok(count) => unlinked_count += count,
-            Err(_) => unlink_errors += 1,
-        }
-    }
-    if formula_libexec_dir.is_dir() {
-        match unlink_executables_from_dir(&formula_libexec_dir, &bin_dir) {
-            Ok(count) => unlinked_count += count,
-            Err(_) => unlink_errors += 1,
-        }
-    }
-    // Use config method
-    let opt_link_path = config.formula_opt_link_path(formula.name());
-    match is_symlink_to(&opt_link_path, expected_keg_path) {
-        Ok(true) => {
-            if let Err(e) = fs::remove_file(&opt_link_path) {
-                debug!(
-                    "Failed to remove legacy opt symlink {}: {}",
-                    opt_link_path.display(),
-                    e
-                );
-                unlink_errors += 1;
-            } else {
-                debug!("Removed legacy opt symlink: {}", opt_link_path.display());
-            }
-        }
-        Ok(false) => debug!(
-            "Legacy unlink: Opt link {} exists but doesn't point to expected keg {}.",
-            opt_link_path.display(),
-            expected_keg_path.display()
-        ),
-        Err(e) => {
-            debug!(
-                "Failed to check legacy opt symlink {}: {}",
-                opt_link_path.display(),
-                e
-            );
-            unlink_errors += 1;
-        }
-    }
-    if unlinked_count == 0
-        && unlink_errors == 0
-        && !formula_bin_dir.exists()
-        && !formula_libexec_dir.exists()
-    {
-        debug!(
-            "Legacy unlink: No bin or libexec directory found in {} and opt link not removed.",
-            formula_content_root.display()
-        );
-    } else if unlinked_count > 0 || unlink_errors == 0 {
-        debug!(
-            "Successfully unlinked {} binaries for {} (legacy method).",
-            unlinked_count,
-            formula.name()
-        );
-        if unlink_errors > 0 {
-            debug!("Encountered {} errors during legacy unlink.", unlink_errors);
-        }
-    } else {
-        error!(
-            "Legacy unlink failed for {}. Encountered {} errors and removed 0 links.",
-            formula.name(),
-            unlink_errors
-        );
-        return Err(SpError::Generic(format!(
-            "Legacy unlink failed for {}",
-            formula.name()
-        )));
-    }
-    Ok(())
-}
-
-// ... (unlink_executables_from_dir, is_executable, is_symlink_to remain unchanged) ...
-fn unlink_executables_from_dir(source_exec_dir: &Path, target_link_dir: &Path) -> Result<usize> {
-    let mut unlinked_count = 0;
-    if !source_exec_dir.is_dir() {
-        return Ok(0);
-    }
-    match fs::read_dir(source_exec_dir) {
-        Ok(entries) => {
-            for entry_result in entries {
-                match entry_result {
-                    Ok(entry) => {
-                        let source_path = entry.path();
-                        if source_path.is_dir() {
-                            unlinked_count +=
-                                unlink_executables_from_dir(&source_path, target_link_dir)?;
-                        } else if source_path.is_file() {
-                            match is_executable(&source_path) {
-                                Ok(true) => {
-                                    let file_name = entry.file_name();
-                                    let target_link = target_link_dir.join(file_name);
-                                    match is_symlink_to(&target_link, &source_path) {
-                                        Ok(true) => match fs::remove_file(&target_link) {
-                                            Ok(_) => {
-                                                debug!(
-                                                    "  Legacy unlinked {} -> {}",
-                                                    target_link.display(),
-                                                    source_path.display()
-                                                );
-                                                unlinked_count += 1;
-                                            }
-                                            Err(e) => {
-                                                debug!(
-                                                    "Failed to remove legacy symlink {}: {}",
-                                                    target_link.display(),
-                                                    e
-                                                );
-                                            }
-                                        },
-                                        Ok(false) => {}
-                                        Err(e) => {
-                                            debug!(
-                                                "Failed to check legacy symlink {}: {}",
-                                                target_link.display(),
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                Ok(false) => {}
-                                Err(e) => {
-                                    debug!(
-                                        "Could not check executable status for {}: {}",
-                                        source_path.display(),
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Failed to process directory entry in {}: {}",
-                            source_exec_dir.display(),
-                            e
-                        );
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            debug!(
-                "Failed to read source directory {} during legacy unlink: {}",
-                source_exec_dir.display(),
-                e
-            );
-            return Err(SpError::Io(std::sync::Arc::new(e)));
-        }
-    }
-    Ok(unlinked_count)
-}
 fn is_executable(path: &Path) -> Result<bool> {
     if !path.try_exists().unwrap_or(false) || !path.is_file() {
         return Ok(false);
@@ -803,59 +579,5 @@ fn is_executable(path: &Path) -> Result<bool> {
         }
     } else {
         Ok(true)
-    }
-}
-fn is_symlink_to(link: &Path, target: &Path) -> Result<bool> {
-    match link.symlink_metadata() {
-        Ok(metadata) => {
-            if !metadata.file_type().is_symlink() {
-                return Ok(false);
-            }
-            match fs::read_link(link) {
-                Ok(link_target_path) => match (target.canonicalize(), link.parent()) {
-                    (Ok(canonical_target), Some(link_parent)) => {
-                        let resolved_link_target = if link_target_path.is_absolute() {
-                            link_target_path
-                        } else {
-                            link_parent.join(&link_target_path)
-                        };
-                        match resolved_link_target.canonicalize() {
-                            Ok(canonical_link_target) => {
-                                Ok(canonical_link_target == canonical_target)
-                            }
-                            Err(e) => {
-                                debug!("Could not canonicalize link target path {} (from link {}): {}. Comparing raw paths.", resolved_link_target.display(), link.display(), e);
-                                Ok(resolved_link_target == canonical_target)
-                            }
-                        }
-                    }
-                    (Err(e), _) => {
-                        debug!(
-                            "Could not canonicalize expected target path {}: {}",
-                            target.display(),
-                            e
-                        );
-                        Ok(false)
-                    }
-                    (_, None) => {
-                        debug!("Could not get parent directory for link {}", link.display());
-                        Ok(false)
-                    }
-                },
-                Err(e) => {
-                    debug!("Failed to read link target for {}: {}", link.display(), e);
-                    Err(SpError::Io(std::sync::Arc::new(e)))
-                }
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => {
-            debug!(
-                "Failed to get symlink metadata for {}: {}",
-                link.display(),
-                e
-            );
-            Err(SpError::Io(std::sync::Arc::new(e)))
-        }
     }
 }

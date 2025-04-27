@@ -6,7 +6,6 @@ use clap::Args;
 use colored::Colorize;
 use serde_json::Value;
 use sp_core::fetch::api;
-use sp_core::model::formula::Formula;
 use sp_core::utils::cache::Cache;
 use sp_core::utils::config::Config;
 use sp_core::utils::error::{Result, SpError};
@@ -77,16 +76,6 @@ impl Info {
             }
         }
     }
-}
-
-/// Public function that retrieves formula information and returns the Formula model
-pub async fn get_formula_info(name: &str, _config: &Config, cache: Arc<Cache>) -> Result<Formula> {
-    let raw_info = get_formula_info_raw(Arc::clone(&cache), name).await?;
-    // Replace map_err closure with direct conversion since SpError implements
-    // From<serde_json::Error>
-    let formula: Formula =
-        serde_json::from_value(raw_info).map_err(|e| SpError::Json(Arc::new(e)))?;
-    Ok(formula)
 }
 
 /// Retrieves formula information from the cache or API as raw JSON
