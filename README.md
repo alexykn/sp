@@ -104,7 +104,7 @@ The `sp` binary will be at `target/release/sp`. Add it to your `PATH`.
 
 ## 📥 Using the Latest Nightly Build
 
-You can download the latest nightly build from [`actions/workflows/rust.yml`](actions/workflows/rust.yml) inside this repository (select a successful build and scroll down to `Artifacts`).
+You can download the latest nightly build from [`actions/workflows/rust.yml`](actions/workflows/rust.yml) inside this repository (select a successful build and scroll down to `Artifacts`). <--- This link seems to be wrong :(
 
 Before running the downloaded binary, remove the quarantine attribute:
 
