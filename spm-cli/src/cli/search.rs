@@ -321,13 +321,13 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     let mut tbl = Table::new();
     tbl.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
 
-        for f in formula_matches {
-        let raw_name = f.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
-        let raw_desc = f.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+        for formula in formula_matches {
+        let raw_name = formula.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+        let raw_desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
         let desc = truncate_vis(raw_desc, desc_max);
 
-// Extract version (adjust if your JSON structure is different)
-        let version = get_version(f);
+    // Extract version (adjust if your JSON structure is different)
+        let version = get_version(formula);
 
         tbl.add_row(Row::new(vec![
             Cell::new("Formula").style_spec("FgC"),
@@ -346,13 +346,13 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     }
 
     // Add cask rows
-    for c in cask_matches {
-        let raw_name = c.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
-        let raw_desc = c.get("desc").and_then(|d| d.as_str()).unwrap_or("");
+    for cask in cask_matches {
+        let raw_name = cask.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+        let raw_desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
         let desc = truncate_vis(raw_desc, desc_max);
 
     // Extract version (adjust if your JSON structure is different)
-        let version = get_version(c);
+        let version = get_version(cask);
 
         tbl.add_row(Row::new(vec![
             Cell::new("Cask").style_spec("FgG"),
