@@ -2,3 +2,10 @@
 Cargo.lock
 .DS_STORE
 NOTES.md
+
+# Out file names I like to use for stuff
+error
+diff
+one
+two
+log
