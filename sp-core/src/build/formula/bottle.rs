@@ -605,73 +605,12 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 );
             }
 
-            // 7. Re-sign the modified binaries (KEEP THIS)
-            debug!("Re-signing Python library: {}", python_lib.display());
-            let status_sign_lib = StdCommand::new("codesign")
-                .args([
-                    "-s",
-                    "-",
-                    "--force",
-                    "--preserve-metadata=identifier,entitlements",
-                    python_lib.to_str().unwrap(),
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map_err(|e| SpError::Io(Arc::new(e)))?;
-            if !status_sign_lib.success() {
-                error!("codesign failed for {}", python_lib.display());
-                return Err(SpError::CodesignError(format!(
-                    "Failed to codesign dynamic library: {}",
-                    python_lib.display()
-                )));
-            }
-
-            debug!("Re-signing Python binary: {}", python_bin.display());
-            let status_sign_bin = StdCommand::new("codesign")
-                .args([
-                    "-s",
-                    "-",
-                    "--force",
-                    "--preserve-metadata=identifier,entitlements",
-                    python_bin.to_str().unwrap(),
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map_err(|e| SpError::Io(Arc::new(e)))?;
-            if !status_sign_bin.success() {
-                error!("codesign failed for {}", python_bin.display());
-                return Err(SpError::CodesignError(format!(
-                    "Failed to codesign python binary: {}",
-                    python_bin.display()
-                )));
-            }
-
+            // 7. Re-sign the modified binaries using helper
+            codesign_path(&python_lib)?;
+            codesign_path(&python_bin)?;
             // Re-sign the Python.app binary as well, as it might have been patched
             if python_app.exists() {
-                debug!("Re-signing Python.app binary: {}", python_app.display());
-                let status_sign_app = StdCommand::new("codesign")
-                    .args([
-                        "-s",
-                        "-",
-                        "--force",
-                        "--preserve-metadata=identifier,entitlements",
-                        python_app.to_str().unwrap(),
-                    ])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .map_err(|e| SpError::Io(Arc::new(e)))?;
-                if !status_sign_app.success() {
-                    // Log error but maybe don't fail the whole install for this?
-                    error!(
-                        "codesign failed for Python.app binary: {}",
-                        python_app.display()
-                    );
-                    // Optionally return Err(SpError::CodesignError(...)) here if this should be
-                    // fatal
-                }
+                codesign_path(&python_app)?;
             } else {
                 debug!(
                     "Python.app binary not found at {}, skipping codesign.",
@@ -1066,6 +1005,34 @@ fn original_relocation_scan_and_patch(
         // Treat other errors as warnings for now, but maybe make configurable later?
         // return Err(SpError::InstallError(format!("Bottle relocation encountered errors in {}",
         // install_dir.display())));
+    }
+    Ok(())
+}
+
+/// Convenience wrapper around the `codesign` CLI that signs a single Mach‑O
+/// binary in the same way we previously duplicated in several places.
+/// Keeps the calling sites concise and uniform.
+fn codesign_path(target: &Path) -> Result<()> {
+    debug!("Re‑signing: {}", target.display());
+    let status = StdCommand::new("codesign")
+        .args([
+            "-s",
+            "-",
+            "--force",
+            "--preserve-metadata=identifier,entitlements",
+            target
+                .to_str()
+                .ok_or_else(|| SpError::Generic("Non‑UTF8 path for codesign".into()))?,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| SpError::Io(Arc::new(e)))?;
+    if !status.success() {
+        return Err(SpError::CodesignError(format!(
+            "codesign failed for {}",
+            target.display()
+        )));
     }
     Ok(())
 }
