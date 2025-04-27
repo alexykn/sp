@@ -9,7 +9,6 @@ use colored::Colorize;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use futures::executor::block_on;
 use num_cpus;
-use once_cell::sync::Lazy;
 use serde_json::Value;
 use sp_core::build;
 use sp_core::dependency::{DependencyResolver, ResolutionContext, ResolutionStatus, ResolvedGraph};
@@ -22,7 +21,6 @@ use sp_core::utils::cache::Cache;
 use sp_core::utils::config::Config;
 use sp_core::utils::error::{Result, SpError};
 use threadpool::ThreadPool;
-use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::try_join;
 use tracing::{debug, error, instrument, warn, Instrument};
@@ -71,7 +69,7 @@ pub struct InstallJob {
     target: InstallTarget,
     download_path: PathBuf,
     resolved_graph: Option<Arc<ResolvedGraph>>,
-    is_source_build: bool,  // added flag to indicate source build
+    is_source_build: bool, // added flag to indicate source build
 }
 
 #[derive(Debug)]
@@ -81,8 +79,6 @@ pub enum JobResult {
     FormulaErr(String, SpError),
     CaskErr(String, SpError),
 }
-
-static PRIVILEGED_OP_SEM: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(1));
 
 async fn load_or_fetch_json(
     cache: &Cache,
@@ -116,7 +112,7 @@ async fn load_or_fetch_json(
 // Simple green INFO logger for install actions
 fn info_line(message: impl AsRef<str>) {
     // simple INFO logger: prints “INFO sp::install: <message>” in green
-    println!("{} {}", "INFO".green(), format!("sp::install: {}", message.as_ref()));
+    println!("{} sp::install: {}", "INFO".green(), message.as_ref());
 }
 
 impl Install {
@@ -411,7 +407,11 @@ impl Install {
                         SpError::DownloadError(n, _, _) => n.clone(),
                         _ => "[unknown]".to_string(),
                     };
-                    error!("✖ Failed to prepare install job for '{}': {}", name.cyan(), e);
+                    error!(
+                        "✖ Failed to prepare install job for '{}': {}",
+                        name.cyan(),
+                        e
+                    );
                     if name != "[unknown]" && !overall_errors.iter().any(|(n, _)| n == &name) {
                         overall_errors.push((name.clone(), e));
                     }
@@ -631,10 +631,13 @@ async fn download_target(
             let needs_source_build =
                 build_from_source || !build::formula::has_bottle_for_current_platform(&formula);
             let download_path_result = if needs_source_build {
-                info_line(&format!("{} requires source build, downloading source", formula.name));
+                info_line(format!(
+                    "{} requires source build, downloading source",
+                    formula.name
+                ));
                 build::formula::source::download_source(&formula, &cfg).await
             } else {
-                info_line(&format!("Downloading bottle {}", formula.name));
+                info_line(format!("Downloading bottle {}", formula.name));
                 build::formula::bottle::download_bottle(&formula, &cfg, client.as_ref()).await
             };
             match download_path_result {
@@ -665,7 +668,7 @@ async fn download_target(
             }
         }
         InstallTargetIdentifier::Cask(cask) => {
-            info_line(&format!("Downloading cask {}", cask.token));
+            info_line(format!("Downloading cask {}", cask.token));
             match build::cask::download_cask(&cask, cache.as_ref()).await {
                 Ok(download_path) => {
                     debug!("Download successful: {}", download_path.display());
@@ -710,7 +713,7 @@ fn run_install(job: InstallJob, config: &Config, _cache: Arc<Cache>) -> JobResul
                     fs::create_dir_all(parent_dir).map_err(|e| SpError::Io(Arc::new(e)))?;
                 }
                 let install_res = if needs_source_build {
-                    info_line(&format!("Building {} from source", formula.name));
+                    info_line(format!("Building {} from source", formula.name));
                     let source_path = job.download_path;
                     let resolved_graph = job.resolved_graph.ok_or_else(|| {
                         SpError::Generic("Missing resolved graph for source build".to_string())
@@ -730,7 +733,7 @@ fn run_install(job: InstallJob, config: &Config, _cache: Arc<Cache>) -> JobResul
                         Err(e) => Err(e),
                     }
                 } else {
-                    info_line(&format!("Installing bottle for {}", formula.name));
+                    info_line(format!("Installing bottle for {}", formula.name));
                     let install_dir = build::formula::bottle::install_bottle(
                         &job.download_path,
                         &formula,
@@ -742,7 +745,14 @@ fn run_install(job: InstallJob, config: &Config, _cache: Arc<Cache>) -> JobResul
             }();
             match result {
                 Ok(_) => {
-                    info_line(&format!("Successfully installed: {} ({})", formula_name, formula.install_prefix(&config.cellar).unwrap_or_default().display()));
+                    info_line(format!(
+                        "Successfully installed: {} ({})",
+                        formula_name,
+                        formula
+                            .install_prefix(&config.cellar)
+                            .unwrap_or_default()
+                            .display()
+                    ));
                     JobResult::FormulaOk(formula_name)
                 }
                 Err(e) => {
@@ -753,26 +763,11 @@ fn run_install(job: InstallJob, config: &Config, _cache: Arc<Cache>) -> JobResul
         }
         InstallTarget::Cask(cask) => {
             let cask_token = cask.token.clone();
-            info_line(&format!("Installing cask {}", cask.token));
-            let permit = {
-                debug!("Acquiring privileged operation permit for cask install...");
-                match block_on(PRIVILEGED_OP_SEM.acquire()) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return JobResult::CaskErr(
-                            cask_token,
-                            SpError::Generic(format!("Failed to acquire semaphore: {e}")),
-                        )
-                    }
-                }
-            };
-            debug!("Permit acquired.");
+            info_line(format!("Installing cask {}", cask.token));
             let install_result = build::cask::install_cask(&cask, &job.download_path, config);
-            drop(permit);
-            debug!("Permit released.");
             match install_result {
                 Ok(()) => {
-                    info_line(&format!("Successfully installed: {}", cask_token));
+                    info_line(format!("Successfully installed: {cask_token}"));
                     JobResult::CaskOk(cask_token)
                 }
                 Err(e) => {
