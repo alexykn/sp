@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use clap::Args;
 use colored::Colorize;
-use prettytable::{format, Cell, Row, Table}; // Make sure this is imported
+use prettytable::{Cell, Row, Table, format}; // Make sure this is imported
 use serde_json::Value;
 use sp_common::cache::Cache;
 use sp_common::config::Config;
