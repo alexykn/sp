@@ -65,3 +65,15 @@ jobs:
         with:
           name: sps-macos-arm64
           path: target/release/sp
+
+      - name: Find release binary path
+        id: find-binary
+        run: |
+          binary_name=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].targets[] | select(.kind[] == "bin") | .name')
+          echo "binary_path=target/release/${binary_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload compiled binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sps-macos-arm64
+          path: ${{ steps.find-binary.outputs.binary_path }}
