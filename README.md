@@ -44,6 +44,14 @@ sps his a next‑generation, Rust‑powered package manager inspired by Homebrew
 
 ---
 
+## Trying it out:
+
+```bash
+cargo install sps
+```
+
+---
+
 <img width="856" alt="Screenshot 2025-04-26 at 22 09 41" src="https://github.com/user-attachments/assets/bd4a39ed-d4b3-4d19-9b1c-2edcba5f472d" />
 
 > I know this does not follow one defined style yet. Still thinking about how I actually want it to look so... we'll get there
