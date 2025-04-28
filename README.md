@@ -1,12 +1,12 @@
-# sp
+# sph
 
 > [!WARNING]
 > **ALPHA SOFTWARE**
->sphis experimental, under heavy development, and may be unstable. Use at your own risk!
+>sp his experimental, under heavy development, and may be unstable. Use at your own risk!
 >
-> Uninstalling a cask with brew then reinstalling it withsphwill have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
+> Uninstalling a cask with brew then reinstalling it with sph will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
-sphis a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
+sph his a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
@@ -17,9 +17,9 @@ sphis a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 ## ⚙️ Project Structure
 
-- **sp‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
+- **sph‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
 
-- **sp‑cli** Command‑line interface: `sp` executable wrapping the core library.
+- **sph‑cli** Command‑line interface: `sph` executable wrapping the core library.
 
 ---
 
@@ -38,8 +38,8 @@ sphis a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 ## 🚀 Roadmap
 
 - **Cleanup** old downloads, versions, caches  
-- **Prefix isolation:** support `/opt/sp` as standalone layout  
-- **`sphinit`** helper to bootstrap your environment
+- **Prefix isolation:** support `/opt/sph` as standalone layout  
+- **`sph init`** helper to bootstrap your environment
 - **Ongoing** Bug fixes and stability improvements
 
 ---
@@ -54,35 +54,35 @@ sphis a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 ```sh
 # Print help
-sph--help
+sph --help
 
 # Update metadata
-sphupdate
+sph update
 
 # Search for packages
-sphsearch <formula/cask>
+sph search <formula/cask>
 
 # Get package info
-sphinfo <formula/cask>
+sph info <formula/cask>
 
 # Install bottles or casks
-sphinstall <formula/cask>
+sph install <formula/cask>
 
 # Build and install a formula from source
-sphinstall --build-from-source <formula>
+sph install --build-from-source <formula>
 
 # Uninstall
-sphuninstall <formula/cask>
+sph uninstall <formula/cask>
 
 # Reinstall
-sphreinstall <formula/cask>
+sph reinstall <formula/cask>
 
 #Upgrade
-sphupgrade <formula/cask> or --all
+sph upgrade <formula/cask> or --all
 
 # (coming soon)
-sphcleanup
-sphinit
+sph cleanup
+sph init
 ```
 
 -----
@@ -93,11 +93,11 @@ sphinit
 
 ```sh
 git clone <repo-url>
-cd sp
+cd sph
 cargo build --release
 ```
 
-The `sp` binary will be at `target/release/sp`. Add it to your `PATH`.
+The `sph` binary will be at `target/release/sph`. Add it to your `PATH`.
 
 
 -----
@@ -109,13 +109,13 @@ You can download the latest nightly build from [`actions/workflows/rust.yml`](..
 Before running the downloaded binary, remove the quarantine attribute:
 
 ```sh
-xattr -d com.apple.quarantine ./sp
+xattr -d com.apple.quarantine ./sph
 ```
 
 Then, you can run the binary directly:
 
 ```sh
-./sph--help
+./sph --help
 ```
 
 
@@ -123,7 +123,7 @@ Then, you can run the binary directly:
 
 ## 🤝 Contributing
 
-sphlives and grows by your feedback and code\! We’re particularly looking for:
+sph lives and grows by your feedback and code\! We’re particularly looking for:
 
   - Testing and bug reports for Cask & Bottle installation + `--build-from-source`
   - Test coverage for core and cask modules
@@ -136,7 +136,7 @@ Feel free to open issues or PRs. Every contribution helps\!
 
 ## 📄 License
 
-  - **sp:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
+  - **sph:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
   - Inspired by Homebrew BSD‑2‑Clause — see [NOTICE.md](NOTICE.md)
 
 -----

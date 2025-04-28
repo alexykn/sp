@@ -1,4 +1,4 @@
-# Contributing to sp
+# Contributing to sph
 
 > We love merge requests! This guide shows the fastest path from **idea** to **merged code**. Skip straight to the *Quick‑Start* if you just want to get going, or dive into the details below.
 
@@ -8,8 +8,8 @@
 
 ### 1. Fork, clone & branch
 ```bash
-git clone https://github.com/<your-username>/sp.git
-cd sp
+git clone https://github.com/<your-username>/sph.git
+cd sph
 git checkout -b feat/<topic>
 ```
 
@@ -56,7 +56,7 @@ git push origin feat/<topic>
 | Crate               | Role                                                     |
 | ------------------- | -------------------------------------------------------- |
 | **`sph-core`** | Library: dependency resolution, fetchers, install logic  |
-| **`sph-cli`**  | Binary: user‑facing `sp` command                   |
+| **`sph-cli`**  | Binary: user‑facing `sph` command                   |
 
 All crates live in one Cargo **workspace**, so `cargo <cmd>` from the repo root affects everything.
 
@@ -136,7 +136,7 @@ We follow the [Contributor Covenant][Contributor Covenant]; be kind and inclusiv
 
 -----
 
-Happy coding – and thanks for makingsphbetter! ✨
+Happy coding – and thanks for making sph better! ✨
 
 [rustup.rs]: https://rustup.rs/
 [homebrew]: https://brew.sh/
