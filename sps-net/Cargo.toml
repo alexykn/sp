@@ -1,0 +1,24 @@
+[package]
+name = "sps-net"
+version = "0.1.0"
+edition = "2024"
+description = "Networking library for sps"
+repository = "https://github.com/alexykn/sps"
+license = "BSD-3 Clause"
+
+[dependencies]
+sps-common = { path = "../sps-common" }
+
+tokio = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+url = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+infer = { workspace = true }
+tracing = { workspace = true }
+
+oci-distribution = { version = "0.11.0", optional = true }

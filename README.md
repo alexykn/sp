@@ -1,12 +1,12 @@
-# sph
+# sps
 
 > [!WARNING]
 > **ALPHA SOFTWARE**
->sp his experimental, under heavy development, and may be unstable. Use at your own risk!
+> sps his experimental, under heavy development, and may be unstable. Use at your own risk!
 >
-> Uninstalling a cask with brew then reinstalling it with sph will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
+> Uninstalling a cask with brew then reinstalling it with sps will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
-sph his a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
+sps his a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
@@ -17,9 +17,9 @@ sph his a next‑generation, Rust‑powered package manager inspired by Homebrew
 
 ## ⚙️ Project Structure
 
-- **sph‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
+- **sps‑core** Core library: fetching, dependency resolution, archive extraction, artifact handling (apps, binaries, pkg installers, fonts, plugins, zap/preflight/uninstall stanzas, etc.)
 
-- **sph‑cli** Command‑line interface: `sph` executable wrapping the core library.
+- **sps‑cli** Command‑line interface: `sps` executable wrapping the core library.
 
 ---
 
@@ -38,8 +38,8 @@ sph his a next‑generation, Rust‑powered package manager inspired by Homebrew
 ## 🚀 Roadmap
 
 - **Cleanup** old downloads, versions, caches  
-- **Prefix isolation:** support `/opt/sph` as standalone layout  
-- **`sph init`** helper to bootstrap your environment
+- **Prefix isolation:** support `/opt/sps` as standalone layout  
+- **`sps init`** helper to bootstrap your environment
 - **Ongoing** Bug fixes and stability improvements
 
 ---
@@ -54,35 +54,35 @@ sph his a next‑generation, Rust‑powered package manager inspired by Homebrew
 
 ```sh
 # Print help
-sph --help
+sps --help
 
 # Update metadata
-sph update
+sps update
 
 # Search for packages
-sph search <formula/cask>
+sps search <formula/cask>
 
 # Get package info
-sph info <formula/cask>
+sps info <formula/cask>
 
 # Install bottles or casks
-sph install <formula/cask>
+sps install <formula/cask>
 
 # Build and install a formula from source
-sph install --build-from-source <formula>
+sps install --build-from-source <formula>
 
 # Uninstall
-sph uninstall <formula/cask>
+sps uninstall <formula/cask>
 
 # Reinstall
-sph reinstall <formula/cask>
+sps reinstall <formula/cask>
 
 #Upgrade
-sph upgrade <formula/cask> or --all
+sps upgrade <formula/cask> or --all
 
 # (coming soon)
-sph cleanup
-sph init
+sps cleanup
+sps init
 ```
 
 -----
@@ -93,11 +93,11 @@ sph init
 
 ```sh
 git clone <repo-url>
-cd sph
+cd sps
 cargo build --release
 ```
 
-The `sph` binary will be at `target/release/sph`. Add it to your `PATH`.
+The `sps` binary will be at `target/release/sps`. Add it to your `PATH`.
 
 
 -----
@@ -109,13 +109,13 @@ You can download the latest nightly build from [`actions/workflows/rust.yml`](..
 Before running the downloaded binary, remove the quarantine attribute:
 
 ```sh
-xattr -d com.apple.quarantine ./sph
+xattr -d com.apple.quarantine ./sps
 ```
 
 Then, you can run the binary directly:
 
 ```sh
-./sph --help
+./sps --help
 ```
 
 
@@ -123,7 +123,7 @@ Then, you can run the binary directly:
 
 ## 🤝 Contributing
 
-sph lives and grows by your feedback and code\! We’re particularly looking for:
+sps lives and grows by your feedback and code\! We’re particularly looking for:
 
   - Testing and bug reports for Cask & Bottle installation + `--build-from-source`
   - Test coverage for core and cask modules
@@ -136,7 +136,7 @@ Feel free to open issues or PRs. Every contribution helps\!
 
 ## 📄 License
 
-  - **sph:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
+  - **sps:** BSD‑3‑Clause - see [LICENSE.md](LICENSE.md)
   - Inspired by Homebrew BSD‑2‑Clause — see [NOTICE.md](NOTICE.md)
 
 -----
