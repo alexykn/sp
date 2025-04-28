@@ -9,9 +9,6 @@ authors     = [
 description = "Core library for the sps package manager"
 repository  = "https://github.com/alexykn/sps"
 license     = "BSD-3-Clause"
-readme      = "README.md"
-keywords    = ["package-manager", "macos", "homebrew"]
-categories  = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 sps-net = { path = "../sps-net" }
