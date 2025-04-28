@@ -16,14 +16,14 @@ pub use fetch::oci::{
 };
 pub use sps_common::{
     model::{
-        Cask, Formula,
         cask::{Sha256Field, UrlField},
         formula::ResourceSpec,
+        Cask, Formula,
     }, // Example types needed
     {
-        Config,
         cache::Cache,
         error::{Result, SpsError},
+        Config,
     }, // Need Config, Result, SpsError, Cache
 };
 pub use validation::{validate_url, verify_checksum, verify_content_type /* ... */};

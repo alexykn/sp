@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::Arc; // Import Arc
@@ -1130,7 +1130,7 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
                         }
                     } else {
                         format!("{version_part}.0.0") // e.g., perl@5 -> 5.0.0 (handles case with no
-                        // dot)
+                                                      // dot)
                     };
 
                     if let Ok(v) = semver::Version::parse(&version_str_padded) {

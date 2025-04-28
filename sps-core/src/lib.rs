@@ -6,7 +6,7 @@ pub mod installed; // New
 pub mod tap;
 pub mod uninstall; // New
 pub mod update_check; // New
-//pub mod utils;
+                      //pub mod utils;
 
 // Re-export key types for easier use by the CLI crate
 // Define InstallTargetIdentifier here or ensure it's public from cli/pipeline

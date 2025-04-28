@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use reqwest::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
+use reqwest::Client;
 use serde_json::Value;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};

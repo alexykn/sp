@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use sps_common::cache::Cache;
 use sps_common::error::{Result, SpsError};
-use sps_common::model::InstallTargetIdentifier;
 use sps_common::model::cask::Cask;
 use sps_common::model::formula::Formula;
 use sps_common::model::version::Version;
+use sps_common::model::InstallTargetIdentifier;
 use sps_net::fetch::api;
 use tracing::{debug, warn};
 

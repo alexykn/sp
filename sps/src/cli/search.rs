@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use clap::Args;
 use colored::Colorize;
-use prettytable::{Cell, Row, Table, format}; // Make sure this is imported
+use prettytable::{format, Cell, Row, Table}; // Make sure this is imported
 use serde_json::Value;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
 use sps_net::fetch::api;
-use terminal_size::{Width, terminal_size};
+use terminal_size::{terminal_size, Width};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui;
@@ -127,7 +127,7 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
             tracing::debug!("Formula cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_formulas = api::fetch_all_formulas().await?; // This fetches String
-            // Try to cache the fetched data
+                                                                 // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("formula.json", &all_formulas) {
                 tracing::warn!("Failed to cache formula data after fetching: {}", cache_err);
             }
@@ -172,7 +172,7 @@ async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
             tracing::debug!("Cask cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_casks = api::fetch_all_casks().await?; // Fetches String
-            // Try to cache the fetched data
+                                                           // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("cask.json", &all_casks) {
                 tracing::warn!("Failed to cache cask data after fetching: {}", cache_err);
             }

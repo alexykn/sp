@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, HeaderMap, USER_AGENT};
+use reqwest::header::{HeaderMap, ACCEPT, USER_AGENT};
 use reqwest::{Client, StatusCode};
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};

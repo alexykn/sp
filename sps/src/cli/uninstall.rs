@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use clap::Args;
 use colored::Colorize;
-use sps_common::Cache;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
-use sps_core::{PackageType, UninstallOptions, installed, uninstall as core_uninstall};
+use sps_common::Cache;
+use sps_core::{installed, uninstall as core_uninstall, PackageType, UninstallOptions};
 use tracing::{debug, error}; // Removed warn
 use walkdir;
 

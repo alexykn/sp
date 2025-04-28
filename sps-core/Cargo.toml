@@ -11,33 +11,31 @@ repository  = "https://github.com/alexykn/sps"
 license     = "BSD-3-Clause"
 
 [dependencies]
-sps-net = { path = "../sps-net" }
-sps-common = { path = "../sps-common" }
+sps-net = "0.1.0"
+sps-common = "0.1.0"
 
-# Inherited from workspace
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-env_logger = { workspace = true }
-semver = { workspace = true }
-dirs = { workspace = true }
-walkdir = { workspace = true }
-reqwest = { workspace = true }
-url = { workspace = true }
-sha2 = { workspace = true }
-indicatif = { workspace = true }
-hex = { workspace = true }
-object = { workspace = true }
-tokio = { workspace = true }
-futures = { workspace = true }
-rand = { workspace = true }
-infer = { workspace = true }
-num_cpus = { workspace = true }
-humantime = { workspace = true }
-bitflags = { workspace = true }
-tracing = { workspace = true }
-
+anyhow = "1.0.98"
+thiserror = "2.0.12"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+env_logger = "0.11.8"
+semver = "1.0.26"
+dirs = "6.0.0"
+walkdir = "2.5.0"
+reqwest = { version = "0.12.15", features = ["json", "stream", "blocking"] }
+url = "2.5.4"
+sha2 = "0.10.8"
+indicatif = "0.17.11"
+hex = "0.4.3"
+object = { version = "0.36.7", features = ["read_core", "write_core", "macho"] }
+tokio = { version = "1.44.2", features = ["full"] }
+futures = "0.3.31"
+rand = "0.9.1"
+infer = "0.19.0"
+num_cpus = "1.16.0"
+humantime = "2.2.0"
+bitflags = { version = "2.9.0", features = ["serde"] }
+tracing = "0.1.41"
 devtools = "0.3.3"
 which = "7.0.3"
 toml = "0.8.21"

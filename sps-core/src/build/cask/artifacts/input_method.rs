@@ -8,7 +8,7 @@ use sps_common::config::Config;
 use sps_common::error::Result;
 use sps_common::model::cask::Cask;
 
-use crate::build::cask::{InstalledArtifact, write_cask_manifest};
+use crate::build::cask::{write_cask_manifest, InstalledArtifact};
 
 /// Install `input_method` artifacts from the staged directory into
 /// `~/Library/Input Methods` and record installed artifacts.

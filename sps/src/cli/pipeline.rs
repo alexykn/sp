@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 // use tokio::sync::Mutex; // For async-aware locking if needed later
 use colored::Colorize;
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use futures::executor::block_on;
 use num_cpus;
 use serde_json::Value;
@@ -19,6 +19,7 @@ use sps_common::dependency::{
 use sps_common::error::{Result, SpsError};
 use sps_common::formulary::Formulary;
 use sps_common::keg::KegRegistry;
+use sps_common::model::formula::{Formula, FormulaDependencies};
 use sps_common::model::Cask;
 // --- Shared Data Structures ---
 
@@ -26,7 +27,6 @@ use sps_common::model::Cask;
 // Or defined locally here if InstallTargetIdentifier from core isn't suitable.
 // Assuming we use the one from core for now:
 use sps_common::model::InstallTargetIdentifier;
-use sps_common::model::formula::{Formula, FormulaDependencies};
 use sps_core::build::{self};
 use sps_core::installed::{InstalledPackageInfo, PackageType}; /* Needs implementing in
                                                                 * sps-core */
@@ -36,7 +36,7 @@ use sps_core::update_check::{self, UpdateInfo}; // Needs implementing in sps-cor
 use sps_net::fetch::api;
 use threadpool::ThreadPool;
 use tokio::task::JoinSet;
-use tracing::{Instrument, debug, error, instrument, warn}; // Placeholder: Ensure this is accessible
+use tracing::{debug, error, instrument, warn, Instrument}; // Placeholder: Ensure this is accessible
 
 // Represents the specific action for a pipeline job
 #[derive(Debug, Clone)]
@@ -311,7 +311,7 @@ impl PipelineExecutor {
                             None => {
                                 let msg = format!("Cannot upgrade '{name}': not installed.");
                                 warn!("! {msg}"); // Warn, maybe user meant install?
-                                // Don't add error here, let install handle it if they meant install
+                                                  // Don't add error here, let install handle it if they meant install
                                 processed.insert(name.clone());
                             }
                         }
@@ -595,7 +595,7 @@ impl PipelineExecutor {
                 if errors.iter().any(|(n, _)| n == name) {
                     continue;
                 } // Skip errored deps
-                // Add only if it wasn't an initial target already added
+                  // Add only if it wasn't an initial target already added
                 if !jobs.iter().any(|j| match &j.target {
                     InstallTargetIdentifier::Formula(f) => f.name() == name,
                     _ => false,
@@ -700,7 +700,7 @@ impl PipelineExecutor {
             futures.spawn(async move {
                 let formulae_map = formulae_map_clone; // Use the cloned map
                 let casks_map = casks_map_clone; // Use the cloned map
-                // Check formulae map first
+                                                 // Check formulae map first
                 if let Some(map) = formulae_map {
                     if let Some(f_arc) = map.get(&name) {
                         return (name, Ok(InstallTargetIdentifier::Formula(f_arc.clone())));

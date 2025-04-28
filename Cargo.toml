@@ -7,6 +7,11 @@ members = [
     "sps-net",
 ]
 
+[patch.crates-io]
+sps-common = { path = "sps-common" }
+sps-core   = { path = "sps-core" }
+sps-net    = { path = "sps-net" }
+
 # Shared dependencies defined once
 [workspace.dependencies]
 anyhow = "1.0.98"
