@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use clap::Args;
 use colored::Colorize;
-use prettytable::{format, Table, Cell, Row}; // Make sure this is imported
+use prettytable::{format, Cell, Row, Table}; // Make sure this is imported
 use serde_json::Value;
 use sp_core::fetch::api;
 use sp_core::utils::cache::Cache;
@@ -316,7 +316,7 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
 
     // Calculate widths
     let name_prop_width = leftover / 3;
-    
+
     // TODO: not sure what it is, and what is the purpose of this.
     // let _desc_prop_width = leftover.saturating_sub(name_prop_width);
 
@@ -333,12 +333,15 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     // tbl.set_titles(prettytable::row!["Type", "Name", "Description"]);
 
     for formula in formula_matches {
-        let raw_name = formula.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown");
+        let raw_name = formula
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("Unknown");
         let raw_desc = formula.get("desc").and_then(|d| d.as_str()).unwrap_or("");
         let _name = truncate_vis(raw_name, name_max);
         let desc = truncate_vis(raw_desc, desc_max);
 
-        // Extract version 
+        // Extract version
         let version = get_version(formula);
 
         tbl.add_row(Row::new(vec![
@@ -352,14 +355,15 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     // Add a separation row if both formulas and casks exist
     if !formula_matches.is_empty() && !cask_matches.is_empty() {
         // Use a light horizontal line, spanning all columns
-        tbl.add_row(Row::new(vec![
-            Cell::new(" ").with_hspan(4)
-        ]));
+        tbl.add_row(Row::new(vec![Cell::new(" ").with_hspan(4)]));
     }
 
     // Add cask rows
     for cask in cask_matches {
-        let raw_name = cask.get("token").and_then(|t| t.as_str()).unwrap_or("Unknown");
+        let raw_name = cask
+            .get("token")
+            .and_then(|t| t.as_str())
+            .unwrap_or("Unknown");
         let raw_desc = cask.get("desc").and_then(|d| d.as_str()).unwrap_or("");
         let desc = truncate_vis(raw_desc, desc_max);
 
