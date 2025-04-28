@@ -1,0 +1,17 @@
+[package]
+name = "sph-common"
+version = "0.1.0"
+edition = "2024" # Or "2021" if not using nightly
+
+[dependencies]
+# Inherited from workspace
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+object = { workspace = true }
+semver = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+humantime = { workspace = true }
+bitflags = { workspace = true }

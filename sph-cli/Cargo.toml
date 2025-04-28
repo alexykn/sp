@@ -1,0 +1,48 @@
+[package]
+name = "sph-cli"
+version = "0.1.0"
+edition = "2024" # Or "2021" if not using nightly
+description = "Command-line interface for sph"
+repository = "https://github.com/alexykn/sph"
+license = "BSD-3 Clause"
+
+[[bin]]
+name = "sph"
+path = "src/main.rs"
+
+[dependencies]
+# Local workspace crates
+sph-core = { path = "../sph-core" }
+sph-net = { path = "../sph-net" }
+sph-common = { path = "../sph-common" }
+
+# Inherited from workspace
+serde = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+walkdir = { workspace = true }
+indicatif = { workspace = true }
+env_logger = { workspace = true }
+num_cpus = { workspace = true }
+
+# CLI specific dependencies
+clap = { version = "4.5.37", features = ["derive"] }
+colored = "3.0.0"
+spinners = "4.1"
+dialoguer = "0.11.0"
+prettytable-rs = "0.10"
+terminal_size = "0.4.2"
+textwrap = "0.16.2"
+unicode-width = "0.2.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+crossbeam-channel = "0.5.15"
+threadpool = "1.8.1"
+once_cell = "1.21.3"
+tracing-appender = "0.2.3"
+
+[build-dependencies]
+clap_complete = "4.3"

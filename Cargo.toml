@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "sp-cli",
-    "sp-common",
-    "sp-core",
-    "sp-net",
+    "sph-cli",
+    "sph-common",
+    "sph-core",
+    "sph-net",
 ]
 
 # Shared dependencies defined once

@@ -55,8 +55,8 @@ git push origin feat/<topic>
 
 | Crate               | Role                                                     |
 | ------------------- | -------------------------------------------------------- |
-| **`sp-core`** | Library: dependency resolution, fetchers, install logic  |
-| **`sp-cli`**  | Binary: user‑facing `sp` command                   |
+| **`sph-core`** | Library: dependency resolution, fetchers, install logic  |
+| **`sph-cli`**  | Binary: user‑facing `sp` command                   |
 
 All crates live in one Cargo **workspace**, so `cargo <cmd>` from the repo root affects everything.
 
@@ -136,7 +136,7 @@ We follow the [Contributor Covenant][Contributor Covenant]; be kind and inclusiv
 
 -----
 
-Happy coding – and thanks for making sp better! ✨
+Happy coding – and thanks for makingsphbetter! ✨
 
 [rustup.rs]: https://rustup.rs/
 [homebrew]: https://brew.sh/

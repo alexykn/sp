@@ -2,11 +2,11 @@
 
 > [!WARNING]
 > **ALPHA SOFTWARE**
-> sp is experimental, under heavy development, and may be unstable. Use at your own risk!
+>sphis experimental, under heavy development, and may be unstable. Use at your own risk!
 >
-> Uninstalling a cask with brew then reinstalling it with sp will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
+> Uninstalling a cask with brew then reinstalling it withsphwill have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
-sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
+sphis a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
@@ -39,7 +39,7 @@ sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 - **Cleanup** old downloads, versions, caches  
 - **Prefix isolation:** support `/opt/sp` as standalone layout  
-- **`sp init`** helper to bootstrap your environment
+- **`sphinit`** helper to bootstrap your environment
 - **Ongoing** Bug fixes and stability improvements
 
 ---
@@ -54,35 +54,35 @@ sp is a next‑generation, Rust‑powered package manager inspired by Homebrew. 
 
 ```sh
 # Print help
-sp --help
+sph--help
 
 # Update metadata
-sp update
+sphupdate
 
 # Search for packages
-sp search <formula/cask>
+sphsearch <formula/cask>
 
 # Get package info
-sp info <formula/cask>
+sphinfo <formula/cask>
 
 # Install bottles or casks
-sp install <formula/cask>
+sphinstall <formula/cask>
 
 # Build and install a formula from source
-sp install --build-from-source <formula>
+sphinstall --build-from-source <formula>
 
 # Uninstall
-sp uninstall <formula/cask>
+sphuninstall <formula/cask>
 
 # Reinstall
-sp reinstall <formula/cask>
+sphreinstall <formula/cask>
 
 #Upgrade
-sp upgrade <formula/cask> or --all
+sphupgrade <formula/cask> or --all
 
 # (coming soon)
-sp cleanup
-sp init
+sphcleanup
+sphinit
 ```
 
 -----
@@ -115,7 +115,7 @@ xattr -d com.apple.quarantine ./sp
 Then, you can run the binary directly:
 
 ```sh
-./sp --help
+./sph--help
 ```
 
 
@@ -123,7 +123,7 @@ Then, you can run the binary directly:
 
 ## 🤝 Contributing
 
-sp lives and grows by your feedback and code\! We’re particularly looking for:
+sphlives and grows by your feedback and code\! We’re particularly looking for:
 
   - Testing and bug reports for Cask & Bottle installation + `--build-from-source`
   - Test coverage for core and cask modules
