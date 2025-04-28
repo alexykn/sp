@@ -49,7 +49,7 @@ sps his a next‑generation, Rust‑powered package manager inspired by Homebrew
 ```bash
 cargo install sps
 ```
-
+> due too the amount of work keeping the crates up to date with every change would entail the crates.io published version will only be updated after major changes or fixes (if there are none expect once a week)
 ---
 
 <img width="856" alt="Screenshot 2025-04-26 at 22 09 41" src="https://github.com/user-attachments/assets/bd4a39ed-d4b3-4d19-9b1c-2edcba5f472d" />
