@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "sps-cli",
+    "sps",          # was "sps-cli"
     "sps-common",
     "sps-core",
     "sps-net",

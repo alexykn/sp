@@ -1,5 +1,5 @@
 [package]
-name = "sps-cli"
+name = "sps"
 version = "0.1.0"
 edition = "2024" # Or "2021" if not using nightly
 description = "Command-line interface for sps"
