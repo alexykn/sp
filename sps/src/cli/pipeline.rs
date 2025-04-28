@@ -1176,7 +1176,7 @@ async fn download_target_file(
 
 // Simple green INFO logger for install actions (copied from old install.rs)
 fn info_line(message: impl AsRef<str>) {
-    println!("{} sp::pipeline: {}", "INFO".green(), message.as_ref()); // Indicate pipeline source
+    println!("{} sps::pipeline: {}", "INFO".green(), message.as_ref()); // Indicate pipeline source
 }
 
 // Helper to get string representation of PackageType
