@@ -5,7 +5,7 @@ Purpose: Synchronous Git operations using git2.
 use std::path::Path;
 
 use git2::{FetchOptions, Repository};
-use sp_common::error::{Result, SpError};
+use sps_common::error::{Result, SpsError};
 use tracing::{debug, error, warn};
 
 /// Updates a Git repository by fetching from 'origin' and fast-forwarding 'master'.
@@ -15,13 +15,13 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
 
     let repo = Repository::open(repo_path).map_err(|e| {
         error!("Failed open repo {}: {}", repo_path.display(), e);
-        SpError::Generic(format!("Failed to open tap repository: {e}")) // Keep original context
+        SpsError::Generic(format!("Failed to open tap repository: {e}")) // Keep original context
     })?;
 
     // Fetch updates from origin
     let mut remote = repo.find_remote("origin").map_err(|e| {
         error!("Failed find remote 'origin' in {}: {}", repo_path.display(), e);
-        SpError::Generic(format!("Failed to find remote 'origin': {e}"))
+        SpsError::Generic(format!("Failed to find remote 'origin': {e}"))
     })?;
 
     let mut fetch_options = FetchOptions::new();
@@ -37,7 +37,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
         )
         .map_err(|e| {
             error!("Failed fetch repo {}: {}", repo_path.display(), e);
-            SpError::Generic(format!("Failed to fetch updates: {e}"))
+            SpsError::Generic(format!("Failed to fetch updates: {e}"))
         })?;
     debug!("Fetch complete for {}", repo_path.display());
 
@@ -50,7 +50,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
 
     let remote_branch_ref = repo.find_reference(remote_branch_name).map_err(|e| {
         error!("Failed find ref '{}': {}", remote_branch_name, e);
-        SpError::Generic(format!(
+        SpsError::Generic(format!(
             "Failed to find remote tracking branch '{}': {}",
             remote_branch_name, e
         ))
@@ -64,7 +64,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
                 remote_branch_name,
                 e
             );
-            SpError::Generic(format!(
+            SpsError::Generic(format!(
                 "Failed to get commit from remote tracking branch '{}': {}",
                 remote_branch_name, e
             ))
@@ -73,7 +73,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
     // Analyze merge between local master and origin/master
     let (analysis, _) = repo.merge_analysis(&[&fetch_commit]).map_err(|e| {
         error!("Failed merge analysis: {}", e);
-        SpError::Generic(format!("Failed to analyze merge: {e}"))
+        SpsError::Generic(format!("Failed to analyze merge: {e}"))
     })?;
 
     if analysis.is_up_to_date() {
@@ -89,7 +89,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
         );
         let mut local_ref = repo.find_reference(local_branch_name).map_err(|e| {
             error!("Failed find ref '{}': {}", local_branch_name, e);
-            SpError::Generic(format!("Failed to find local branch '{local_branch_name}': {e}"))
+            SpsError::Generic(format!("Failed to find local branch '{local_branch_name}': {e}"))
         })?;
 
         local_ref
@@ -99,19 +99,19 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
             )
             .map_err(|e| {
                 error!("Failed set target for fast-forward: {}", e);
-                SpError::Generic(format!("Failed to fast-forward: {e}"))
+                SpsError::Generic(format!("Failed to fast-forward: {e}"))
             })?;
 
         repo.set_head(local_branch_name).map_err(|e| {
             error!("Failed set HEAD to '{}': {}", local_branch_name, e);
-            SpError::Generic(format!("Failed to set HEAD: {e}"))
+            SpsError::Generic(format!("Failed to set HEAD: {e}"))
         })?;
 
         // Checkout the updated head to update the working directory
         repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
             .map_err(|e| {
                 error!("Failed checkout HEAD after update: {}", e);
-                SpError::Generic(format!("Failed to checkout HEAD: {e}"))
+                SpsError::Generic(format!("Failed to checkout HEAD: {e}"))
             })?;
 
         debug!(
@@ -127,7 +127,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
             repo_path.display()
         );
         // Consider returning an error or specific status indicating merge needed
-        Err(SpError::Generic(
+        Err(SpsError::Generic(
             "Tap requires merge but automatic merging is not implemented".to_string(),
         ))
     } else {
@@ -137,7 +137,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
             analysis,
             repo_path.display()
         );
-        Err(SpError::Generic(format!(
+        Err(SpsError::Generic(format!(
             "Unexpected repository state in {}: {:?}",
             repo_path.display(),
             analysis

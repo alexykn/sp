@@ -8,9 +8,9 @@ use std::{
     process::{Command, Stdio},
 };
 
-use sp_common::{
+use sps_common::{
     config::Config, // Depends on sp-common
-    error::{Result, SpError},
+    error::{Result, SpsError},
 };
 use tracing::{debug, error, warn};
 
@@ -42,7 +42,7 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
                     debug!("Successfully removed {}: {}", path_type, path.display());
                     Ok(())
                 }
-                Err(SpError::Io(io_err))
+                Err(SpsError::Io(io_err))
                     if use_sudo && io_err.kind() == io::ErrorKind::PermissionDenied =>
                 {
                     warn!(
@@ -59,7 +59,7 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
                         Ok(out) => {
                             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                             error!("Failed to remove {} with sudo: {}", path.display(), stderr);
-                            Err(SpError::IoError(format!(
+                            Err(SpsError::IoError(format!(
                                 "sudo rm -rf failed: {stderr}"
                             ))) // More specific error
                         }
@@ -69,11 +69,11 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
                                 path.display(),
                                 sudo_err
                             );
-                            Err(SpError::from(sudo_err)) // Wrap the execution error
+                            Err(SpsError::from(sudo_err)) // Wrap the execution error
                         }
                     }
                 }
-                Err(SpError::Io(io_err)) if io_err.kind() == io::ErrorKind::NotFound => {
+                Err(SpsError::Io(io_err)) if io_err.kind() == io::ErrorKind::NotFound => {
                     debug!("Path {} already removed.", path.display());
                     Ok(()) // Treat NotFound as success for uninstall
                 }
@@ -83,7 +83,7 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
                 }
             }
         }
-        Err(SpError::Io(io_err)) if io_err.kind() == io::ErrorKind::NotFound => {
+        Err(SpsError::Io(io_err)) if io_err.kind() == io::ErrorKind::NotFound => {
             debug!("Path not found (already removed?): {}", path.display());
             Ok(()) // Treat NotFound as success for uninstall
         }
@@ -100,7 +100,7 @@ pub fn forget_pkgutil(id: &str) -> Result<()> {
     if id.contains('/') || id.contains("..") {
         let msg = format!("Invalid pkgutil receipt id contains disallowed characters: {id}");
         error!(msg);
-        return Err(SpError::ValidationError(msg));
+        return Err(SpsError::ValidationError(msg));
     }
     debug!("Forgetting package receipt (requires sudo): {}", id);
 
@@ -124,14 +124,14 @@ pub fn forget_pkgutil(id: &str) -> Result<()> {
                 Ok(()) // Treat "not found" as success for uninstall idempotency
             } else {
                 error!("Failed to forget package receipt {}: {}", id, stderr);
-                Err(SpError::CommandExecError(format!(
+                Err(SpsError::CommandExecError(format!(
                     "pkgutil --forget failed: {stderr}"
                 )))
             }
         }
         Err(e) => {
             error!("Failed to execute sudo pkgutil --forget {}: {}", id, e);
-            Err(SpError::from(e))
+            Err(SpsError::from(e))
         }
     }
 }
@@ -142,7 +142,7 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
     if label.contains('/') || label.contains("..") {
         let msg = format!("Invalid launchd label contains disallowed characters: {label}");
         error!(msg);
-        return Err(SpError::ValidationError(msg));
+        return Err(SpsError::ValidationError(msg));
     }
     if let Some(p) = plist_path {
         if p.components()
@@ -150,13 +150,13 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
         {
             let msg = format!("Invalid launchd plist path contains '..': {}", p.display());
             error!(msg);
-            return Err(SpError::ValidationError(msg));
+            return Err(SpsError::ValidationError(msg));
         }
         // Could add more safety checks based on config locations if needed
     }
 
     debug!("Unloading launchd agent/daemon (requires sudo): {}", label);
-    let mut first_error: Option<SpError> = None;
+    let mut first_error: Option<SpsError> = None;
 
     // Blocking external command execution
     let unload_output = Command::new("sudo")
@@ -181,7 +181,7 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
                     warn!("Failed to unload launchd item {}: {}", label, stderr);
                     // Store the error, but continue to attempt plist removal
                     if first_error.is_none() {
-                        first_error = Some(SpError::CommandExecError(format!(
+                        first_error = Some(SpsError::CommandExecError(format!(
                             "launchctl unload failed: {stderr}"
                         )));
                     }
@@ -199,7 +199,7 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
             );
             // Store the error and continue
             if first_error.is_none() {
-                first_error = Some(SpError::from(e));
+                first_error = Some(SpsError::from(e));
             }
         }
     }

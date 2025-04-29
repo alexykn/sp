@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-use sp_common::error::{Result, SpError};
+use sps_common::error::{Result, SpsError};
 use tempfile::NamedTempFile;
 use tracing::{debug, error, warn};
 
@@ -36,12 +36,12 @@ pub fn is_file(path: &Path) -> bool {
 
 /// Returns metadata for a path, following symlinks.
 pub fn get_metadata(path: &Path) -> Result<fs::Metadata> {
-    fs::metadata(path).map_err(SpError::from)
+    fs::metadata(path).map_err(SpsError::from)
 }
 
 /// Returns metadata for a path, *without* following symlinks.
 pub fn get_symlink_metadata(path: &Path) -> Result<fs::Metadata> {
-    fs::symlink_metadata(path).map_err(SpError::from)
+    fs::symlink_metadata(path).map_err(SpsError::from)
 }
 
 /// Creates a directory and all its parent components if they are missing.
@@ -49,7 +49,7 @@ pub fn create_dir_all(path: &Path) -> Result<()> {
     debug!("Creating directory recursively: {}", path.display());
     fs::create_dir_all(path).map_err(|e| {
         error!("Failed create dir {}: {}", path.display(), e);
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -60,7 +60,7 @@ pub fn remove_file(path: &Path) -> Result<()> {
         if e.kind() != io::ErrorKind::NotFound {
             error!("Failed remove file {}: {}", path.display(), e);
         }
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -71,7 +71,7 @@ pub fn remove_dir(path: &Path) -> Result<()> {
         if e.kind() != io::ErrorKind::NotFound {
             error!("Failed remove dir {}: {}", path.display(), e);
         }
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -82,7 +82,7 @@ pub fn remove_directory_recursive(path: &Path) -> Result<()> {
         if e.kind() != io::ErrorKind::NotFound {
             error!("Failed remove dir_all {}: {}", path.display(), e);
         }
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -91,7 +91,7 @@ pub fn create_file(path: &Path) -> Result<File> {
     debug!("Creating file: {}", path.display());
     File::create(path).map_err(|e| {
         error!("Failed create file {}: {}", path.display(), e);
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -100,7 +100,7 @@ pub fn open_file(path: &Path) -> Result<File> {
     debug!("Opening file: {}", path.display());
     File::open(path).map_err(|e| {
         error!("Failed open file {}: {}", path.display(), e);
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -109,7 +109,7 @@ pub fn read_to_string(path: &Path) -> Result<String> {
     debug!("Reading file to string: {}", path.display());
     fs::read_to_string(path).map_err(|e| {
         error!("Failed read file {}: {}", path.display(), e);
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -118,13 +118,13 @@ pub fn read_to_bytes(path: &Path) -> Result<Vec<u8>> {
     debug!("Reading file to bytes: {}", path.display());
     fs::read(path).map_err(|e| {
         error!("Failed read file {}: {}", path.display(), e);
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
 /// Copies the entire contents of a reader to a writer.
 pub fn copy_stream<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut W) -> Result<u64> {
-    io::copy(reader, writer).map_err(SpError::from)
+    io::copy(reader, writer).map_err(SpsError::from)
 }
 
 /// Creates a symbolic link. Unix only.
@@ -138,7 +138,7 @@ pub fn create_symlink(target: &Path, link: &Path) -> Result<()> {
             target.display(),
             e
         );
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -149,7 +149,7 @@ pub fn create_symlink(target: &Path, link: &Path) -> Result<()> {
         link.display(),
         target.display()
     );
-    Err(SpError::Generic(
+    Err(SpsError::Generic(
         "Symlinks not supported on this platform".to_string(),
     ))
 }
@@ -160,7 +160,7 @@ pub fn set_permissions(path: &Path, mode: u32) -> Result<()> {
     debug!("Setting permissions on {}: {:o}", path.display(), mode);
     fs::set_permissions(path, Permissions::from_mode(mode)).map_err(|e| {
         error!("Failed set permissions on {}: {}", path.display(), e);
-        SpError::from(e)
+        SpsError::from(e)
     })
 }
 
@@ -178,7 +178,7 @@ pub fn set_permissions(path: &Path, _mode: u32) -> Result<()> {
 /// Preserves original permissions if possible.
 pub fn atomic_write_file(original_path: &Path, content: &[u8]) -> Result<()> {
     let dir = original_path.parent().ok_or_else(|| {
-        SpError::IoError(format!(
+        SpsError::IoError(format!(
             "Cannot get parent directory for {}",
             original_path.display()
         ))
@@ -213,7 +213,7 @@ pub fn atomic_write_file(original_path: &Path, content: &[u8]) -> Result<()> {
             original_path.display(),
             e.error // Log the underlying IO error
         );
-        SpError::Io(Arc::new(e.error)) // Return the IO error wrapped
+        SpsError::Io(Arc::new(e.error)) // Return the IO error wrapped
     })?;
 
     // Restore original permissions if we captured them and platform supports it
@@ -278,7 +278,7 @@ pub fn list_directory_entries(
         }
         Err(e) => {
             error!("Failed to read directory {}: {}", dir_path.display(), e);
-            Err(SpError::from(e))
+            Err(SpsError::from(e))
         }
     }
 }

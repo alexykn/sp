@@ -6,12 +6,12 @@ use std::path::Path;
 use std::sync::Arc; // Keep Arc
 
 use sha2::{Digest, Sha256};
-use sp_common::error::{Result, SpError}; // <-- Use common error
+use sps_common::error::{Result, SpsError}; // <-- Use common error
 use {hex, tracing}; // Use tracing
 
 pub fn verify_checksum(path: &Path, expected: &str) -> Result<()> {
     tracing::debug!("Verifying checksum for: {}", path.display());
-    let mut file = File::open(path).map_err(|e| SpError::Io(Arc::new(e)))?; // Wrap IO error
+    let mut file = File::open(path).map_err(|e| SpsError::Io(Arc::new(e)))?; // Wrap IO error
     let mut hasher = Sha256::new();
     let bytes_copied = io::copy(&mut file, &mut hasher)?;
     let hash_bytes = hasher.finalize();
@@ -27,7 +27,7 @@ pub fn verify_checksum(path: &Path, expected: &str) -> Result<()> {
     if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
-        Err(SpError::ChecksumError(format!( // Use specific error variant
+        Err(SpsError::ChecksumError(format!( // Use specific error variant
             "Checksum mismatch for {}: expected {}, got {}",
             path.display(),
             expected,
