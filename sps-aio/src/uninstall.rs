@@ -2,11 +2,9 @@
 File: sp-aio/src/uninstall.rs (New File)
 Purpose: Primitive uninstall operations (filesystem, pkgutil, launchctl).
 */
-use std::{
-    io,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::io;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use sps_common::{
     config::Config, // Depends on sp-common
@@ -59,9 +57,7 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
                         Ok(out) => {
                             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                             error!("Failed to remove {} with sudo: {}", path.display(), stderr);
-                            Err(SpsError::IoError(format!(
-                                "sudo rm -rf failed: {stderr}"
-                            ))) // More specific error
+                            Err(SpsError::IoError(format!("sudo rm -rf failed: {stderr}"))) // More specific error
                         }
                         Err(sudo_err) => {
                             error!(
@@ -88,7 +84,11 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
             Ok(()) // Treat NotFound as success for uninstall
         }
         Err(e) => {
-            warn!("Failed to get metadata for artifact {}: {}", path.display(), e);
+            warn!(
+                "Failed to get metadata for artifact {}: {}",
+                path.display(),
+                e
+            );
             Err(e) // Propagate other errors
         }
     }
@@ -176,7 +176,8 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
                     && !stderr.contains("service not loaded")
                     && !stderr.contains("No such process")
                     && !stderr.contains("launchctl unload error") // Generic error check
-                    && !stderr.is_empty() // Ignore empty stderr
+                    && !stderr.is_empty()
+                // Ignore empty stderr
                 {
                     warn!("Failed to unload launchd item {}: {}", label, stderr);
                     // Store the error, but continue to attempt plist removal
@@ -207,8 +208,8 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
     // Attempt to remove plist file if path provided
     if let Some(p) = plist_path {
         // Determine if sudo needed based on typical locations
-        let use_sudo = p.starts_with("/Library/LaunchDaemons")
-            || p.starts_with("/Library/LaunchAgents");
+        let use_sudo =
+            p.starts_with("/Library/LaunchDaemons") || p.starts_with("/Library/LaunchAgents");
         debug!("Attempting removal of launchd plist: {}", p.display());
         if let Err(e) = remove_path(p, use_sudo) {
             // Log failure but don't necessarily overwrite the unload error

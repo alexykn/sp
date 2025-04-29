@@ -5,7 +5,7 @@ Purpose: Primitive synchronous filesystem operations.
 use std::{
     fs::{self, File, Permissions},
     io::{self, Read, Write},
-    os::unix::fs::{symlink, PermissionsExt}, // Keep symlink here
+    os::unix::fs::{PermissionsExt, symlink}, // Keep symlink here
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -123,14 +123,21 @@ pub fn read_to_bytes(path: &Path) -> Result<Vec<u8>> {
 }
 
 /// Copies the entire contents of a reader to a writer.
-pub fn copy_stream<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut W) -> Result<u64> {
+pub fn copy_stream<R: Read + ?Sized, W: Write + ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<u64> {
     io::copy(reader, writer).map_err(SpsError::from)
 }
 
 /// Creates a symbolic link. Unix only.
 #[cfg(unix)]
 pub fn create_symlink(target: &Path, link: &Path) -> Result<()> {
-    debug!("Creating symlink {} -> {}", link.display(), target.display());
+    debug!(
+        "Creating symlink {} -> {}",
+        link.display(),
+        target.display()
+    );
     symlink(target, link).map_err(|e| {
         error!(
             "Failed create symlink {} -> {}: {}",
@@ -232,7 +239,11 @@ pub fn atomic_write_file(original_path: &Path, content: &[u8]) -> Result<()> {
     } else if cfg!(unix) {
         // If file didn't exist before, set default permissions (e.g., 644)
         if let Err(e) = set_permissions(original_path, 0o644) {
-             warn!("Failed to set default permissions on new file {}: {}", original_path.display(), e);
+            warn!(
+                "Failed to set default permissions on new file {}: {}",
+                original_path.display(),
+                e
+            );
         }
     }
 

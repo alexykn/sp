@@ -27,7 +27,8 @@ pub fn verify_checksum(path: &Path, expected: &str) -> Result<()> {
     if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
-        Err(SpsError::ChecksumError(format!( // Use specific error variant
+        Err(SpsError::ChecksumError(format!(
+            // Use specific error variant
             "Checksum mismatch for {}: expected {}, got {}",
             path.display(),
             expected,

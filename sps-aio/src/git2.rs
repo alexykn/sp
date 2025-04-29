@@ -20,7 +20,11 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
 
     // Fetch updates from origin
     let mut remote = repo.find_remote("origin").map_err(|e| {
-        error!("Failed find remote 'origin' in {}: {}", repo_path.display(), e);
+        error!(
+            "Failed find remote 'origin' in {}: {}",
+            repo_path.display(),
+            e
+        );
         SpsError::Generic(format!("Failed to find remote 'origin': {e}"))
     })?;
 
@@ -59,11 +63,7 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
     let fetch_commit = repo
         .reference_to_annotated_commit(&remote_branch_ref)
         .map_err(|e| {
-            error!(
-                "Failed get commit from '{}': {}",
-                remote_branch_name,
-                e
-            );
+            error!("Failed get commit from '{}': {}", remote_branch_name, e);
             SpsError::Generic(format!(
                 "Failed to get commit from remote tracking branch '{}': {}",
                 remote_branch_name, e
@@ -89,7 +89,9 @@ pub fn update_repo(repo_path: &Path) -> Result<()> {
         );
         let mut local_ref = repo.find_reference(local_branch_name).map_err(|e| {
             error!("Failed find ref '{}': {}", local_branch_name, e);
-            SpsError::Generic(format!("Failed to find local branch '{local_branch_name}': {e}"))
+            SpsError::Generic(format!(
+                "Failed to find local branch '{local_branch_name}': {e}"
+            ))
         })?;
 
         local_ref
