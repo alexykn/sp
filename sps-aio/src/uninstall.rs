@@ -1,23 +1,24 @@
-/*
-File: sp-aio/src/uninstall.rs (New File)
-Purpose: Primitive uninstall operations (filesystem, pkgutil, launchctl).
-*/
-use std::io;
+// sps-aio/src/uninstall.rs
+// Provides async uninstall operations (filesystem, pkgutil, launchctl).
+// Uses tokio::process for external commands.
+
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio; // Keep for Command setup
+use std::sync::Arc;
 
 use sps_common::{
-    config::Config, // Depends on sp-common
+    config::Config, // Keep Config dependency if needed by helpers
     error::{Result, SpsError},
 };
+use tokio::process::Command; // Use tokio's Command
 use tracing::{debug, error, warn};
 
-use crate::fs as sp_fs; // Use helpers from sp_aio::fs
+use crate::fs as sps_fs; // Use async fs helpers
 
-/// Removes a filesystem path (file, symlink, or directory recursively).
+/// Asynchronously removes a filesystem path (file, symlink, or directory recursively).
 /// Uses sudo rm -rf if direct removal fails with PermissionDenied and use_sudo is true.
-pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
-    match sp_fs::get_symlink_metadata(path) {
+pub async fn remove_path_async(path: &Path, use_sudo: bool) -> Result<()> {
+    match sps_fs::get_symlink_metadata_async(path).await {
         Ok(metadata) => {
             let is_dir = metadata.file_type().is_dir();
             let path_type = if is_dir {
@@ -27,65 +28,80 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
             } else {
                 "file"
             };
-            debug!("Removing {} at: {}", path_type, path.display());
+            debug!("Async Removing {} at: {}", path_type, path.display());
 
             let remove_result = if is_dir {
-                sp_fs::remove_directory_recursive(path)
+                sps_fs::remove_directory_recursive_async(path).await
             } else {
-                sp_fs::remove_file(path)
+                sps_fs::remove_file_async(path).await
             };
 
             match remove_result {
                 Ok(()) => {
-                    debug!("Successfully removed {}: {}", path_type, path.display());
-                    Ok(())
-                }
-                Err(SpsError::Io(io_err))
-                    if use_sudo && io_err.kind() == io::ErrorKind::PermissionDenied =>
-                {
-                    warn!(
-                        "Direct removal failed (Permission Denied). Trying with sudo rm -rf: {}",
+                    debug!(
+                        "Async Successfully removed {}: {}",
+                        path_type,
                         path.display()
                     );
-                    // Blocking external command execution
-                    let output = Command::new("sudo").arg("rm").arg("-rf").arg(path).output();
+                    Ok(())
+                }
+                // Check specifically for PermissionDenied ErrorKind
+                Err(SpsError::Io(io_err_arc))
+                    if use_sudo && io_err_arc.kind() == std::io::ErrorKind::PermissionDenied =>
+                {
+                    warn!(
+                        "Async Direct removal failed (Permission Denied). Trying with sudo rm -rf: {}",
+                        path.display()
+                    );
+                    // Async external command execution
+                    let output = Command::new("sudo")
+                        .arg("rm")
+                        .arg("-rf")
+                        .arg(path)
+                        .output() // Use tokio's Command output()
+                        .await;
                     match output {
                         Ok(out) if out.status.success() => {
-                            debug!("Successfully removed {} with sudo.", path.display());
+                            debug!("Async Successfully removed {} with sudo.", path.display());
                             Ok(())
                         }
                         Ok(out) => {
                             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                            error!("Failed to remove {} with sudo: {}", path.display(), stderr);
-                            Err(SpsError::IoError(format!("sudo rm -rf failed: {stderr}"))) // More specific error
+                            error!(
+                                "Async Failed to remove {} with sudo: {}",
+                                path.display(),
+                                stderr
+                            );
+                            Err(SpsError::IoError(format!("sudo rm -rf failed: {stderr}")))
                         }
                         Err(sudo_err) => {
                             error!(
-                                "Error executing sudo rm for {}: {}",
+                                "Async Error executing sudo rm for {}: {}",
                                 path.display(),
                                 sudo_err
                             );
-                            Err(SpsError::from(sudo_err)) // Wrap the execution error
+                            Err(SpsError::Io(Arc::new(sudo_err))) // Wrap the execution error
                         }
                     }
                 }
-                Err(SpsError::Io(io_err)) if io_err.kind() == io::ErrorKind::NotFound => {
-                    debug!("Path {} already removed.", path.display());
-                    Ok(()) // Treat NotFound as success for uninstall
-                }
                 Err(e) => {
-                    error!("Failed to remove artifact {}: {}", path.display(), e);
+                    // Handles NotFound implicitly as Ok(()) within
+                    // remove_file_async/remove_directory_recursive_async
+                    error!("Async Failed to remove artifact {}: {}", path.display(), e);
                     Err(e) // Propagate other errors
                 }
             }
         }
-        Err(SpsError::Io(io_err)) if io_err.kind() == io::ErrorKind::NotFound => {
-            debug!("Path not found (already removed?): {}", path.display());
+        Err(SpsError::Io(io_err_arc)) if io_err_arc.kind() == std::io::ErrorKind::NotFound => {
+            debug!(
+                "Async Path not found (already removed?): {}",
+                path.display()
+            );
             Ok(()) // Treat NotFound as success for uninstall
         }
         Err(e) => {
             warn!(
-                "Failed to get metadata for artifact {}: {}",
+                "Async Failed to get metadata for artifact {}: {}",
                 path.display(),
                 e
             );
@@ -94,51 +110,69 @@ pub fn remove_path(path: &Path, use_sudo: bool) -> Result<()> {
     }
 }
 
-/// Forgets a package receipt using `pkgutil`. Requires sudo.
-pub fn forget_pkgutil(id: &str) -> Result<()> {
-    // Basic validation
+/// Asynchronously forgets a package receipt using `pkgutil`. Requires sudo.
+#[cfg(target_os = "macos")] // This function is macOS specific
+pub async fn forget_pkgutil_async(id: &str) -> Result<()> {
     if id.contains('/') || id.contains("..") {
         let msg = format!("Invalid pkgutil receipt id contains disallowed characters: {id}");
         error!(msg);
         return Err(SpsError::ValidationError(msg));
     }
-    debug!("Forgetting package receipt (requires sudo): {}", id);
+    debug!("Async Forgetting package receipt (requires sudo): {}", id);
 
-    // Blocking external command execution
     let output = Command::new("sudo")
         .arg("pkgutil")
         .arg("--forget")
         .arg(id)
-        .stderr(Stdio::piped()) // Capture stderr to check for "No receipt found"
-        .output();
+        .stderr(Stdio::piped()) // Capture stderr
+        .output()
+        .await;
 
     match output {
         Ok(out) if out.status.success() => {
-            debug!("Successfully forgot package receipt {}", id);
+            debug!("Async Successfully forgot package receipt {}", id);
             Ok(())
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
             if stderr.contains("No receipt for") {
-                debug!("Package receipt {} already forgotten or never existed.", id);
-                Ok(()) // Treat "not found" as success for uninstall idempotency
+                debug!(
+                    "Async Package receipt {} already forgotten or never existed.",
+                    id
+                );
+                Ok(()) // Treat "not found" as success
             } else {
-                error!("Failed to forget package receipt {}: {}", id, stderr);
+                error!("Async Failed to forget package receipt {}: {}", id, stderr);
                 Err(SpsError::CommandExecError(format!(
                     "pkgutil --forget failed: {stderr}"
                 )))
             }
         }
         Err(e) => {
-            error!("Failed to execute sudo pkgutil --forget {}: {}", id, e);
-            Err(SpsError::from(e))
+            error!(
+                "Async Failed to execute sudo pkgutil --forget {}: {}",
+                id, e
+            );
+            Err(SpsError::Io(Arc::new(e)))
         }
     }
 }
 
-/// Unloads a launchd service/agent and optionally removes its plist file.
-pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) -> Result<()> {
-    // Basic validation
+#[cfg(not(target_os = "macos"))]
+pub async fn forget_pkgutil_async(id: &str) -> Result<()> {
+    warn!("forget_pkgutil called on non-macOS for id: {}", id);
+    Err(SpsError::Generic(
+        "pkgutil is only supported on macOS".to_string(),
+    ))
+}
+
+/// Asynchronously unloads a launchd service/agent and optionally removes its plist file.
+#[cfg(target_os = "macos")] // This function is macOS specific
+pub async fn unload_launchd_async(
+    label: &str,
+    plist_path: Option<&Path>,
+    _config: &Config,
+) -> Result<()> {
     if label.contains('/') || label.contains("..") {
         let msg = format!("Invalid launchd label contains disallowed characters: {label}");
         error!(msg);
@@ -152,77 +186,327 @@ pub fn unload_launchd(label: &str, plist_path: Option<&Path>, _config: &Config) 
             error!(msg);
             return Err(SpsError::ValidationError(msg));
         }
-        // Could add more safety checks based on config locations if needed
     }
 
-    debug!("Unloading launchd agent/daemon (requires sudo): {}", label);
+    debug!(
+        "Async Unloading launchd agent/daemon (requires sudo): {}",
+        label
+    );
     let mut first_error: Option<SpsError> = None;
 
-    // Blocking external command execution
     let unload_output = Command::new("sudo")
         .arg("launchctl")
         .arg("unload")
-        .arg("-w") // -w removes it from future loads as well
+        .arg("-w")
         .arg(label)
         .stderr(Stdio::piped())
-        .output();
+        .output()
+        .await;
 
     match unload_output {
         Ok(out) => {
             if !out.status.success() {
                 let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                // Don't error out if it wasn't loaded or found
                 if !stderr.contains("Could not find specified service")
                     && !stderr.contains("service not loaded")
                     && !stderr.contains("No such process")
-                    && !stderr.contains("launchctl unload error") // Generic error check
+                    && !stderr.contains("launchctl unload error")
                     && !stderr.is_empty()
-                // Ignore empty stderr
                 {
-                    warn!("Failed to unload launchd item {}: {}", label, stderr);
-                    // Store the error, but continue to attempt plist removal
+                    warn!("Async Failed to unload launchd item {}: {}", label, stderr);
                     if first_error.is_none() {
                         first_error = Some(SpsError::CommandExecError(format!(
                             "launchctl unload failed: {stderr}"
                         )));
                     }
                 } else {
-                    debug!("Launchd item {} already unloaded or not found.", label);
+                    debug!(
+                        "Async Launchd item {} already unloaded or not found.",
+                        label
+                    );
                 }
             } else {
-                debug!("Successfully unloaded launchd item {}.", label);
+                debug!("Async Successfully unloaded launchd item {}.", label);
             }
         }
         Err(e) => {
             error!(
-                "Failed to execute sudo launchctl unload for {}: {}",
+                "Async Failed to execute sudo launchctl unload for {}: {}",
                 label, e
             );
-            // Store the error and continue
             if first_error.is_none() {
-                first_error = Some(SpsError::from(e));
+                first_error = Some(SpsError::Io(Arc::new(e)));
             }
         }
     }
 
-    // Attempt to remove plist file if path provided
     if let Some(p) = plist_path {
-        // Determine if sudo needed based on typical locations
         let use_sudo =
             p.starts_with("/Library/LaunchDaemons") || p.starts_with("/Library/LaunchAgents");
-        debug!("Attempting removal of launchd plist: {}", p.display());
-        if let Err(e) = remove_path(p, use_sudo) {
-            // Log failure but don't necessarily overwrite the unload error
-            warn!("Failed to remove launchd plist file {}: {}", p.display(), e);
+        debug!("Async Attempting removal of launchd plist: {}", p.display());
+        if let Err(e) = remove_path_async(p, use_sudo).await {
+            warn!(
+                "Async Failed to remove launchd plist file {}: {}",
+                p.display(),
+                e
+            );
             if first_error.is_none() {
                 first_error = Some(e);
             }
         }
     }
 
-    // Return the first error encountered, or Ok(())
     match first_error {
         Some(e) => Err(e),
         None => Ok(()),
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub async fn unload_launchd_async(
+    label: &str,
+    plist_path: Option<&Path>,
+    _config: &Config,
+) -> Result<()> {
+    warn!(
+        "unload_launchd called on non-macOS for label: {}, path: {:?}",
+        label, plist_path
+    );
+    Err(SpsError::Generic(
+        "launchd is only supported on macOS".to_string(),
+    ))
+}
+
+/// Asynchronously moves a path to the trash. Requires external `trash` CLI or similar.
+/// Uses spawn_blocking as the `trash` crate is sync.
+#[cfg(target_os = "macos")] // Trash functionality might differ significantly
+pub async fn trash_path_async(path: &Path) -> Result<()> {
+    debug!(
+        "Async Trashing path (using spawn_blocking): {}",
+        path.display()
+    );
+    let path_owned = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        // Use the synchronous 'trash' crate inside spawn_blocking
+        match trash::delete(&path_owned) {
+            Ok(()) => {
+                debug!("Successfully trashed {}", path_owned.display());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to trash {}: {}", path_owned.display(), e);
+                // Convert trash::Error to SpsError
+                Err(SpsError::Generic(format!("Trash operation failed: {e}")))
+            }
+        }
+    })
+    .await
+    .map_err(|e| SpsError::Generic(format!("Trash task failed: {e}")))? // Handle JoinError
+}
+
+#[cfg(not(target_os = "macos"))]
+pub async fn trash_path_async(path: &Path) -> Result<()> {
+    warn!(
+        "Trash functionality not implemented for this platform: {}",
+        path.display()
+    );
+    Err(SpsError::Generic(
+        "Trash not supported on this platform".to_string(),
+    ))
+}
+
+// --- Sync Versions (Kept for reference) ---
+
+pub fn remove_path_sync(path: &Path, use_sudo: bool) -> Result<()> {
+    // Existing sync implementation...
+    match sps_fs::get_symlink_metadata_sync(path) {
+        Ok(metadata) => {
+            let is_dir = metadata.file_type().is_dir();
+            let path_type = if is_dir {
+                "directory"
+            } else if metadata.file_type().is_symlink() {
+                "symlink"
+            } else {
+                "file"
+            };
+            debug!("Sync Removing {} at: {}", path_type, path.display());
+            let remove_result = if is_dir {
+                sps_fs::remove_directory_recursive_sync(path)
+            } else {
+                sps_fs::remove_file_sync(path)
+            };
+            match remove_result {
+                Ok(()) => Ok(()),
+                Err(SpsError::Io(io_err))
+                    if use_sudo && io_err.kind() == std::io::ErrorKind::PermissionDenied =>
+                {
+                    warn!("Sync Direct removal failed (Permission Denied). Trying with sudo rm -rf: {}", path.display());
+                    let output = std::process::Command::new("sudo")
+                        .arg("rm")
+                        .arg("-rf")
+                        .arg(path)
+                        .output();
+                    match output {
+                        Ok(out) if out.status.success() => Ok(()),
+                        Ok(out) => {
+                            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                            error!(
+                                "Sync Failed to remove {} with sudo: {}",
+                                path.display(),
+                                stderr
+                            );
+                            Err(SpsError::IoError(format!("sudo rm -rf failed: {stderr}")))
+                        }
+                        Err(sudo_err) => {
+                            error!(
+                                "Sync Error executing sudo rm for {}: {}",
+                                path.display(),
+                                sudo_err
+                            );
+                            Err(SpsError::from(sudo_err))
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Sync Failed to remove artifact {}: {}", path.display(), e);
+                    Err(e)
+                }
+            }
+        }
+        Err(SpsError::Io(io_err)) if io_err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => {
+            warn!(
+                "Sync Failed to get metadata for artifact {}: {}",
+                path.display(),
+                e
+            );
+            Err(e)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn forget_pkgutil_sync(id: &str) -> Result<()> {
+    // Existing sync implementation...
+    if id.contains('/') || id.contains("..") {
+        return Err(SpsError::ValidationError("Invalid pkgutil id".into()));
+    }
+    debug!("Sync Forgetting package receipt (requires sudo): {}", id);
+    let output = std::process::Command::new("sudo")
+        .arg("pkgutil")
+        .arg("--forget")
+        .arg(id)
+        .stderr(Stdio::piped())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            if stderr.contains("No receipt for") {
+                Ok(())
+            } else {
+                error!("Sync Failed to forget package receipt {}: {}", id, stderr);
+                Err(SpsError::CommandExecError(format!(
+                    "pkgutil --forget failed: {stderr}"
+                )))
+            }
+        }
+        Err(e) => {
+            error!("Sync Failed to execute sudo pkgutil --forget {}: {}", id, e);
+            Err(SpsError::from(e))
+        }
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub fn forget_pkgutil_sync(id: &str) -> Result<()> {
+    Err(SpsError::Generic("pkgutil not supported".into()))
+}
+
+#[cfg(target_os = "macos")]
+pub fn unload_launchd_sync(label: &str, plist_path: Option<&Path>, _config: &Config) -> Result<()> {
+    // Existing sync implementation...
+    if label.contains('/') || label.contains("..") {
+        return Err(SpsError::ValidationError("Invalid label".into()));
+    }
+    if let Some(p) = plist_path {
+        if p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(SpsError::ValidationError("Invalid plist path".into()));
+        }
+    }
+    debug!(
+        "Sync Unloading launchd agent/daemon (requires sudo): {}",
+        label
+    );
+    let mut first_error: Option<SpsError> = None;
+    let unload_output = std::process::Command::new("sudo")
+        .arg("launchctl")
+        .arg("unload")
+        .arg("-w")
+        .arg(label)
+        .stderr(Stdio::piped())
+        .output();
+    match unload_output {
+        Ok(out) => {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if !stderr.contains("Could not find")
+                    && !stderr.contains("not loaded")
+                    && !stderr.contains("No such process")
+                    && !stderr.contains("unload error")
+                    && !stderr.is_empty()
+                {
+                    warn!("Sync Failed to unload launchd item {}: {}", label, stderr);
+                    if first_error.is_none() {
+                        first_error = Some(SpsError::CommandExecError(format!(
+                            "launchctl unload failed: {stderr}"
+                        )));
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!(
+                "Sync Failed to execute sudo launchctl unload for {}: {}",
+                label, e
+            );
+            if first_error.is_none() {
+                first_error = Some(SpsError::from(e));
+            }
+        }
+    }
+    if let Some(p) = plist_path {
+        let use_sudo =
+            p.starts_with("/Library/LaunchDaemons") || p.starts_with("/Library/LaunchAgents");
+        debug!("Sync Attempting removal of launchd plist: {}", p.display());
+        if let Err(e) = remove_path_sync(p, use_sudo) {
+            warn!(
+                "Sync Failed to remove launchd plist file {}: {}",
+                p.display(),
+                e
+            );
+            if first_error.is_none() {
+                first_error = Some(e);
+            }
+        }
+    }
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub fn unload_launchd_sync(label: &str, plist_path: Option<&Path>, config: &Config) -> Result<()> {
+    Err(SpsError::Generic("launchd not supported".into()))
+}
+
+#[cfg(target_os = "macos")]
+pub fn trash_path_sync(path: &Path) -> Result<()> {
+    debug!("Sync Trashing path: {}", path.display());
+    trash::delete(path).map_err(|e| SpsError::Generic(format!("Trash failed: {e}")))
+}
+#[cfg(not(target_os = "macos"))]
+pub fn trash_path_sync(path: &Path) -> Result<()> {
+    Err(SpsError::Generic("Trash not supported".into()))
 }
