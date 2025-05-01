@@ -13,7 +13,7 @@ use sps_common::model::InstallTargetIdentifier;
 // Use shared types, including the new PipelinePackageType
 use sps_common::pipeline::{JobAction, PipelineEvent, PipelinePackageType, WorkerJob};
 use tokio::sync::broadcast;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::installed::{InstalledPackageInfo, PackageType as CorePackageType}; /* Alias core
                                                                                 * type */

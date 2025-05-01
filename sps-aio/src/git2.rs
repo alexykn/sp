@@ -129,8 +129,9 @@ pub async fn update_repo_async(repo_path: &Path) -> Result<()> {
     // Spawn the synchronous git2 operations on Tokio's blocking thread pool
     task::spawn_blocking(move || update_repo_sync_internal(&repo_path_owned))
         .await
-        .map_err(|e| SpsError::Generic(format!("Git update task failed: {e}")))? // Handle JoinError
-                                                                                 // The inner Result<() is the result from update_repo_sync_internal
+        .map_err(|e| SpsError::Generic(format!("Git update task failed: {e}")))?
+    // Handle JoinError
+    // The inner Result<() is the result from update_repo_sync_internal
 }
 
 // Keep the original sync function exported if needed

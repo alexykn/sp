@@ -12,7 +12,7 @@ use sps_common::error::Result as SpsResult;
 use sps_common::pipeline::{PipelineEvent, WorkerJob};
 use threadpool::ThreadPool; // Use the threadpool crate as requested
 use tokio::sync::broadcast; // Still use broadcast Sender for events
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use super::worker; // The module doing the actual work
 
@@ -42,7 +42,10 @@ pub fn start_worker_pool_manager(
     // This loop blocks the dedicated thread until the channel is closed and empty.
     for worker_job in worker_job_rx {
         let job_id = worker_job.request.target_id.clone();
-        debug!("[{}] Received job from channel, preparing to submit to pool.", job_id);
+        debug!(
+            "[{}] Received job from channel, preparing to submit to pool.",
+            job_id
+        );
 
         let config_clone = config.clone();
         let cache_clone = Arc::clone(&cache);
@@ -68,7 +71,11 @@ pub fn start_worker_pool_manager(
                 event_tx_clone.clone(), // Pass broadcast sender for worker events
             );
             let job_id_for_log = job_id.clone();
-            debug!("[{}] Worker job execution finished (execute_sync_job returned), result ok: {}", job_id_for_log, job_result.is_ok());
+            debug!(
+                "[{}] Worker job execution finished (execute_sync_job returned), result ok: {}",
+                job_id_for_log,
+                job_result.is_ok()
+            );
 
             // --- Report Final Job Status ---
             let job_id_for_log = job_id.clone();

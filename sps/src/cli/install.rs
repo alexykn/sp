@@ -43,8 +43,6 @@ pub struct InstallArgs {
 impl InstallArgs {
     #[instrument(skip(self, config, cache), fields(targets = ?self.names))]
     pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
-        println!("Installing: {:?}", self.names); // User feedback
-
         // --- Argument Validation (moved from old run) ---
         if self.formula && self.cask {
             return Err(sps_common::error::SpsError::Generic(

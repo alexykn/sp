@@ -29,7 +29,7 @@ use sps_net::fetch::api; // For planning (fetching definitions)
 use sps_net::UrlField; // Import UrlField for Cask URL handling
 use tokio::sync::broadcast; // For events Core/CLI -> CLI Status
 use tokio::task::JoinSet; // For async download phase
-use tracing::{debug, error, info, instrument, warn}; // Import reqwest client
+use tracing::{debug, error, instrument, warn}; // Import reqwest client
 
 // --- Configuration ---
 const WORKER_JOB_CHANNEL_SIZE: usize = 100;
@@ -248,9 +248,15 @@ pub async fn run_pipeline(
     debug!("Waiting for status handler task to finish...");
     debug!("Dropping runner_event_tx.");
     drop(runner_event_tx);
-debug!("event_tx receiver_count after dropping runner_event_tx: {}", event_tx.receiver_count());
-    debug!("event_tx len after dropping runner_event_tx: {}", event_tx.len());
-debug!("Dropping event_tx explicitly.");
+    debug!(
+        "event_tx receiver_count after dropping runner_event_tx: {}",
+        event_tx.receiver_count()
+    );
+    debug!(
+        "event_tx len after dropping runner_event_tx: {}",
+        event_tx.len()
+    );
+    debug!("Dropping event_tx explicitly.");
     drop(event_tx);
     debug!("event_tx dropped explicitly.");
     // Log receiver count again
@@ -755,8 +761,9 @@ async fn plan_operations(
                 "Sorting {} final planned jobs by dependency order",
                 final_planned_jobs.len()
             );
-            sort_planned_jobs_by_dependency_order(&mut final_planned_jobs, graph); // Pass borrowed
-                                                                                   // graph
+            sort_planned_jobs_by_dependency_order(&mut final_planned_jobs, graph);
+            // Pass borrowed
+            // graph
         }
     }
     Ok((final_planned_jobs, errors, already_installed))

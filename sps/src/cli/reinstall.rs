@@ -22,7 +22,6 @@ pub struct ReinstallArgs {
 
 impl ReinstallArgs {
     pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
-        println!("Reinstalling: {:?}", self.names); // User feedback
         let flags = PipelineFlags {
             // Populate flags from args
             build_from_source: self.build_from_source,
