@@ -8,9 +8,7 @@ use serde_json::Value;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
-use sps_net::fetch::api;
-
-use crate::ui;
+use sps_net::api;
 
 #[derive(Args, Debug)]
 pub struct Info {
@@ -29,27 +27,22 @@ impl Info {
         let is_cask = self.cask;
         tracing::debug!("Getting info for package: {name}, is_cask: {is_cask}",);
 
-        // Use the ui utility function to create the spinner
-        let pb = ui::create_spinner(&format!("Loading info for {name}")); // <-- CHANGED
+        // Print loading message instead of spinner
+        println!("Loading info for {name}");
 
         if self.cask {
             match get_cask_info(Arc::clone(&cache), name).await {
                 Ok(info) => {
-                    pb.finish_and_clear();
                     print_cask_info(name, &info);
                     Ok(())
                 }
-                Err(e) => {
-                    pb.finish_and_clear(); // Ensure spinner is cleared on error
-                    Err(e)
-                }
+                Err(e) => Err(e),
             }
         } else {
             match get_formula_info_raw(Arc::clone(&cache), name).await {
                 Ok(info) => {
                     // Removed bottle check logic here as it was complex and potentially racy.
                     // We'll try formula first, then cask if formula fails.
-                    pb.finish_and_clear(); // Clear spinner after successful fetch
                     print_formula_info(name, &info);
                     return Ok(());
                 }
@@ -58,19 +51,16 @@ impl Info {
                     tracing::debug!("Formula '{}' info failed, trying cask.", name);
                 }
                 Err(e) => {
-                    pb.finish_and_clear(); // Ensure spinner is cleared on other errors
                     return Err(e); // Propagate other errors (API, JSON, etc.)
                 }
             }
             // --- Cask Fallback ---
             match get_cask_info(Arc::clone(&cache), name).await {
                 Ok(info) => {
-                    pb.finish_and_clear();
                     print_cask_info(name, &info);
                     Ok(())
                 }
                 Err(e) => {
-                    pb.finish_and_clear(); // Clear spinner on cask error too
                     Err(e) // Return the cask error if both formula and cask fail
                 }
             }

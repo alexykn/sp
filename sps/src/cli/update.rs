@@ -5,9 +5,7 @@ use std::sync::Arc;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
-use sps_net::fetch::api;
-
-use crate::ui;
+use sps_net::api;
 
 #[derive(clap::Args, Debug)]
 pub struct Update;
@@ -17,7 +15,7 @@ impl Update {
         tracing::debug!("Running manual update..."); // Log clearly it's the manual one
 
         // Use the ui utility function to create the spinner
-        let pb = ui::create_spinner("Updating package lists"); // <-- CHANGED
+        println!("Updating package lists"); // <-- CHANGED
 
         tracing::debug!("Using cache directory: {:?}", config.cache_dir);
 
@@ -26,12 +24,12 @@ impl Update {
             Ok(raw_data) => {
                 cache.store_raw("formula.json", &raw_data)?;
                 tracing::debug!("✓ Successfully cached formulas data");
-                pb.set_message("Cached formulas data");
+                println!("Cached formulas data");
             }
             Err(e) => {
                 let err_msg = format!("Failed to fetch/store formulas from API: {e}");
                 tracing::error!("{}", err_msg);
-                pb.finish_and_clear(); // Clear spinner on error
+                println!(); // Clear spinner on error
                 return Err(e);
             }
         }
@@ -41,12 +39,11 @@ impl Update {
             Ok(raw_data) => {
                 cache.store_raw("cask.json", &raw_data)?;
                 tracing::debug!("✓ Successfully cached casks data");
-                pb.set_message("Cached casks data");
+                println!("Cached casks data");
             }
             Err(e) => {
                 let err_msg = format!("Failed to fetch/store casks from API: {e}");
                 tracing::error!("{}", err_msg);
-                pb.finish_and_clear(); // Clear spinner on error
                 return Err(e);
             }
         }
@@ -70,7 +67,7 @@ impl Update {
             }
         }
 
-        pb.finish_with_message("Update completed successfully!");
+        println!("Update completed successfully!");
         Ok(())
     }
 }

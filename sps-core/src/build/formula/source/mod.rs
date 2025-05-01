@@ -10,7 +10,7 @@ use infer;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
 use sps_common::model::formula::{Formula, FormulaDependencies, ResourceSpec};
-use sps_net::fetch::http as http_fetch;
+use sps_net::http as http_fetch;
 use tracing::{debug, error};
 
 use crate::build::env::BuildEnvironment;

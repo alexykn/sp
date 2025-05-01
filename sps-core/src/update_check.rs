@@ -8,7 +8,7 @@ use sps_common::model::cask::Cask;
 use sps_common::model::formula::Formula;
 use sps_common::model::version::Version;
 use sps_common::model::InstallTargetIdentifier;
-use sps_net::fetch::api;
+use sps_net::api;
 use tracing::{debug, warn};
 
 use crate::installed::{InstalledPackageInfo, PackageType};

@@ -11,7 +11,7 @@ use tokio::fs::File as TokioFile;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error};
 
-use crate::validation::verify_checksum;
+use crate::validation::{validate_url, verify_checksum};
 
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 const CONNECT_TIMEOUT_SECS: u64 = 30;
@@ -81,7 +81,7 @@ pub async fn fetch_formula_source_or_bottle(
         ))
     })?;
     // Validate primary URL
-    crate::validation::validate_url(url)?;
+    validate_url(url)?;
 
     let client = build_http_client()?;
 
@@ -90,7 +90,7 @@ pub async fn fetch_formula_source_or_bottle(
 
     for current_url in urls_to_try {
         // Validate mirror URL
-        crate::validation::validate_url(current_url)?;
+        validate_url(current_url)?;
         tracing::debug!("Attempting download from: {}", current_url);
         match download_and_verify(&client, current_url, &cache_path, sha256_expected).await {
             Ok(path) => {
@@ -127,7 +127,7 @@ pub async fn fetch_resource(
         ))
     })?;
     // Validate resource URL
-    crate::validation::validate_url(&resource.url)?;
+    validate_url(&resource.url)?;
 
     let url_filename = resource
         .url
@@ -288,7 +288,7 @@ async fn download_and_verify(
     tracing::debug!("Finished writing download stream to temp file.");
 
     if !sha256_expected.is_empty() {
-        crate::validation::verify_checksum(&temp_path, sha256_expected)?;
+        verify_checksum(&temp_path, sha256_expected)?;
         tracing::debug!(
             "Checksum verified for temporary file: {}",
             temp_path.display()

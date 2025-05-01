@@ -14,8 +14,6 @@ pub mod env;
 pub mod extract;
 pub mod formula; // <-- Declare the extract module
 
-// --- Re-exports ---
-pub use extract::extract_archive; // <-- Re-export the main function from extract.rs
 // Re-export relevant functions from formula submodule
 pub use formula::{get_formula_cellar_path, write_receipt};
 

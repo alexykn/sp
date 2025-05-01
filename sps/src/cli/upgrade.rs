@@ -6,7 +6,7 @@ use sps_common::config::Config;
 use sps_common::error::Result;
 use sps_core::installed;
 
-use crate::cli::pipeline::{CommandType, PipelineExecutor, PipelineFlags};
+use crate::cli::runner::{self, CommandType, PipelineFlags};
 
 #[derive(Args, Debug)]
 pub struct UpgradeArgs {
@@ -23,20 +23,14 @@ pub struct UpgradeArgs {
 impl UpgradeArgs {
     pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
         let targets = if self.all {
-            println!("Checking all installed packages for upgrades...");
             // Get all installed package names
             let installed = installed::get_installed_packages(config).await?;
             installed.into_iter().map(|p| p.name).collect()
         } else {
-            println!("Checking specified packages for upgrades: {:?}", self.names);
             self.names.clone()
         };
 
-        if targets.is_empty() && !self.all {
-            println!("No packages specified to upgrade.");
-            return Ok(());
-        } else if targets.is_empty() && self.all {
-            println!("No packages installed to upgrade.");
+        if targets.is_empty() {
             return Ok(());
         }
 
@@ -51,7 +45,7 @@ impl UpgradeArgs {
             // ... add other common flags if needed ...
         };
 
-        PipelineExecutor::execute_pipeline(
+        runner::run_pipeline(
             &targets,
             CommandType::Upgrade { all: self.all },
             config,

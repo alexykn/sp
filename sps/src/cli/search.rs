@@ -9,11 +9,9 @@ use serde_json::Value;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
-use sps_net::fetch::api;
+use sps_net::api;
 use terminal_size::{terminal_size, Width};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-use crate::ui;
 
 #[derive(Args, Debug)]
 pub struct Search {
@@ -63,7 +61,7 @@ pub async fn run_search(
     tracing::debug!("Searching for packages matching: {}", query);
 
     // Use the ui utility function to create the spinner
-    let pb = ui::create_spinner(&format!("Searching for \"{query}\"")); // <-- CHANGED
+    println!("Searching for \"{query}\"");
 
     // Store search results
     let mut formula_matches = Vec::new();
@@ -94,7 +92,7 @@ pub async fn run_search(
     }
 
     // Finished searching
-    pb.finish_and_clear();
+    // Spinner removed; nothing to clear.
 
     // Handle potential errors after attempting searches
     if formula_matches.is_empty() && cask_matches.is_empty() {

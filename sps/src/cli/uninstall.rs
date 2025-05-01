@@ -9,8 +9,6 @@ use sps_core::{installed, uninstall as core_uninstall, PackageType, UninstallOpt
 use tracing::{debug, error}; // Removed warn
 use walkdir;
 
-use crate::ui;
-
 #[derive(Args, Debug)]
 pub struct Uninstall {
     /// The names of the formulas or casks to uninstall
@@ -32,7 +30,7 @@ impl Uninstall {
                 continue;
             }
 
-            let pb = ui::create_spinner(&format!("Uninstalling {name}"));
+            println!("Uninstalling {name}...");
 
             match installed::get_installed_package(name, config).await? {
                 Some(installed_info) => {
@@ -59,22 +57,20 @@ impl Uninstall {
                     if let Err(e) = uninstall_result {
                         error!("✖ Failed to uninstall '{}': {}", name.cyan(), e);
                         errors.push((name.to_string(), e));
-                        pb.finish_and_clear();
                     } else {
-                        pb.finish_with_message(format!(
+                        println!(
                             "✓ Uninstalled {:?} {} ({} files, {})",
                             installed_info.pkg_type,
                             name.green(),
                             file_count,
                             format_size(size_bytes)
-                        ));
+                        );
                     }
                 }
                 None => {
                     let msg = format!("Package '{name}' is not installed.");
                     error!("✖ {msg}");
                     errors.push((name.to_string(), SpsError::NotFound(msg)));
-                    pb.finish_and_clear();
                 }
             }
         }

@@ -15,9 +15,10 @@ use crate::cli::upgrade::UpgradeArgs;
 
 pub mod info;
 pub mod install;
-pub mod pipeline;
 pub mod reinstall;
+pub mod runner;
 pub mod search;
+pub mod status;
 pub mod uninstall;
 pub mod update;
 pub mod upgrade;

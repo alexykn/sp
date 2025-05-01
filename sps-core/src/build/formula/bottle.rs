@@ -14,13 +14,15 @@ use semver;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
 use sps_common::model::formula::{BottleFileSpec, Formula, FormulaDependencies};
-use sps_net::fetch::oci;
+use sps_net::oci;
 use sps_net::validation::verify_checksum;
 use tempfile::NamedTempFile;
 use tracing::{debug, error, warn};
 use walkdir::WalkDir;
 
 use super::macho;
+// use crate::extract::extract_archive;
+use crate::build::extract::extract_archive;
 use crate::build::formula::get_current_platform;
 
 pub async fn download_bottle(
@@ -130,7 +132,7 @@ pub async fn download_bottle(
             "Detected standard HTTPS URL, using direct download for: {}",
             bottle_url_str
         );
-        match sps_net::fetch::http::fetch_formula_source_or_bottle(
+        match sps_net::http::fetch_formula_source_or_bottle(
             formula.name(),
             bottle_url_str,
             &bottle_file_spec.sha256,
@@ -353,7 +355,7 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
         install_dir.display(),
         strip_components
     );
-    crate::build::extract::extract_archive(bottle_path, &install_dir, strip_components, "gz")?;
+    extract_archive(bottle_path, &install_dir, strip_components, "gz")?;
     debug!(
         "Ensuring write permissions for extracted files in {}",
         install_dir.display()

@@ -4,7 +4,6 @@ use std::{
     io, // Keep io for ErrorKind
     path::Path,
     process::{Command, Stdio},
-    sync::Arc,
 };
 
 use serde_json;
@@ -33,10 +32,28 @@ pub fn uninstall_formula_artifacts(
     build::formula::link::unlink_formula_artifacts(&info.name, &info.version, config)?;
     if info.path.exists() {
         debug!("Removing formula keg directory: {}", info.path.display());
-        fs::remove_dir_all(&info.path).map_err(|e| {
-            error!("Failed remove keg {}: {}", info.path.display(), e);
-            SpsError::Io(Arc::new(e))
-        })?;
+        // Use the helper function which includes sudo fallback logic
+        // Keg directories in Cellar typically require sudo permission.
+        let use_sudo = true;
+        if !remove_filesystem_artifact(&info.path, use_sudo) {
+            // remove_filesystem_artifact returns bool. If it failed, check if the path still
+            // exists. If it still exists, it means even sudo failed or wasn't attempted
+            // correctly.
+            if info.path.exists() {
+                error!(
+                    "Failed remove keg {}: Check logs for sudo errors or other filesystem issues.",
+                    info.path.display()
+                );
+                // Return an error to signal failure
+                return Err(SpsError::InstallError(format!(
+                    "Failed to remove keg directory: {}",
+                    info.path.display()
+                )));
+            } else {
+                // If the path doesn't exist, removal (likely via sudo) was successful.
+                debug!("Keg directory successfully removed (possibly with sudo).");
+            }
+        }
     } else {
         warn!(
             "Keg directory {} not found during uninstall.",
