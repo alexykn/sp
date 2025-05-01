@@ -53,3 +53,5 @@ tar = "0.4.44"
 zip = "2.6.1"
 chrono = { version = "0.4.41", features = ["serde"] }
 async-recursion = "1.1.1"
+crossbeam-channel = "0.5.15"
+threadpool = "1.8.1"

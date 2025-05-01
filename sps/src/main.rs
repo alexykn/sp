@@ -16,7 +16,6 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::EnvFilter;
 
 mod cli;
-mod ui;
 
 use cli::{CliArgs, Command};
 

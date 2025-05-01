@@ -48,6 +48,8 @@ tracing-appender = "0.2.3"
 sps-common = "0.1.0"
 sps-net    = "0.1.0"
 sps-core   = "0.1.0"
+ratatui = "0.29.0"
+crossterm = "0.29.0"
 
 [build-dependencies]
 clap_complete = "4.5.48"

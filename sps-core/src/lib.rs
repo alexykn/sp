@@ -3,6 +3,7 @@
 // Declare the top-level modules within the library crate
 pub mod build;
 pub mod installed; // New
+pub mod pipeline;
 pub mod tap;
 pub mod uninstall; // New
 pub mod update_check; // New

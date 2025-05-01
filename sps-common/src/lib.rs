@@ -6,6 +6,7 @@ pub mod error;
 pub mod formulary;
 pub mod keg;
 pub mod model;
+pub mod pipeline;
 // Optional: pub mod dependency_def;
 
 // Re-export key types
