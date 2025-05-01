@@ -6,7 +6,7 @@ use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
 
-use crate::cli::pipeline::{CommandType, PipelineExecutor, PipelineFlags};
+use crate::cli::runner::{self, CommandType, PipelineFlags};
 
 #[derive(Args, Debug)]
 pub struct ReinstallArgs {
@@ -30,13 +30,6 @@ impl ReinstallArgs {
             skip_recommended: true,  /* Reinstall usually doesn't change recommended deps
                                       * ... add other common flags if needed ... */
         };
-        PipelineExecutor::execute_pipeline(
-            &self.names,
-            CommandType::Reinstall,
-            config,
-            cache,
-            &flags,
-        )
-        .await
+        runner::run_pipeline(&self.names, CommandType::Reinstall, config, cache, &flags).await
     }
 }

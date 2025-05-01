@@ -6,7 +6,7 @@ use sps_common::config::Config;
 use sps_common::error::Result;
 use sps_core::installed;
 
-use crate::cli::pipeline::{CommandType, PipelineExecutor, PipelineFlags};
+use crate::cli::runner::{self, CommandType, PipelineFlags};
 
 #[derive(Args, Debug)]
 pub struct UpgradeArgs {
@@ -51,7 +51,7 @@ impl UpgradeArgs {
             // ... add other common flags if needed ...
         };
 
-        PipelineExecutor::execute_pipeline(
+        runner::run_pipeline(
             &targets,
             CommandType::Upgrade { all: self.all },
             config,

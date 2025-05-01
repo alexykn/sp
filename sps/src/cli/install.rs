@@ -9,7 +9,7 @@ use sps_common::error::Result;
 use tracing::instrument;
 
 // Import pipeline components from the new module
-use crate::cli::pipeline::{CommandType, PipelineExecutor, PipelineFlags};
+use crate::cli::runner::{self, CommandType, PipelineFlags};
 
 // Keep the Args struct specific to 'install' if needed, or reuse a common one
 #[derive(Debug, Args)]
@@ -66,7 +66,7 @@ impl InstallArgs {
         let initial_targets = self.names.clone(); // For install, all names are initial targets
 
         // --- Execute the Pipeline ---
-        PipelineExecutor::execute_pipeline(
+        runner::run_pipeline(
             &initial_targets,
             CommandType::Install, // Specify the command type
             config,
