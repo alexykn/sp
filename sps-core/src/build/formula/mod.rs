@@ -1,5 +1,4 @@
 // ===== sps-core/src/build/formula/mod.rs =====
-use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -149,101 +148,6 @@ fn get_current_platform() -> String {
         );
         "unknown".to_string()
     }
-}
-
-// --- extract_archive and helpers (unchanged) ---
-pub fn extract_archive(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    fs::create_dir_all(target_dir)?;
-    let extension = archive_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
-    match extension {
-        "tar" => extract_tar(archive_path, target_dir),
-        "gz" | "tgz" => extract_tar_gz(archive_path, target_dir),
-        "bz2" | "tbz" | "tbz2" => extract_tar_bz2(archive_path, target_dir),
-        "xz" | "txz" => extract_tar_xz(archive_path, target_dir),
-        "zip" => extract_zip(archive_path, target_dir),
-        _ => Err(SpsError::Generic(format!(
-            "Unsupported archive format: {extension}"
-        ))),
-    }
-}
-fn extract_tar(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    let output = Command::new("tar")
-        .arg("-xf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(target_dir)
-        .output()?;
-    if !output.status.success() {
-        return Err(SpsError::Generic(format!(
-            "Failed to extract tar archive: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(())
-}
-fn extract_tar_gz(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    let output = Command::new("tar")
-        .arg("-xzf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(target_dir)
-        .output()?;
-    if !output.status.success() {
-        return Err(SpsError::Generic(format!(
-            "Failed to extract tar.gz archive: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(())
-}
-fn extract_tar_bz2(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    let output = Command::new("tar")
-        .arg("-xjf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(target_dir)
-        .output()?;
-    if !output.status.success() {
-        return Err(SpsError::Generic(format!(
-            "Failed to extract tar.bz2 archive: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(())
-}
-fn extract_tar_xz(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    let output = Command::new("tar")
-        .arg("-xJf")
-        .arg(archive_path)
-        .arg("-C")
-        .arg(target_dir)
-        .output()?;
-    if !output.status.success() {
-        return Err(SpsError::Generic(format!(
-            "Failed to extract tar.xz archive: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(())
-}
-fn extract_zip(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    let output = Command::new("unzip")
-        .arg("-qq")
-        .arg("-o")
-        .arg(archive_path)
-        .arg("-d")
-        .arg(target_dir)
-        .output()?;
-    if !output.status.success() {
-        return Err(SpsError::Generic(format!(
-            "Failed to extract zip archive: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    Ok(())
 }
 
 // REMOVED: get_cellar_path (now in Config)

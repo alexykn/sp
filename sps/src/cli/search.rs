@@ -9,7 +9,7 @@ use serde_json::Value;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
-use sps_net::fetch::api;
+use sps_net::api;
 use terminal_size::{terminal_size, Width};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 

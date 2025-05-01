@@ -25,7 +25,7 @@ use sps_common::pipeline::{JobAction, PipelineEvent, PlannedJob, WorkerJob};
 use sps_core::build; // For has_bottle and download functions
 use sps_core::installed::{self};
 use sps_core::update_check::{self, UpdateInfo};
-use sps_net::fetch::api; // For planning (fetching definitions)
+use sps_net::api; // For planning (fetching definitions)
 use sps_net::UrlField; // Import UrlField for Cask URL handling
 use tokio::sync::broadcast; // For events Core/CLI -> CLI Status
 use tokio::task::JoinSet; // For async download phase

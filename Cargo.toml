@@ -5,14 +5,12 @@ members = [
     "sps-common",
     "sps-core",
     "sps-net",
-    "sps-aio"
 ]
 
 [patch.crates-io]
 sps-common  = { path = "sps-common" }
 sps-core    = { path = "sps-core" }
 sps-net     = { path = "sps-net" }
-sps-aio     = { path = "sps-aio" }
 
 # Shared dependencies defined once
 [workspace.dependencies]

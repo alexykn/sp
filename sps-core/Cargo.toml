@@ -13,7 +13,6 @@ license     = "BSD-3-Clause"
 [dependencies]
 sps-net = "0.1.0"
 sps-common = "0.1.0"
-sps-aio = "0.1.1"
 
 anyhow = "1.0.98"
 thiserror = "2.0.12"

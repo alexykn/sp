@@ -5,7 +5,7 @@ use std::sync::Arc;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
-use sps_net::fetch::api;
+use sps_net::api;
 
 #[derive(clap::Args, Debug)]
 pub struct Update;
