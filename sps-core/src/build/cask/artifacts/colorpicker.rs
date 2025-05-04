@@ -7,10 +7,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 /// Installs any `colorpicker` stanzas from the Cask definition.
 ///
@@ -66,7 +65,7 @@ pub fn install_colorpicker(
                             }
 
                             // Record as a moved artifact (bundle installed)
-                            installed.push(InstalledArtifact::App { path: dest.clone() });
+                            installed.push(InstalledArtifact::MovedResource { path: dest.clone() });
 
                             // Symlink back into Caskroom for reference
                             // :contentReference[oaicite:5]{index=5}

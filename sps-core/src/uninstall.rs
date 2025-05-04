@@ -1,19 +1,36 @@
 // sps-core/src/uninstall.rs
+// Removed unused 'dirs' import
+use std::path::Component;
 use std::{
     fs,
-    io, // Keep io for ErrorKind
-    path::Path,
+    io,                    // Keep io for ErrorKind
+    path::{Path, PathBuf}, // Combine PathBuf here
     process::{Command, Stdio},
+    // error::Error as StdError, // Removed unused import
 };
 
+use lazy_static::lazy_static;
+use regex::Regex;
 use serde_json;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
+use sps_common::model::artifact::InstalledArtifact;
+use sps_common::model::cask::{Cask, ZapActionDetail};
 use tracing::{debug, error, warn};
+use trash; // Removed ZapStanza
 
 use crate::build;
-use crate::build::cask::{CaskInstallManifest, InstalledArtifact};
+use crate::build::cask::CaskInstallManifest;
 use crate::installed::InstalledPackageInfo;
+
+lazy_static! {
+    static ref VALID_PKGID_RE: Regex = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();
+    static ref VALID_LABEL_RE: Regex = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();
+    static ref VALID_SCRIPT_PATH_RE: Regex = Regex::new(r"^[a-zA-Z0-9/._-]+$").unwrap();
+    static ref VALID_SIGNAL_RE: Regex = Regex::new(r"^[A-Z0-9]+$").unwrap();
+    static ref VALID_BUNDLE_ID_RE: Regex =
+        Regex::new(r"^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$").unwrap();
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct UninstallOptions {
@@ -32,25 +49,18 @@ pub fn uninstall_formula_artifacts(
     build::formula::link::unlink_formula_artifacts(&info.name, &info.version, config)?;
     if info.path.exists() {
         debug!("Removing formula keg directory: {}", info.path.display());
-        // Use the helper function which includes sudo fallback logic
-        // Keg directories in Cellar typically require sudo permission.
         let use_sudo = true;
         if !remove_filesystem_artifact(&info.path, use_sudo) {
-            // remove_filesystem_artifact returns bool. If it failed, check if the path still
-            // exists. If it still exists, it means even sudo failed or wasn't attempted
-            // correctly.
             if info.path.exists() {
                 error!(
                     "Failed remove keg {}: Check logs for sudo errors or other filesystem issues.",
                     info.path.display()
                 );
-                // Return an error to signal failure
                 return Err(SpsError::InstallError(format!(
                     "Failed to remove keg directory: {}",
                     info.path.display()
                 )));
             } else {
-                // If the path doesn't exist, removal (likely via sudo) was successful.
                 debug!("Keg directory successfully removed (possibly with sudo).");
             }
         }
@@ -63,11 +73,7 @@ pub fn uninstall_formula_artifacts(
     Ok(())
 }
 
-pub fn uninstall_cask_artifacts(
-    info: &InstalledPackageInfo,
-    config: &Config,
-    options: &UninstallOptions,
-) -> Result<()> {
+pub fn uninstall_cask_artifacts(info: &InstalledPackageInfo, config: &Config) -> Result<()> {
     debug!(
         "Uninstalling Cask artifacts for {} version {}",
         info.name, info.version
@@ -85,10 +91,6 @@ pub fn uninstall_cask_artifacts(
                         manifest.artifacts.len()
                     );
                     for artifact in manifest.artifacts.iter().rev() {
-                        if options.skip_zap && is_zap_artifact(artifact, config) {
-                            debug!("Skipping zap artifact: {:?}", artifact);
-                            continue;
-                        }
                         if !process_artifact_uninstall_core(artifact, config) {
                             removal_errors.push(format!("Failed: {artifact:?}"));
                         }
@@ -147,81 +149,65 @@ pub fn uninstall_cask_artifacts(
     }
 }
 
-// --- Helpers (Full Implementations Moved from cli/uninstall.rs) ---
-
-fn is_zap_artifact(artifact: &InstalledArtifact, config: &Config) -> bool {
-    let home_lib = config.home_dir().join("Library");
-    let user_app_support = home_lib.join("Application Support");
-    let user_caches = home_lib.join("Caches");
-    let user_logs = home_lib.join("Logs");
-    let user_prefs = home_lib.join("Preferences");
-    let sys_lib = std::path::PathBuf::from("/Library");
-    let sys_app_support = sys_lib.join("Application Support");
-    let sys_caches = sys_lib.join("Caches");
-    let sys_logs = sys_lib.join("Logs");
-    let sys_prefs = sys_lib.join("Preferences");
-    let sys_launch_agents = sys_lib.join("LaunchAgents");
-    let sys_launch_daemons = sys_lib.join("LaunchDaemons");
-
-    match artifact {
-        InstalledArtifact::App { path }
-        | InstalledArtifact::CaskroomLink {
-            target_path: path, ..
-        }
-        | InstalledArtifact::BinaryLink {
-            target_path: path, ..
-        }
-        | InstalledArtifact::CaskroomReference { path } => {
-            path.starts_with(&user_app_support)
-                || path.starts_with(&user_caches)
-                || path.starts_with(&user_logs)
-                || path.starts_with(&user_prefs)
-                || path.starts_with(&sys_app_support)
-                || path.starts_with(&sys_caches)
-                || path.starts_with(&sys_logs)
-                || path.starts_with(&sys_prefs)
-                || path.starts_with(&sys_launch_agents)
-                || path.starts_with(&sys_launch_daemons)
-                || path.to_string_lossy().contains("CrashReporter")
-        }
-        // ZapTarget artifacts are inherently part of the zap process
-        InstalledArtifact::ZapTarget { .. } => true,
-        InstalledArtifact::PkgUtilReceipt { .. } => true,
-        InstalledArtifact::Launchd { .. } => true,
-    }
-}
+// --- Helpers ---
 
 fn process_artifact_uninstall_core(artifact: &InstalledArtifact, config: &Config) -> bool {
     debug!("Processing artifact removal: {:?}", artifact);
     match artifact {
-        InstalledArtifact::App { path } => {
+        // --- Artifacts removed during STANDARD uninstall ---
+        InstalledArtifact::AppBundle { path } => {
+            debug!(
+                "Standard uninstall: Removing AppBundle at {}",
+                path.display()
+            );
             let use_sudo =
                 path.starts_with(config.applications_dir()) || path.starts_with("/Applications");
             remove_filesystem_artifact(path, use_sudo)
         }
-        InstalledArtifact::CaskroomLink { link_path, .. } => {
-            remove_filesystem_artifact(link_path, false)
-        }
         InstalledArtifact::BinaryLink { link_path, .. } => {
+            debug!(
+                "Standard uninstall: Removing BinaryLink {}",
+                link_path.display()
+            );
             remove_filesystem_artifact(link_path, false)
         }
-        InstalledArtifact::PkgUtilReceipt { id } => forget_pkgutil_receipt(id),
+        InstalledArtifact::ManpageLink { link_path, .. } => {
+            debug!(
+                "Standard uninstall: Removing ManpageLink {}",
+                link_path.display()
+            );
+            remove_filesystem_artifact(link_path, false)
+        }
+        InstalledArtifact::PkgUtilReceipt { id } => {
+            debug!("Standard uninstall: Forgetting PkgUtilReceipt {}", id);
+            forget_pkgutil_receipt(id)
+        }
         InstalledArtifact::Launchd { label, path } => {
+            debug!("Standard uninstall: Unloading Launchd {}", label);
             unload_and_remove_launchd(label, path.as_deref())
         }
-        InstalledArtifact::CaskroomReference { path: _ } => {
-            debug!("Ignoring CaskroomReference artifact during detailed uninstall.");
+
+        // --- Artifacts IGNORED during STANDARD uninstall ---
+        InstalledArtifact::MovedResource { path } => {
+            debug!(
+                "Standard uninstall: Ignoring MovedResource at {}",
+                path.display()
+            );
             true
         }
-        // Handle ZapTarget by performing the specified action
-        InstalledArtifact::ZapTarget {
-            target_path,
-            action: _,
-        } => {
-            debug!("Processing ZapTarget on {}", target_path.display());
-            let use_sudo =
-                target_path.starts_with("/Library") || target_path.starts_with("/Applications");
-            remove_filesystem_artifact(target_path, use_sudo)
+        InstalledArtifact::CaskroomLink { link_path, .. } => {
+            debug!(
+                "Standard uninstall: Ignoring CaskroomLink {} (removed with dir)",
+                link_path.display()
+            );
+            true
+        }
+        InstalledArtifact::CaskroomReference { path } => {
+            debug!(
+                "Standard uninstall: Ignoring CaskroomReference {} (removed with dir)",
+                path.display()
+            );
+            true
         }
     }
 }
@@ -351,79 +337,70 @@ fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
         );
         return false;
     }
-    if let Some(plist_path) = path {
-        if plist_path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            error!(
-                "Invalid launchd plist path contains '..': {}",
-                plist_path.display()
-            );
-            return false;
-        }
-    }
-
-    debug!("Unloading launchd agent/daemon (requires sudo): {}", label);
-    let mut overall_success = true;
-
-    let unload_output = Command::new("sudo")
-        .arg("launchctl")
+    debug!("Unloading launchd service: {}", label);
+    let unload_output = Command::new("launchctl")
         .arg("unload")
-        .arg("-w")
+        .arg("-w") // -w removes the disabled key on unload
         .arg(label)
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped()) // Capture stderr
         .output();
 
     match unload_output {
+        Ok(out) if out.status.success() => {
+            debug!("Successfully unloaded launchd service {}", label);
+        }
         Ok(out) => {
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                if !stderr.contains("Could not find specified service")
-                    && !stderr.contains("service not loaded")
-                {
-                    warn!("Failed to unload launchd item {}: {}", label, stderr.trim());
-                } else {
-                    debug!("Launchd item {} already unloaded or not found.", label);
-                }
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // Ignore "Could not find specified service" or "service not loaded" errors
+            if !stderr.contains("Could not find specified service")
+                && !stderr.contains("service is not loaded")
+            {
+                warn!(
+                    "launchctl unload {} failed (but proceeding): {}",
+                    label,
+                    stderr.trim()
+                );
             } else {
-                debug!("Successfully unloaded launchd item {}.", label);
+                debug!("Launchd service {} already unloaded or not found.", label);
             }
         }
         Err(e) => {
-            error!(
-                "Failed to execute sudo launchctl unload for {}: {}",
+            warn!(
+                "Failed to execute launchctl unload {} (but proceeding): {}",
                 label, e
             );
-            overall_success = false;
         }
     }
 
+    // Attempt to remove the plist file if a path was provided or inferred
     if let Some(plist_path) = path {
+        debug!("Removing launchd plist file: {}", plist_path.display());
+        // Determine if sudo is needed based on path
         let use_sudo = plist_path.starts_with("/Library/LaunchDaemons")
             || plist_path.starts_with("/Library/LaunchAgents");
-        debug!(
-            "Attempting removal of launchd plist: {}",
-            plist_path.display()
-        );
-        if !remove_filesystem_artifact(plist_path, use_sudo) && plist_path.exists() {
-            warn!(
-                "Failed to remove launchd plist file: {}",
-                plist_path.display()
-            );
-            overall_success = false;
+        if !remove_filesystem_artifact(plist_path, use_sudo) {
+            // Log if removal failed, but don't necessarily fail the whole uninstall
+            warn!("Failed to remove launchd plist: {}", plist_path.display());
+            return false; // Indicate failure if plist removal fails
         }
+    } else {
+        debug!(
+            "No path provided for launchd plist removal for label {}",
+            label
+        );
     }
-    overall_success
+
+    true // Return true if unload succeeded or was ignored, and plist removal succeeded or wasn't
+         // needed
 }
 
 fn cleanup_parent_cask_dir(parent_cask_dir: &Path) {
-    if parent_cask_dir.is_dir() {
+    if parent_cask_dir.exists() {
         match std::fs::read_dir(parent_cask_dir) {
             Ok(mut entries) => {
                 if entries.next().is_none() {
                     debug!(
-                        "Removing empty parent cask directory: {}",
+                        "Parent cask directory {} is empty, removing it.",
                         parent_cask_dir.display()
                     );
                     if let Err(e) = std::fs::remove_dir(parent_cask_dir) {
@@ -433,13 +410,375 @@ fn cleanup_parent_cask_dir(parent_cask_dir: &Path) {
                             e
                         );
                     }
+                } else {
+                    debug!(
+                        "Parent cask directory {} is not empty, keeping it.",
+                        parent_cask_dir.display()
+                    );
                 }
             }
-            Err(e) => warn!(
-                "Failed to read parent cask directory {} to check if empty: {}",
-                parent_cask_dir.display(),
-                e
-            ),
+            Err(e) => {
+                warn!(
+                    "Failed to read parent cask directory {} for cleanup check: {}",
+                    parent_cask_dir.display(),
+                    e
+                );
+            }
         }
+    }
+}
+
+// --- Zap Helpers ---
+
+// Helper function to expand tilde
+fn expand_tilde(path_str: &str, home: &Path) -> PathBuf {
+    if let Some(stripped) = path_str.strip_prefix("~/") {
+        home.join(stripped)
+    } else {
+        PathBuf::from(path_str)
+    }
+}
+
+fn is_safe_path(path: &Path, home: &Path, config: &Config) -> bool {
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        warn!("Zap path rejected (contains '..'): {}", path.display());
+        return false;
+    }
+    let allowed_roots = [
+        home.join("Library"),
+        home.join(".config"),
+        PathBuf::from("/Applications"),
+        PathBuf::from("/Library"),
+        config.cache_dir.clone(),
+    ];
+    if allowed_roots.iter().any(|root| path.starts_with(root)) {
+        if path == Path::new("/")
+            || path == home
+            || path == Path::new("/Applications")
+            || path == Path::new("/Library")
+        {
+            warn!("Zap path rejected (too broad): {}", path.display());
+            return false;
+        }
+        return true;
+    }
+    warn!(
+        "Zap path rejected (outside allowed areas): {}",
+        path.display()
+    );
+    false
+}
+
+fn trash_path(path: &Path) -> bool {
+    match trash::delete(path) {
+        Ok(_) => {
+            debug!("Trashed: {}", path.display());
+            true
+        }
+        Err(e) => {
+            warn!(
+                "Failed to trash {} (proceeding anyway): {}",
+                path.display(),
+                e
+            );
+            true
+        }
+    }
+}
+
+pub async fn zap_cask_artifacts(
+    info: &InstalledPackageInfo,
+    cask_def: &Cask,
+    config: &Config,
+) -> Result<()> {
+    debug!("Starting zap process for cask: {}", cask_def.token);
+    let home = config.home_dir();
+    let cask_version_path = &info.path;
+    let mut zap_errors: Vec<String> = Vec::new();
+
+    let zap_stanzas = match &cask_def.zap {
+        Some(stanzas) => stanzas,
+        None => {
+            debug!(
+                "No zap stanza found for cask {}. Zap finished.",
+                cask_def.token
+            );
+            return Ok(());
+        }
+    };
+
+    for stanza in zap_stanzas {
+        for (action_key, action_detail) in &stanza.0 {
+            debug!(
+                "Processing zap action: {} = {:?}",
+                action_key, action_detail
+            );
+            match action_detail {
+                ZapActionDetail::Trash(paths) => {
+                    for path_str in paths {
+                        let target = expand_tilde(path_str, &home);
+                        if is_safe_path(&target, &home, config) {
+                            if !trash_path(&target) {
+                                // Logged within trash_path if there's an actual error
+                            }
+                        } else {
+                            zap_errors
+                                .push(format!("Skipped unsafe trash path {}", target.display()));
+                        }
+                    }
+                }
+                ZapActionDetail::Delete(paths) => {
+                    for path_str in paths {
+                        let target = expand_tilde(path_str, &home);
+                        if is_safe_path(&target, &home, config) {
+                            let use_sudo = target.starts_with("/Library");
+                            let exists_before =
+                                target.exists() || target.symlink_metadata().is_ok();
+                            if exists_before {
+                                if !remove_filesystem_artifact(&target, use_sudo)
+                                    && (target.exists() || target.symlink_metadata().is_ok())
+                                {
+                                    zap_errors
+                                        .push(format!("Failed to delete {}", target.display()));
+                                }
+                            } else {
+                                debug!(
+                                    "Zap target {} not found, skipping removal.",
+                                    target.display()
+                                );
+                            }
+                        } else {
+                            zap_errors
+                                .push(format!("Skipped unsafe delete path {}", target.display()));
+                        }
+                    }
+                }
+                ZapActionDetail::Rmdir(paths) => {
+                    for path_str in paths {
+                        let target = expand_tilde(path_str, &home);
+                        if is_safe_path(&target, &home, config) {
+                            let use_sudo = target.starts_with("/Library");
+                            let exists_before =
+                                target.exists() || target.symlink_metadata().is_ok();
+                            if exists_before {
+                                if !target.is_dir() {
+                                    warn!(
+                                        "Zap rmdir target is not a directory: {}",
+                                        target.display()
+                                    );
+                                } else if !remove_filesystem_artifact(&target, use_sudo)
+                                    && (target.exists() || target.symlink_metadata().is_ok())
+                                {
+                                    zap_errors
+                                        .push(format!("Failed to rmdir {}", target.display()));
+                                }
+                            } else {
+                                debug!(
+                                    "Zap target {} not found, skipping removal.",
+                                    target.display()
+                                );
+                            }
+                        } else {
+                            zap_errors
+                                .push(format!("Skipped unsafe rmdir path {}", target.display()));
+                        }
+                    }
+                }
+                ZapActionDetail::Pkgutil(ids_sv) => {
+                    for id in ids_sv.clone().into_vec() {
+                        if !forget_pkgutil_receipt(&id) {
+                            // Error/warning logged within helper
+                        }
+                    }
+                }
+                ZapActionDetail::Launchctl(labels_sv) => {
+                    for label in labels_sv.clone().into_vec() {
+                        let potential_paths = vec![
+                            home.join("Library/LaunchAgents")
+                                .join(format!("{label}.plist")),
+                            PathBuf::from("/Library/LaunchAgents").join(format!("{label}.plist")),
+                            PathBuf::from("/Library/LaunchDaemons").join(format!("{label}.plist")),
+                        ];
+                        let path_to_try = potential_paths.into_iter().find(|p| p.exists());
+
+                        if !unload_and_remove_launchd(&label, path_to_try.as_deref()) {
+                            // Error/warning logged within helper
+                        }
+                    }
+                }
+                ZapActionDetail::Script { executable, args } => {
+                    let script_rel_path_str = executable;
+                    if !VALID_SCRIPT_PATH_RE.is_match(script_rel_path_str) {
+                        error!(
+                            "Zap script path contains invalid characters: '{}'. Skipping.",
+                            script_rel_path_str
+                        );
+                        zap_errors.push(format!(
+                            "Skipped invalid script path: {script_rel_path_str}"
+                        ));
+                        continue;
+                    }
+                    let script_rel_path = PathBuf::from(script_rel_path_str);
+                    if script_rel_path.is_absolute()
+                        || script_rel_path
+                            .components()
+                            .any(|c| matches!(c, Component::ParentDir))
+                    {
+                        error!(
+                            "Zap script path is absolute or contains '..': '{}'. Skipping.",
+                            script_rel_path.display()
+                        );
+                        zap_errors.push(format!(
+                            "Skipped unsafe script path: {}",
+                            script_rel_path.display()
+                        ));
+                        continue;
+                    }
+                    let script_full_path = cask_version_path.join(&script_rel_path);
+                    if !script_full_path.exists() || !script_full_path.is_file() {
+                        error!(
+                            "Zap script path '{}' not found within cask directory '{}'. Skipping.",
+                            script_rel_path.display(),
+                            cask_version_path.display()
+                        );
+                        zap_errors.push(format!(
+                            "Skipped non-existent script: {}",
+                            script_rel_path.display()
+                        ));
+                        continue;
+                    }
+                    if !script_full_path.starts_with(cask_version_path) {
+                        error!("Resolved zap script path '{}' is outside cask directory '{}'. Skipping.", script_full_path.display(), cask_version_path.display());
+                        zap_errors.push(format!(
+                            "Skipped external script: {}",
+                            script_rel_path.display()
+                        ));
+                        continue;
+                    }
+                    let safe_args = args.clone().unwrap_or_default();
+                    debug!(
+                        "Running zap script: {} with args {:?}",
+                        script_full_path.display(),
+                        safe_args
+                    );
+                    let mut cmd = Command::new(&script_full_path);
+                    cmd.args(&safe_args);
+                    cmd.current_dir(cask_version_path);
+                    cmd.stdout(Stdio::piped());
+                    cmd.stderr(Stdio::piped());
+                    match cmd.output() {
+                        Ok(output) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            if !output.status.success() {
+                                error!(
+                                    "Zap script '{}' failed with status {}: {}",
+                                    script_rel_path.display(),
+                                    output.status,
+                                    stderr.trim()
+                                );
+                                if !stdout.trim().is_empty() {
+                                    error!("Zap script stdout: {}", stdout.trim());
+                                }
+                                zap_errors.push(format!(
+                                    "Zap script '{}' failed",
+                                    script_rel_path.display()
+                                ));
+                            } else {
+                                debug!(
+                                    "Zap script '{}' executed successfully.",
+                                    script_rel_path.display()
+                                );
+                                if !stdout.trim().is_empty() {
+                                    debug!("Zap script stdout: {}", stdout.trim());
+                                }
+                                if !stderr.trim().is_empty() {
+                                    debug!("Zap script stderr: {}", stderr.trim());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to execute zap script '{}': {}",
+                                script_rel_path.display(),
+                                e
+                            );
+                            zap_errors.push(format!(
+                                "Failed to run zap script '{}'",
+                                script_rel_path.display()
+                            ));
+                        }
+                    }
+                }
+                ZapActionDetail::Signal(signals) => {
+                    for signal_spec in signals {
+                        let parts: Vec<&str> = signal_spec.splitn(2, '/').collect();
+                        if parts.len() != 2 {
+                            warn!("Invalid signal spec format '{}', expected SIGNAL/bundle.id. Skipping.", signal_spec);
+                            zap_errors.push(format!("Invalid signal spec: {signal_spec}"));
+                            continue;
+                        }
+                        let signal = parts[0].trim().to_uppercase();
+                        let bundle_id = parts[1].trim();
+                        if !VALID_SIGNAL_RE.is_match(&signal) {
+                            warn!(
+                                "Invalid signal name '{}' in spec '{}'. Skipping.",
+                                signal, signal_spec
+                            );
+                            zap_errors.push(format!("Invalid signal name: {signal}"));
+                            continue;
+                        }
+                        if !VALID_BUNDLE_ID_RE.is_match(bundle_id) {
+                            warn!(
+                                "Invalid bundle ID '{}' in spec '{}'. Skipping.",
+                                bundle_id, signal_spec
+                            );
+                            zap_errors.push(format!("Invalid bundle ID: {bundle_id}"));
+                            continue;
+                        }
+                        debug!("Sending signal {} to processes matching bundle ID '{}' (using pkill -f)", signal, bundle_id);
+                        let mut cmd = Command::new("pkill");
+                        cmd.arg(format!("-{signal}"));
+                        cmd.arg("-f");
+                        cmd.arg(bundle_id);
+                        cmd.stdout(Stdio::null());
+                        cmd.stderr(Stdio::piped());
+                        match cmd.status() {
+                            Ok(status) => {
+                                if status.success() {
+                                    debug!("Successfully sent signal {} via pkill to processes matching '{}'.", signal, bundle_id);
+                                } else if status.code() == Some(1) {
+                                    debug!("No running processes found matching bundle ID '{}' for signal {} via pkill.", bundle_id, signal);
+                                } else {
+                                    warn!("pkill command failed for signal {} / bundle ID '{}' with status: {}", signal, bundle_id, status);
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Failed to execute pkill for signal {} / bundle ID '{}': {}",
+                                    signal, bundle_id, e
+                                );
+                                zap_errors.push(format!("Failed to run pkill for signal {signal}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if zap_errors.is_empty() {
+        debug!(
+            "Zap process completed successfully for cask: {}",
+            cask_def.token
+        );
+        Ok(())
+    } else {
+        error!(
+            "Zap process for {} completed with errors: {}",
+            cask_def.token,
+            zap_errors.join("; ")
+        );
+        Ok(())
     }
 }

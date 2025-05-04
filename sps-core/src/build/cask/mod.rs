@@ -13,49 +13,12 @@ use serde_json::json;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::{Cask, Sha256Field, UrlField};
 use tempfile::TempDir;
 use tracing::{debug, error};
 
 use crate::build::extract;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum InstalledArtifact {
-    App {
-        path: PathBuf,
-    },
-    CaskroomLink {
-        link_path: PathBuf,
-        target_path: PathBuf,
-    },
-    BinaryLink {
-        link_path: PathBuf,
-        target_path: PathBuf,
-    },
-    PkgUtilReceipt {
-        id: String,
-    },
-    Launchd {
-        label: String,
-        path: Option<PathBuf>,
-    },
-    CaskroomReference {
-        path: PathBuf,
-    },
-    ZapTarget {
-        target_path: PathBuf,
-        action: ZapAction,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ZapAction {
-    Delete,
-    Trash,
-    Rmdir,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaskInstallManifest {

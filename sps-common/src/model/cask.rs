@@ -1,10 +1,10 @@
-// ===== sps-core/src/model/cask.rs =====
+// ===== sps-common/src/model/cask.rs ===== // Corrected path
 use std::collections::HashMap;
 use std::fs;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config; // <-- Added import
+use crate::config::Config;
 
 pub type Artifact = serde_json::Value;
 
@@ -35,7 +35,7 @@ pub enum Sha256Field {
 }
 
 /// Appcast metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)] // Ensure Serialize/Deserialize are here
 pub struct Appcast {
     pub url: String,
     pub checkpoint: Option<String>,
@@ -52,13 +52,21 @@ pub struct ConflictsWith {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
+/// Represents the specific architecture details found in some cask definitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchSpec {
+    #[serde(rename = "type")] // Map the JSON "type" field
+    pub type_name: String, // e.g., "arm"
+    pub bits: u32, // e.g., 64
+}
+
 /// Helper for architecture requirements: single string, list of strings, or list of spec objects
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ArchReq {
-    One(String),          // e.g., "arm64"
-    Many(Vec<String>),    // e.g., ["arm64", "x86_64"]
-    Specs(Vec<ArchSpec>), // Add this variant to handle [{"type": "arm", "bits": 64}]
+    One(String),       // e.g., "arm64"
+    Many(Vec<String>), // e.g., ["arm64", "x86_64"]
+    Specs(Vec<ArchSpec>),
 }
 
 /// Helper for macOS requirements: symbol, list, comparison, or map
@@ -86,14 +94,6 @@ impl From<StringList> for Vec<String> {
             StringList::Many(v) => v,
         }
     }
-}
-
-/// Represents the specific architecture details found in some cask definitions
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArchSpec {
-    #[serde(rename = "type")] // Map the JSON "type" field
-    pub type_name: String, // e.g., "arm"
-    pub bits: u32, // e.g., 64
 }
 
 /// Represents `depends_on` block with multiple possible keys
@@ -147,14 +147,56 @@ pub struct Cask {
 
     #[serde(default)]
     pub uninstall: Option<HashMap<String, serde_json::Value>>,
-    #[serde(default)]
-    pub zap: Option<HashMap<String, serde_json::Value>>,
+
+    #[serde(default)] // Only one default here
+    pub zap: Option<Vec<ZapStanza>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaskList {
     pub casks: Vec<Cask>,
 }
+
+// --- ZAP STANZA SUPPORT ---
+
+/// Helper for zap: string or array of strings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrVec {
+    String(String),
+    Vec(Vec<String>),
+}
+impl StringOrVec {
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            StringOrVec::String(s) => vec![s],
+            StringOrVec::Vec(v) => v,
+        }
+    }
+}
+
+/// Zap action details (trash, delete, rmdir, pkgutil, launchctl, script, signal, etc)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ZapActionDetail {
+    Trash(Vec<String>),
+    Delete(Vec<String>),
+    Rmdir(Vec<String>),
+    Pkgutil(StringOrVec),
+    Launchctl(StringOrVec),
+    Script {
+        executable: String,
+        args: Option<Vec<String>>,
+    },
+    Signal(Vec<String>),
+    // Add more as needed
+}
+
+/// A zap stanza is a map of action -> detail
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZapStanza(pub std::collections::HashMap<String, ZapActionDetail>);
+
+// --- Cask Impl ---
 
 impl Cask {
     /// Check if this cask is installed by looking for a manifest file

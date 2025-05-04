@@ -6,10 +6,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::{debug, error}; // Added log imports
-
-use crate::build::cask::InstalledArtifact;
 
 /// Installs an app bundle from a staged location to /Applications and creates a symlink in the
 /// caskroom. Returns a Vec containing the details of artifacts created.
@@ -144,7 +143,7 @@ pub fn install_app_from_staged(
     }
 
     // --- Record the main app artifact ---
-    let mut created_artifacts = vec![InstalledArtifact::App {
+    let mut created_artifacts = vec![InstalledArtifact::AppBundle {
         path: final_app_destination.clone(),
     }];
 

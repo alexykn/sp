@@ -2,11 +2,13 @@
 // Declares the modules within the model directory.
 use std::sync::Arc;
 
+pub mod artifact;
 pub mod cask;
 pub mod formula;
 pub mod version;
 
 // Re-export
+pub use artifact::InstalledArtifact;
 pub use cask::Cask;
 pub use formula::Formula;
 

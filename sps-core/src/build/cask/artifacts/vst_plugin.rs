@@ -7,10 +7,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 /// Installs `vst_plugin` bundles from the staging area into
 /// `~/Library/Audio/Plug-Ins/VST`, then symlinks them into the Caskroom.
@@ -65,7 +64,7 @@ pub fn install_vst_plugin(
                             }
 
                             // Record moved plugin
-                            installed.push(InstalledArtifact::App { path: dest.clone() });
+                            installed.push(InstalledArtifact::MovedResource { path: dest.clone() });
 
                             // Symlink into Caskroom for reference
                             let link = cask_version_install_path.join(bundle_name);
