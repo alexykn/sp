@@ -171,7 +171,7 @@ async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
             tracing::debug!("Cask cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_casks = api::fetch_all_casks().await?; // Fetches String
-            
+
             // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("cask.json", &all_casks) {
                 tracing::warn!("Failed to cache cask data after fetching: {}", cache_err);
@@ -390,7 +390,5 @@ fn get_version(formula: &Value) -> &str {
 }
 
 fn get_cask_version(cask: &Value) -> &str {
-    cask.get("version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-")
+    cask.get("version").and_then(|v| v.as_str()).unwrap_or("-")
 }
