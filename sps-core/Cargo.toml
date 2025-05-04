@@ -54,3 +54,5 @@ chrono = { version = "0.4.41", features = ["serde"] }
 async-recursion = "1.1.1"
 crossbeam-channel = "0.5.15"
 threadpool = "1.8.1"
+trash = "5.2.2"
+lazy_static = "1.5.0"

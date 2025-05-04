@@ -8,10 +8,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 // --- Moved Regex Creation Outside ---
 static MANPAGE_RE: LazyLock<Regex> =
@@ -79,7 +78,7 @@ pub fn install_manpage(
                             symlink(&src, &dest)?;
 
                             // Record it in our manifest
-                            installed.push(InstalledArtifact::CaskroomLink {
+                            installed.push(InstalledArtifact::ManpageLink {
                                 link_path: dest.clone(),
                                 target_path: src.clone(),
                             });

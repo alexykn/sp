@@ -86,9 +86,7 @@ fn do_execute_sync_steps(
             CorePackageType::Formula => {
                 uninstall::uninstall_formula_artifacts(&old_info, config, &uninstall_opts)?
             }
-            CorePackageType::Cask => {
-                uninstall::uninstall_cask_artifacts(&old_info, config, &uninstall_opts)?
-            }
+            CorePackageType::Cask => uninstall::uninstall_cask_artifacts(&old_info, config)?,
         }
 
         debug!(

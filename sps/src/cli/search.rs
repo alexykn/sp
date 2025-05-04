@@ -315,8 +315,7 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
     // Calculate widths
     let name_prop_width = leftover / 3;
 
-    // TODO: not sure what it is, and what is the purpose of this.
-    // let _desc_prop_width = leftover.saturating_sub(name_prop_width);
+    // let _desc_prop_width = leftover.saturating_sub(name_prop_width); // Removed TODO
 
     let name_max = std::cmp::max(name_min_width, name_prop_width);
     let desc_max = std::cmp::max(desc_min_width, leftover.saturating_sub(name_max));

@@ -7,10 +7,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 /// Implements the `suite` stanza by moving each named directory from
 /// the staging area into `/Applications`, then symlinking it in the Caskroom.
@@ -55,7 +54,7 @@ pub fn install_suite(
                             }
 
                             // Record as an App artifact (a directory moved into /Applications)
-                            installed.push(InstalledArtifact::App { path: dest.clone() });
+                            installed.push(InstalledArtifact::AppBundle { path: dest.clone() });
 
                             // Then symlink it under Caskroom for reference
                             let link = cask_version_install_path.join(dir_name);

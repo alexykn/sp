@@ -149,9 +149,6 @@ pub async fn run_pipeline(
     for name in already_installed {
         let msg = format!("{} {} is already installed.", "✓".green(), name.cyan());
         debug!("{}", msg);
-        runner_event_tx
-            .send(PipelineEvent::LogInfo { message: msg })
-            .ok();
     }
     for (name, err) in &overall_errors {
         let msg = format!("Error during planning for '{}': {}", name.cyan(), err);

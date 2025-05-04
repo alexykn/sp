@@ -7,10 +7,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 /// Installs `keyboard_layout` bundles from the staging area into
 /// `~/Library/Keyboard Layouts`, then symlinks them into the Caskroom.
@@ -60,7 +59,7 @@ pub fn install_keyboard_layout(
                             }
 
                             // Record moved bundle
-                            installed.push(InstalledArtifact::App { path: dest.clone() });
+                            installed.push(InstalledArtifact::MovedResource { path: dest.clone() });
 
                             // Symlink into Caskroom
                             let link = cask_version_install_path.join(bundle_name);

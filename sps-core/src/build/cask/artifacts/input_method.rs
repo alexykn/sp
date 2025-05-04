@@ -6,9 +6,10 @@ use std::path::Path;
 
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 
-use crate::build::cask::{write_cask_manifest, InstalledArtifact};
+use crate::build::cask::write_cask_manifest;
 
 /// Install `input_method` artifacts from the staged directory into
 /// `~/Library/Input Methods` and record installed artifacts.
@@ -47,7 +48,7 @@ pub fn install_input_method(
                                     .or_else(|_| unix_fs::symlink(&source, &target))?;
 
                                 // Record the main artifact
-                                installed.push(InstalledArtifact::App {
+                                installed.push(InstalledArtifact::MovedResource {
                                     path: target.clone(),
                                 });
 

@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
-
-use crate::build::cask::InstalledArtifact;
 
 /// At install time, scan the `uninstall` stanza and turn each directive
 /// into an InstalledArtifact variant, so it can later be torn down.
@@ -26,7 +25,7 @@ pub fn record_uninstall(cask: &Cask) -> Result<Vec<InstalledArtifact>> {
                             "delete" => {
                                 if let Some(arr) = val.as_array() {
                                     for p in arr.iter().filter_map(|v| v.as_str()) {
-                                        artifacts.push(InstalledArtifact::App {
+                                        artifacts.push(InstalledArtifact::MovedResource {
                                             path: PathBuf::from(p),
                                         });
                                     }
@@ -35,7 +34,7 @@ pub fn record_uninstall(cask: &Cask) -> Result<Vec<InstalledArtifact>> {
                             "rmdir" => {
                                 if let Some(arr) = val.as_array() {
                                     for p in arr.iter().filter_map(|v| v.as_str()) {
-                                        artifacts.push(InstalledArtifact::App {
+                                        artifacts.push(InstalledArtifact::MovedResource {
                                             path: PathBuf::from(p),
                                         });
                                     }

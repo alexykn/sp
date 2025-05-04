@@ -13,5 +13,5 @@ pub mod pipeline;
 pub use cache::Cache;
 pub use config::Config;
 pub use error::{Result, SpsError};
-pub use model::{Cask, Formula}; // etc.
-                                // Optional: pub use dependency_def::{Dependency, DependencyTag};
+pub use model::{Cask, Formula, InstalledArtifact}; // etc.
+                                                   // Optional: pub use dependency_def::{Dependency, DependencyTag};

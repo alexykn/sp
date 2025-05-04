@@ -7,10 +7,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::Result;
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 /// Implements the `prefpane` stanza by moving each declared
 /// preference pane bundle from the staging area into
@@ -62,7 +61,7 @@ pub fn install_prefpane(
                             }
 
                             // Record moved bundle
-                            installed.push(InstalledArtifact::App { path: dest.clone() });
+                            installed.push(InstalledArtifact::MovedResource { path: dest.clone() });
 
                             // Symlink into Caskroom for reference
                             let link = cask_version_install_path.join(bundle_name);

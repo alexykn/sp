@@ -7,10 +7,9 @@ use std::process::Command;
 
 use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
+use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
-
-use crate::build::cask::InstalledArtifact;
 
 /// Installs `binary` artifacts, which can be declared as:
 ///  - a simple string: `"foo"` (source and target both `"foo"`)
