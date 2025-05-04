@@ -125,7 +125,8 @@ async fn search_formulas(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
             tracing::debug!("Formula cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_formulas = api::fetch_all_formulas().await?; // This fetches String
-                                                                 // Try to cache the fetched data
+
+            // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("formula.json", &all_formulas) {
                 tracing::warn!("Failed to cache formula data after fetching: {}", cache_err);
             }
@@ -170,7 +171,8 @@ async fn search_casks(cache: Arc<Cache>, query: &str) -> Result<Vec<Value>> {
             tracing::debug!("Cask cache load failed ({}), fetching from API", e);
             data_source_name = "API";
             let all_casks = api::fetch_all_casks().await?; // Fetches String
-                                                           // Try to cache the fetched data
+            
+            // Try to cache the fetched data
             if let Err(cache_err) = cache.store_raw("cask.json", &all_casks) {
                 tracing::warn!("Failed to cache cask data after fetching: {}", cache_err);
             }
@@ -342,7 +344,7 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
         let version = get_version(formula);
 
         tbl.add_row(Row::new(vec![
-            Cell::new("Formula").style_spec("FgC"),
+            Cell::new("Formula").style_spec("Fg"),
             Cell::new(&_name).style_spec("Fb"),
             Cell::new(version),
             Cell::new(&desc),
@@ -365,10 +367,10 @@ pub fn print_search_results(query: &str, formula_matches: &[Value], cask_matches
         let desc = truncate_vis(raw_desc, desc_max);
 
         // Extract version
-        let version = get_version(cask);
+        let version = get_cask_version(cask);
 
         tbl.add_row(Row::new(vec![
-            Cell::new("Cask").style_spec("FgG"),
+            Cell::new("Cask").style_spec("Fy"),
             Cell::new(raw_name).style_spec("Fb"),
             Cell::new(version),
             Cell::new(&desc),
@@ -383,6 +385,12 @@ fn get_version(formula: &Value) -> &str {
     formula
         .get("versions")
         .and_then(|v| v.get("stable"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("-")
+}
+
+fn get_cask_version(cask: &Value) -> &str {
+    cask.get("version")
         .and_then(|v| v.as_str())
         .unwrap_or("-")
 }
