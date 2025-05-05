@@ -2,6 +2,7 @@
 .DS_STORE
 NOTES.md
 sps/README.md
+.vscode/settings.json
 
 # Out file names I like to use for stuff
 error
