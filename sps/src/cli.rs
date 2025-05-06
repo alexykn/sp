@@ -12,6 +12,7 @@ use crate::cli::search::Search;
 use crate::cli::uninstall::Uninstall;
 use crate::cli::update::Update;
 use crate::cli::upgrade::UpgradeArgs;
+use crate::cli::list::List;
 
 pub mod info;
 pub mod install;
@@ -22,6 +23,7 @@ pub mod status;
 pub mod uninstall;
 pub mod update;
 pub mod upgrade;
+pub mod list;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, name = "sps", bin_name = "sps")]
@@ -39,7 +41,8 @@ pub struct CliArgs {
 pub enum Command {
     /// Search for available formulas and casks
     Search(Search),
-
+    /// List all installed formulas and casks
+    List(List),
     /// Display information about a formula or cask
     Info(Info),
 
@@ -63,6 +66,7 @@ impl Command {
     pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
         match self {
             Self::Search(command) => command.run(config, cache).await,
+            Self::List(command) => command.run(config, cache).await,
             Self::Info(command) => command.run(config, cache).await,
             Self::Update(command) => command.run(config, cache).await,
             Self::Install(command) => command.run(config, cache).await,
