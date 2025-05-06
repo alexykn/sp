@@ -78,7 +78,7 @@ impl List {
         let mut cask_count = 0;
         for pkg in formulas {
             let latest = formulary.load_formula(&pkg.name).ok();
-            let (has_new, latest_version) = match latest {
+            let (has_new, _) = match latest {
                 Some(ref f) => {
                     let latest_version = f.version_str_full();
                     (latest_version != pkg.version, latest_version)
@@ -103,7 +103,7 @@ impl List {
                     .into_iter()
                     .find(|v| v.get("token").and_then(|t| t.as_str()) == Some(&pkg.name))
             });
-            let (has_new, latest_version) = match cask_val {
+            let (has_new, _) = match cask_val {
                 Some(ref v) => {
                     let latest_version = v.get("version").and_then(|v| v.as_str()).unwrap_or("-");
                     (latest_version != pkg.version, latest_version.to_string())
