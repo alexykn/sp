@@ -7,15 +7,16 @@ use sps_common::{Cache, Config};
 
 use crate::cli::info::Info;
 use crate::cli::install::InstallArgs;
+use crate::cli::list::List;
 use crate::cli::reinstall::ReinstallArgs;
 use crate::cli::search::Search;
 use crate::cli::uninstall::Uninstall;
 use crate::cli::update::Update;
 use crate::cli::upgrade::UpgradeArgs;
-use crate::cli::list::List;
 
 pub mod info;
 pub mod install;
+pub mod list;
 pub mod reinstall;
 pub mod runner;
 pub mod search;
@@ -23,7 +24,6 @@ pub mod status;
 pub mod uninstall;
 pub mod update;
 pub mod upgrade;
-pub mod list;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, name = "sps", bin_name = "sps")]

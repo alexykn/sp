@@ -3,12 +3,12 @@ use std::sync::Arc;
 use clap::Args;
 use colored::Colorize;
 use prettytable::{format, Cell, Row, Table};
+use serde_json::Value;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
-use sps_core::installed::{get_installed_packages, PackageType};
 use sps_common::formulary::Formulary;
-use serde_json::Value;
+use sps_core::installed::{get_installed_packages, PackageType};
 
 #[derive(Args, Debug)]
 pub struct List {
@@ -33,13 +33,16 @@ impl List {
         } else {
             // Only show the latest version for each name
             use std::collections::HashMap;
-            let mut formula_map: HashMap<&str, &sps_core::installed::InstalledPackageInfo> = HashMap::new();
-            let mut cask_map: HashMap<&str, &sps_core::installed::InstalledPackageInfo> = HashMap::new();
+            let mut formula_map: HashMap<&str, &sps_core::installed::InstalledPackageInfo> =
+                HashMap::new();
+            let mut cask_map: HashMap<&str, &sps_core::installed::InstalledPackageInfo> =
+                HashMap::new();
             for pkg in &installed {
                 match pkg.pkg_type {
                     PackageType::Formula => {
                         let entry = formula_map.entry(pkg.name.as_str()).or_insert(pkg);
-                        // Compare version strings lexicographically (should be semver, but for now string)
+                        // Compare version strings lexicographically (should be semver, but for now
+                        // string)
                         if pkg.version > entry.version {
                             formula_map.insert(pkg.name.as_str(), pkg);
                         }
@@ -95,9 +98,10 @@ impl List {
         for pkg in casks {
             // Try to load cask info from cache
             let cask_val = cache.load_raw("cask.json").ok().and_then(|raw| {
-                serde_json::from_str::<Vec<Value>>(&raw).ok()?.into_iter().find(|v| {
-                    v.get("token").and_then(|t| t.as_str()) == Some(&pkg.name)
-                })
+                serde_json::from_str::<Vec<Value>>(&raw)
+                    .ok()?
+                    .into_iter()
+                    .find(|v| v.get("token").and_then(|t| t.as_str()) == Some(&pkg.name))
             });
             let (has_new, latest_version) = match cask_val {
                 Some(ref v) => {
@@ -116,7 +120,10 @@ impl List {
         }
         table.printstd();
         if formula_count > 0 && cask_count > 0 {
-            println!("{}", format!("{formula_count} formulas, {cask_count} casks installed").bold());
+            println!(
+                "{}",
+                format!("{formula_count} formulas, {cask_count} casks installed").bold()
+            );
         } else if formula_count > 0 {
             println!("{}", format!("{formula_count} formulas installed").bold());
         } else if cask_count > 0 {
