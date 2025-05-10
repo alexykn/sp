@@ -13,6 +13,9 @@ use tracing::{debug, error};
 use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
 
+#[cfg(target_os = "macos")]
+use crate::macos::xattr;
+
 pub(crate) fn infer_archive_root_dir(
     archive_path: &Path,
     archive_type: &str,
@@ -229,6 +232,38 @@ fn infer_zip_root<R: Read + Seek>(
 
 // --- Begin revised extraction helpers ---
 
+/// Helper: Quarantine any .app bundles in a directory (macOS only)
+#[cfg(target_os = "macos")]
+pub fn quarantine_extracted_apps_in_stage(stage_dir: &Path, agent_name: &str) -> Result<()> {
+    use std::fs;
+
+    use tracing::{debug, warn};
+    debug!(
+        "Searching for .app bundles in {} to apply quarantine.",
+        stage_dir.display()
+    );
+    if stage_dir.is_dir() {
+        for entry_result in fs::read_dir(stage_dir)? {
+            let entry = entry_result?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() && entry_path.extension().map_or(false, |ext| ext == "app") {
+                debug!(
+                    "Found app bundle in stage: {}. Applying quarantine.",
+                    entry_path.display()
+                );
+                if let Err(e) = xattr::set_quarantine_attribute(&entry_path, agent_name) {
+                    warn!(
+                        "Failed to set quarantine attribute on staged app {}: {}. Installation will continue.",
+                        entry_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Extract an archive file (zip/tar/tar.gz/...) to a target directory, stripping a number of
 /// leading path components.
 pub fn extract_archive(
@@ -263,7 +298,7 @@ pub fn extract_archive(
         )))
     })?;
 
-    match archive_type {
+    let result = match archive_type {
         "zip" => extract_zip_archive(file, target_dir, strip_components, archive_path),
         "gz" | "tgz" => {
             let tar = GzDecoder::new(file);
@@ -283,7 +318,19 @@ pub fn extract_archive(
             archive_type,
             archive_path.display()
         ))),
+    };
+    // After extraction, quarantine any .app bundles in the stage (macOS only)
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-extractor") {
+            tracing::warn!(
+                "Error during post-extraction quarantine scan for {}: {}",
+                archive_path.display(),
+                e
+            );
+        }
     }
+    result
 }
 
 /// Extract a tar archive (possibly decompressed) to a target directory, stripping leading path
@@ -412,6 +459,17 @@ fn extract_tar_archive<R: Read>(
         "Finished TAR extraction for {}",
         archive_path_for_log.display()
     );
+    // After extraction, quarantine any .app bundles in the stage (macOS only)
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-tar-extractor") {
+            tracing::warn!(
+                "Error during post-tar extraction quarantine scan for {}: {}",
+                archive_path_for_log.display(),
+                e
+            );
+        }
+    }
     Ok(())
 }
 
@@ -563,5 +621,16 @@ fn extract_zip_archive<R: Read + Seek>(
         "Finished ZIP extraction for {}",
         archive_path_for_log.display()
     );
+    // After extraction, quarantine any .app bundles in the stage (macOS only)
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-zip-extractor") {
+            tracing::warn!(
+                "Error during post-zip extraction quarantine scan for {}: {}",
+                archive_path_for_log.display(),
+                e
+            );
+        }
+    }
     Ok(())
 }

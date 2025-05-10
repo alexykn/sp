@@ -191,5 +191,20 @@ pub fn extract_dmg_to_stage(dmg_path: &Path, stage_dir: &Path) -> Result<()> {
         )));
     }
 
+    // After ditto, quarantine any .app bundles in the stage (macOS only)
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = crate::build::extract::quarantine_extracted_apps_in_stage(
+            stage_dir,
+            "sps-dmg-extractor",
+        ) {
+            tracing::warn!(
+                "Error during post-DMG extraction quarantine scan for {}: {}",
+                dmg_path.display(),
+                e
+            );
+        }
+    }
+
     unmount_result // Return the result of unmounting
 }

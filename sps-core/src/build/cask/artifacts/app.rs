@@ -16,16 +16,15 @@ use crate::macos::xattr; // Import the xattr utility
 /// Installs an app bundle from a staged location to /Applications and creates a symlink in the
 /// caskroom. Returns a Vec containing the details of artifacts created.
 pub fn install_app_from_staged(
-    _cask: &Cask, // Keep cask for potential future use (e.g., specific app flags)
+    cask: &Cask,
     staged_app_path: &Path,
     cask_version_install_path: &Path,
     config: &Config,
 ) -> Result<Vec<InstalledArtifact>> {
-    // <-- Return type changed
-
     if !staged_app_path.exists() || !staged_app_path.is_dir() {
         return Err(SpsError::NotFound(format!(
-            "Staged app bundle not found or is not a directory: {}",
+            "Staged app bundle for {} not found or is not a directory: {}",
+            cask.token,
             staged_app_path.display()
         )));
     }
@@ -34,24 +33,38 @@ pub fn install_app_from_staged(
         .file_name()
         .ok_or_else(|| {
             SpsError::Generic(format!(
-                "Invalid staged app path: {}",
+                "Invalid staged app path (no filename): {}",
                 staged_app_path.display()
             ))
         })?
         .to_string_lossy();
 
-    let applications_dir = config.applications_dir();
-    let final_app_destination = applications_dir.join(app_name.as_ref());
+    // Path for the "master" copy of the app bundle within the Caskroom
+    let caskroom_app_master_path = cask_version_install_path.join(app_name.as_ref());
+    // Final destination for the app bundle
+    let final_app_destination_in_applications = config.applications_dir().join(app_name.as_ref());
+    // Path for the symlink within the Caskroom that points to the app in /Applications
+    let caskroom_symlink_to_final_app = cask_version_install_path.join(app_name.as_ref());
 
     debug!(
-        "Preparing to install app '{}' from stage {} to {}",
-        app_name,
-        staged_app_path.display(),
-        final_app_destination.display()
+        "Installing app '{}': Staged -> Caskroom Master -> /Applications -> Caskroom Symlink",
+        app_name
+    );
+    debug!("  Staged app source: {}", staged_app_path.display());
+    debug!(
+        "  Caskroom master copy target: {}",
+        caskroom_app_master_path.display()
+    );
+    debug!(
+        "  Final /Applications target: {}",
+        final_app_destination_in_applications.display()
+    );
+    debug!(
+        "  Caskroom symlink target: {}",
+        caskroom_symlink_to_final_app.display()
     );
 
-    // --- Ensure parent of Caskroom link path exists ---
-    // The cask_version_install_path is the parent for the symlink.
+    // 1. Ensure Caskroom version path exists
     if !cask_version_install_path.exists() {
         fs::create_dir_all(cask_version_install_path).map_err(|e| {
             SpsError::Io(std::sync::Arc::new(std::io::Error::new(
@@ -65,212 +78,239 @@ pub fn install_app_from_staged(
         })?;
     }
 
-    // --- Remove Existing Destination in /Applications ---
-    if final_app_destination.exists() || final_app_destination.symlink_metadata().is_ok() {
+    // 2. Clean existing Caskroom master path (if any from a failed prior attempt)
+    if caskroom_app_master_path.exists() || caskroom_app_master_path.symlink_metadata().is_ok() {
         debug!(
-            "Removing existing app at {}",
-            final_app_destination.display()
+            "Removing existing item at Caskroom master path: {}",
+            caskroom_app_master_path.display()
         );
-        let remove_result = if final_app_destination.is_dir()
-            && !final_app_destination
-                .symlink_metadata()
-                .is_ok_and(|m| m.file_type().is_symlink())
-        {
-            fs::remove_dir_all(&final_app_destination)
-        } else {
-            fs::remove_file(&final_app_destination) // Remove file or symlink
-        };
-
-        if let Err(e) = remove_result {
-            // Try with sudo only if direct removal fails with specific errors
-            if e.kind() == std::io::ErrorKind::PermissionDenied
-                || e.kind() == std::io::ErrorKind::DirectoryNotEmpty
-            {
-                warn!(
-                    "Direct removal of {} failed ({}). Trying with sudo rm -rf.",
-                    final_app_destination.display(),
-                    e
-                );
-                let output = Command::new("sudo")
-                    .arg("rm")
-                    .arg("-rf")
-                    .arg(&final_app_destination)
-                    .output()?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    error!(
-                        "sudo rm -rf {} failed ({}): {}",
-                        final_app_destination.display(),
-                        output.status,
-                        stderr.trim()
-                    );
-                    return Err(SpsError::InstallError(format!(
-                        "Failed to remove existing app at {}: {}",
-                        final_app_destination.display(),
-                        stderr.trim()
-                    )));
-                }
-                debug!(
-                    "Successfully removed existing app {} with sudo.",
-                    final_app_destination.display()
-                );
-            } else {
-                error!(
-                    "Failed to remove existing app at {}: {}",
-                    final_app_destination.display(),
-                    e
-                );
-                return Err(SpsError::Io(std::sync::Arc::new(e)));
-            }
-        } else {
-            debug!(
-                "Successfully removed existing app at {}.",
-                final_app_destination.display()
-            );
-        }
+        let _ = remove_path_robustly(&caskroom_app_master_path, config, false);
     }
 
-    // --- Move/Copy from Stage to /Applications ---
+    // 3. Move from temporary stage to Caskroom master path
     debug!(
-        "Moving staged app {} to {}",
+        "Moving staged app {} to Caskroom master path {}",
         staged_app_path.display(),
-        final_app_destination.display()
+        caskroom_app_master_path.display()
     );
-    // Prefer `mv` for speed and atomicity (on same filesystem), but handle cross-device/permission
-    // issues.
-    let move_output = Command::new("mv")
-        .arg(staged_app_path)
-        .arg(&final_app_destination)
-        .output()?;
-
-    if !move_output.status.success() {
-        let mv_stderr = String::from_utf8_lossy(&move_output.stderr).to_lowercase();
-        // Typical errors for `mv` that might warrant a `cp -R` fallback:
-        // "cross-device link", "operation not permitted", "permission denied" (though permissions
-        // for target dir should be checked first)
-        if mv_stderr.contains("cross-device link")
-            || mv_stderr.contains("operation not permitted")
-            || mv_stderr.contains("permission denied")
-        {
-            warn!(
-                "Direct `mv` failed ({}). Attempting `cp -R`.",
-                mv_stderr.trim()
-            );
-            let copy_output = Command::new("cp")
-                .arg("-R") // Recursive copy for directories
-                .arg(staged_app_path)
-                .arg(&final_app_destination)
-                .output()?;
-            if !copy_output.status.success() {
-                let cp_stderr = String::from_utf8_lossy(&copy_output.stderr);
-                error!(
-                    "`cp -R` from {} to {} failed ({}): {}",
-                    staged_app_path.display(),
-                    final_app_destination.display(),
-                    copy_output.status,
-                    cp_stderr.trim()
-                );
-                return Err(SpsError::InstallError(format!(
-                    "Failed to copy app from stage to {}: {}",
-                    final_app_destination.display(),
-                    cp_stderr.trim()
-                )));
-            }
-            debug!(
-                "Successfully copied app to {} using `cp -R`.",
-                final_app_destination.display()
-            );
-            // If cp was used, the original staged_app_path still exists.
-            // It should be cleaned up by the TempDir RAII guard when `stage_dir` (from
-            // `build/cask/mod.rs`) goes out of scope.
-        } else {
-            error!(
-                "`mv` command failed to move {} to {} ({}): {}",
-                staged_app_path.display(),
-                final_app_destination.display(),
-                move_output.status,
-                mv_stderr.trim()
-            );
-            return Err(SpsError::InstallError(format!(
-                "Failed to move app from stage to {}: {}",
-                final_app_destination.display(),
-                mv_stderr.trim()
-            )));
-        }
-    } else {
-        debug!(
-            "Successfully moved app to {} using `mv`.",
-            final_app_destination.display()
+    if let Err(e) = fs::rename(staged_app_path, &caskroom_app_master_path) {
+        error!(
+            "Failed to move staged app to Caskroom: {}. Source: {}, Dest: {}",
+            e,
+            staged_app_path.display(),
+            caskroom_app_master_path.display()
         );
+        return Err(SpsError::Io(std::sync::Arc::new(e)));
     }
 
-    // --- Set Quarantine Attribute on the final app bundle (P1 Fix) ---
+    // 4. Set/Verify Quarantine on Caskroom master copy
     #[cfg(target_os = "macos")]
     {
-        // Use the cask token as the agent name for the quarantine attribute
-        let agent_name = &_cask.token;
-        if let Err(e) = xattr::set_quarantine_attribute(&final_app_destination, agent_name) {
-            // This is now an error that propagates, as it's critical for fixing the data loss bug.
-            error!("CRITICAL: Failed to set quarantine attribute on {}: {}. This WILL likely cause data loss or Gatekeeper issues.", final_app_destination.display(), e);
+        debug!(
+            "Setting/verifying quarantine on Caskroom master copy: {}",
+            caskroom_app_master_path.display()
+        );
+        if let Err(e) = xattr::set_quarantine_attribute(&caskroom_app_master_path, &cask.token) {
+            error!(
+                "Failed to set quarantine on Caskroom master copy {}: {}. This is critical.",
+                caskroom_app_master_path.display(),
+                e
+            );
             return Err(e);
         }
     }
 
-    // --- Record the main app artifact ---
-    let mut created_artifacts = vec![InstalledArtifact::AppBundle {
-        path: final_app_destination.clone(),
-    }];
+    // 5. Clean existing final app destination in /Applications
+    if final_app_destination_in_applications.exists()
+        || final_app_destination_in_applications
+            .symlink_metadata()
+            .is_ok()
+    {
+        debug!(
+            "Removing existing app at /Applications: {}",
+            final_app_destination_in_applications.display()
+        );
+        if !remove_path_robustly(&final_app_destination_in_applications, config, true) {
+            return Err(SpsError::InstallError(format!(
+                "Failed to remove existing app at {}",
+                final_app_destination_in_applications.display()
+            )));
+        }
+    }
 
-    // --- Create Caskroom Symlink (references the app in /Applications) ---
-    let caskroom_app_link_path = cask_version_install_path.join(app_name.as_ref());
+    // 6. Move from Caskroom master to final /Applications destination
     debug!(
-        "Linking {} -> {}",
-        caskroom_app_link_path.display(),
-        final_app_destination.display()
+        "Moving app from Caskroom master {} to /Applications {}",
+        caskroom_app_master_path.display(),
+        final_app_destination_in_applications.display()
+    );
+    let mv_to_apps_output = Command::new("mv")
+        .arg(&caskroom_app_master_path)
+        .arg(&final_app_destination_in_applications)
+        .output()?;
+
+    if !mv_to_apps_output.status.success() {
+        let stderr = String::from_utf8_lossy(&mv_to_apps_output.stderr);
+        error!(
+            "Failed to move app from Caskroom master {} to /Applications {} (status: {}): {}. Attempting copy as fallback.",
+            caskroom_app_master_path.display(),
+            final_app_destination_in_applications.display(),
+            mv_to_apps_output.status,
+            stderr.trim()
+        );
+        let cp_output = Command::new("cp")
+            .arg("-R")
+            .arg(&caskroom_app_master_path)
+            .arg(&final_app_destination_in_applications)
+            .output()?;
+        if !cp_output.status.success() {
+            let cp_stderr = String::from_utf8_lossy(&cp_output.stderr);
+            error!(
+                "`cp -R` from Caskroom to /Applications also failed (status: {}): {}",
+                cp_output.status,
+                cp_stderr.trim()
+            );
+            return Err(SpsError::InstallError(format!(
+                "Failed to move or copy app from Caskroom to {}: {}",
+                final_app_destination_in_applications.display(),
+                cp_stderr.trim()
+            )));
+        }
+        debug!("Successfully copied app from Caskroom to /Applications using `cp -R`.");
+        let _ = fs::remove_dir_all(&caskroom_app_master_path);
+    } else {
+        debug!("Successfully moved app from Caskroom master to /Applications using `mv`.");
+    }
+
+    // 7. Re-Set/Ensure Quarantine on the Final App in /Applications
+    #[cfg(target_os = "macos")]
+    {
+        debug!(
+            "Final quarantine check/set on /Applications copy: {}",
+            final_app_destination_in_applications.display()
+        );
+        if let Err(e) =
+            xattr::set_quarantine_attribute(&final_app_destination_in_applications, &cask.token)
+        {
+            error!("CRITICAL: Failed to set final quarantine attribute on {}: {}. This WILL likely cause data loss or Gatekeeper issues.", final_app_destination_in_applications.display(), e);
+            let _ = remove_path_robustly(&final_app_destination_in_applications, config, true);
+            return Err(e);
+        }
+    }
+
+    // 8. Create Caskroom Symlink TO the app in /Applications
+    let actual_caskroom_symlink_path = cask_version_install_path.join(app_name.as_ref());
+    debug!(
+        "Creating Caskroom symlink {} -> {}",
+        actual_caskroom_symlink_path.display(),
+        final_app_destination_in_applications.display()
     );
 
-    // Remove existing symlink in Caskroom if it exists
-    if caskroom_app_link_path.symlink_metadata().is_ok() {
-        // Check if it's a symlink or file
-        if let Err(e) = fs::remove_file(&caskroom_app_link_path) {
-            // remove_file works for symlinks too
+    if actual_caskroom_symlink_path.symlink_metadata().is_ok() {
+        if let Err(e) = fs::remove_file(&actual_caskroom_symlink_path) {
             warn!(
-                "Failed to remove existing item at caskroom link path {}: {}. Proceeding with link creation attempt.",
-                caskroom_app_link_path.display(),
+                "Failed to remove existing item at Caskroom symlink path {}: {}. Proceeding.",
+                actual_caskroom_symlink_path.display(),
                 e
             );
         }
     }
 
-    #[cfg(unix)] // Symlinks are primarily a Unix concept
+    #[cfg(unix)]
     {
-        if let Err(e) = std::os::unix::fs::symlink(&final_app_destination, &caskroom_app_link_path)
-        {
-            // This is an important reference for sps to manage the cask.
+        if let Err(e) = std::os::unix::fs::symlink(
+            &final_app_destination_in_applications,
+            &actual_caskroom_symlink_path,
+        ) {
             error!(
-                "Failed to create symlink {} -> {}: {}",
-                caskroom_app_link_path.display(),
-                final_app_destination.display(),
+                "Failed to create Caskroom symlink {} -> {}: {}",
+                actual_caskroom_symlink_path.display(),
+                final_app_destination_in_applications.display(),
                 e
             );
-            return Err(SpsError::Io(std::sync::Arc::new(e))); // Fail if symlink creation fails.
-        } else {
-            debug!("Successfully created caskroom symlink.");
-            created_artifacts.push(InstalledArtifact::CaskroomLink {
-                link_path: caskroom_app_link_path.clone(),
-                target_path: final_app_destination.clone(),
-            });
+            let _ = remove_path_robustly(&final_app_destination_in_applications, config, true);
+            return Err(SpsError::Io(std::sync::Arc::new(e)));
         }
     }
     #[cfg(not(unix))]
     {
         warn!(
-            // Changed to warn as this is a non-critical feature on non-Unix
             "Symlink creation not supported on this platform. Skipping link for {}.",
-            caskroom_app_link_path.display()
+            actual_caskroom_symlink_path.display()
         );
     }
 
-    debug!("Successfully installed app artifact: {}", app_name);
+    let mut created_artifacts = vec![InstalledArtifact::AppBundle {
+        path: final_app_destination_in_applications.clone(),
+    }];
+    created_artifacts.push(InstalledArtifact::CaskroomLink {
+        link_path: actual_caskroom_symlink_path,
+        target_path: final_app_destination_in_applications.clone(),
+    });
+
+    debug!(
+        "Successfully installed app artifact: {} (Cask: {})",
+        app_name, cask.token
+    );
     Ok(created_artifacts)
+}
+
+/// Helper function for robust path removal (internal to app.rs or moved to a common util)
+fn remove_path_robustly(path: &Path, _config: &Config, use_sudo_if_needed: bool) -> bool {
+    if !path.exists() && !path.symlink_metadata().is_ok() {
+        debug!("Path {} not found for removal.", path.display());
+        return true;
+    }
+    let is_dir = path.is_dir()
+        && !path
+            .symlink_metadata()
+            .map_or(false, |m| m.file_type().is_symlink());
+    let removal_op = || -> std::io::Result<()> {
+        if is_dir {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        }
+    };
+
+    if let Err(e) = removal_op() {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            return true;
+        }
+        if use_sudo_if_needed && e.kind() == std::io::ErrorKind::PermissionDenied {
+            warn!(
+                "Direct removal of {} failed (Permission Denied). Trying with sudo rm -rf.",
+                path.display()
+            );
+            let output = Command::new("sudo").arg("rm").arg("-rf").arg(path).output();
+            match output {
+                Ok(out) if out.status.success() => {
+                    debug!("Successfully removed {} with sudo.", path.display());
+                    return true;
+                }
+                Ok(out) => {
+                    error!(
+                        "`sudo rm -rf {}` failed ({}): {}",
+                        path.display(),
+                        out.status,
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                    return false;
+                }
+                Err(sudo_e) => {
+                    error!(
+                        "Error executing `sudo rm -rf` for {}: {}",
+                        path.display(),
+                        sudo_e
+                    );
+                    return false;
+                }
+            }
+        } else {
+            error!("Failed to remove {}: {}", path.display(), e);
+            return false;
+        }
+    }
+    debug!("Successfully removed {}.", path.display());
+    true
 }
