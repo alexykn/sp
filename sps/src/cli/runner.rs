@@ -1,41 +1,35 @@
-// sps-cli/src/pipeline/runner.rs
-//! Drives the CLI-side of the install/upgrade/reinstall pipeline.
-
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs; // Import fs for metadata
+use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use colored::Colorize;
-use crossbeam_channel::{bounded, Sender as CrossbeamSender}; // Only need Sender here
+use crossbeam_channel::{bounded, Sender as CrossbeamSender};
 use reqwest::Client;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::dependency::{
     DependencyResolver, ResolutionContext, ResolutionStatus, ResolvedGraph,
 };
-use sps_common::error::{Result, SpsError}; // Use Result from sps-common
+use sps_common::error::{Result, SpsError};
 use sps_common::formulary::Formulary;
 use sps_common::keg::KegRegistry;
 use sps_common::model::formula::Formula;
 use sps_common::model::{Cask, InstallTargetIdentifier};
 use sps_common::pipeline::{JobAction, PipelineEvent, PlannedJob, WorkerJob};
-use sps_core::build; // For has_bottle and download functions
+use sps_core::build;
 use sps_core::installed::{self};
 use sps_core::update_check::{self, UpdateInfo};
-use sps_net::api; // For planning (fetching definitions)
-use sps_net::UrlField; // Import UrlField for Cask URL handling
-use tokio::sync::broadcast; // For events Core/CLI -> CLI Status
-use tokio::task::JoinSet; // For async download phase
-use tracing::{debug, error, instrument, warn}; // Import reqwest client
+use sps_net::{api, UrlField};
+use tokio::sync::broadcast;
+use tokio::task::JoinSet;
+use tracing::{debug, error, instrument, warn};
 
-// --- Configuration ---
 const WORKER_JOB_CHANNEL_SIZE: usize = 100;
 const EVENT_CHANNEL_SIZE: usize = 100;
 
-// Define CommandType and PipelineFlags specific to the runner's needs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandType {
     Install,
@@ -50,7 +44,6 @@ pub struct PipelineFlags {
     pub skip_recommended: bool,
 }
 
-/// CLI-side function to orchestrate the install/upgrade/reinstall pipeline.
 #[instrument(skip_all, fields(cmd = ?command_type, targets = ?initial_targets))]
 pub async fn run_pipeline(
     initial_targets: &[String],
@@ -63,14 +56,12 @@ pub async fn run_pipeline(
     let final_success_count = Arc::new(AtomicUsize::new(0));
     let final_fail_count = Arc::new(AtomicUsize::new(0)); // Tracks download + worker failures
 
-    // --- 1. Setup Channels ---
     let (worker_job_tx, worker_job_rx) = bounded::<WorkerJob>(WORKER_JOB_CHANNEL_SIZE);
-    let (event_tx, _event_rx) = broadcast::channel::<PipelineEvent>(EVENT_CHANNEL_SIZE); // Prefix unused receiver
+    let (event_tx, _event_rx) = broadcast::channel::<PipelineEvent>(EVENT_CHANNEL_SIZE);
     debug!("event_tx created.");
     let runner_event_tx = event_tx.clone();
     debug!("runner_event_tx cloned from event_tx.");
 
-    // --- 2. Spawn Core Worker Pool Manager Task ---
     let core_config = config.clone();
     let core_cache = cache.clone();
     let core_event_tx = event_tx.clone();
@@ -78,7 +69,6 @@ pub async fn run_pipeline(
     let core_success_count = Arc::clone(&final_success_count);
     let core_fail_count = Arc::clone(&final_fail_count);
     let core_handle = std::thread::spawn(move || {
-        // Assuming sps_core::pipeline::engine exists and is updated
         sps_core::pipeline::engine::start_worker_pool_manager(
             core_config,
             core_cache,
@@ -90,13 +80,11 @@ pub async fn run_pipeline(
     });
     debug!("Core worker pool manager thread spawned.");
 
-    // --- 3. Spawn CLI Status Handler Task ---
     let status_config = config.clone();
     let status_event_rx = event_tx.subscribe();
     let status_handle = tokio::spawn(super::status::handle_events(status_config, status_event_rx));
     debug!("CLI status handler task spawned.");
 
-    // --- 4. Plan Operations ---
     runner_event_tx.send(PipelineEvent::PlanningStarted).ok();
     debug!("Planning package operations...");
     let plan_result = plan_operations(
@@ -117,7 +105,7 @@ pub async fn run_pipeline(
                     message: format!("Fatal planning error: {e}"),
                 })
                 .ok();
-            drop(worker_job_tx); // Close job channel to signal core
+            drop(worker_job_tx);
             if let Err(join_err) = core_handle.join() {
                 error!(
                     "Core thread join error after planning failure: {:?}",
@@ -180,21 +168,20 @@ pub async fn run_pipeline(
         runner_event_tx
             .send(PipelineEvent::PipelineStarted { total_jobs: 0 })
             .ok();
-        drop(worker_job_tx); // Drop channel if no jobs
+        drop(worker_job_tx);
     } else {
-        // --- 5. Coordinate Asynchronous Downloads ---
         debug!("Starting download phase for {} jobs...", total_jobs);
         runner_event_tx
             .send(PipelineEvent::PipelineStarted { total_jobs })
             .ok();
 
-        let http_client = Arc::new(Client::new()); // Create client
+        let http_client = Arc::new(Client::new());
 
         let download_errors = coordinate_downloads(
             planned_jobs,
             config,
             cache.clone(),
-            http_client, // Pass client
+            http_client,
             worker_job_tx.clone(),
             runner_event_tx.clone(),
         )
@@ -212,10 +199,9 @@ pub async fn run_pipeline(
                 .ok();
         }
         debug!("Download phase complete. Closing worker job channel.");
-        drop(worker_job_tx); // Close channel after downloads
+        drop(worker_job_tx);
     }
 
-    // --- 6. Wait for Core Completion ---
     debug!("Waiting for core worker pool manager thread to finish...");
     match core_handle.join() {
         Ok(Ok(())) => {
@@ -241,7 +227,6 @@ pub async fn run_pipeline(
         }
     }
 
-    // --- 7. Wait for Status Handler ---
     debug!("Waiting for status handler task to finish...");
     debug!("Dropping runner_event_tx.");
     drop(runner_event_tx);
@@ -256,9 +241,6 @@ pub async fn run_pipeline(
     debug!("Dropping event_tx explicitly.");
     drop(event_tx);
     debug!("event_tx dropped explicitly.");
-    // Log receiver count again
-    // (event_tx is now dropped, so this is just for demonstration; comment out if it errors)
-    // debug!("event_tx receiver_count after dropping event_tx: {}", event_tx.receiver_count());
     debug!("runner_event_tx dropped.");
     if let Err(e) = status_handle.await {
         warn!("Status handler task failed or panicked: {}", e);
@@ -278,7 +260,6 @@ pub async fn run_pipeline(
         final_fail
     );
 
-    // --- 8. Final Result ---
     let total_failures = final_fail + overall_errors.len();
     if total_failures == 0 {
         debug!(
@@ -304,7 +285,6 @@ pub async fn run_pipeline(
     }
 }
 
-// --- Planning Logic ---
 type PlanResult = Result<(Vec<PlannedJob>, Vec<(String, SpsError)>, HashSet<String>)>;
 
 #[instrument(skip_all, fields(cmd = ?command_type))]
@@ -322,7 +302,6 @@ async fn plan_operations(
     let mut initial_ops: HashMap<String, (JobAction, Option<InstallTargetIdentifier>)> =
         HashMap::new();
 
-    // --- Identify Initial Targets and Action Type ---
     match command_type {
         CommandType::Install => {
             debug!("Planning for INSTALL command");
@@ -464,7 +443,6 @@ async fn plan_operations(
         }
     }
 
-    // --- Fetch Definitions ---
     let definitions_to_fetch: Vec<String> = initial_ops
         .iter()
         .filter(|(_, (_, def))| def.is_none())
@@ -498,7 +476,6 @@ async fn plan_operations(
         }
     }
 
-    // --- Dependency Resolution Setup ---
     event_tx
         .send(PipelineEvent::DependencyResolutionStarted)
         .ok();
@@ -528,7 +505,6 @@ async fn plan_operations(
         }
     }
 
-    // --- Resolve Cask Dependencies ---
     let mut processed_casks: HashSet<String> = initial_ops
         .keys()
         .filter(|k| {
@@ -621,7 +597,6 @@ async fn plan_operations(
         }
     }
 
-    // --- Resolve Formula Dependencies ---
     let mut resolved_formula_graph: Option<Arc<ResolvedGraph>> = None;
     if !formulae_for_resolution.is_empty() {
         let targets: Vec<_> = formulae_for_resolution.keys().cloned().collect();
@@ -664,7 +639,6 @@ async fn plan_operations(
         .send(PipelineEvent::DependencyResolutionFinished)
         .ok();
 
-    // --- Construct Final Job List ---
     let mut final_planned_jobs: Vec<PlannedJob> = Vec::new();
     // Add initial ops first
     for (name, (action, opt_def)) in initial_ops {
@@ -766,7 +740,6 @@ async fn plan_operations(
     Ok((final_planned_jobs, errors, already_installed))
 }
 
-// --- Download Coordinator ---
 #[instrument(skip_all)]
 async fn coordinate_downloads(
     planned_jobs: Vec<PlannedJob>,
@@ -787,21 +760,13 @@ async fn coordinate_downloads(
         let client_clone = Arc::clone(&http_client);
 
         download_tasks.spawn(async move {
-            // Get tentative URL for event
             let tentative_url = match &planned_job.target_definition {
-                InstallTargetIdentifier::Formula(f) => {
-                    // Access field directly on Formula
-                    f.url.clone()
-                }
-                InstallTargetIdentifier::Cask(c) => {
-                    // Handle UrlField enum to get a String
-                    match c.url.clone() {
-                        // Assuming c.url is Option<UrlField>
-                        Some(UrlField::Simple(s)) => s,
-                        Some(UrlField::WithSpec { url, .. }) => url,
-                        None => "unknown_cask_url".to_string(),
-                    }
-                }
+                InstallTargetIdentifier::Formula(f) => f.url.clone(),
+                InstallTargetIdentifier::Cask(c) => match c.url.clone() {
+                    Some(UrlField::Simple(s)) => s,
+                    Some(UrlField::WithSpec { url, .. }) => url,
+                    None => "unknown_cask_url".to_string(),
+                },
             };
             event_tx_clone
                 .send(PipelineEvent::DownloadStarted {
@@ -810,14 +775,11 @@ async fn coordinate_downloads(
                 })
                 .ok();
 
-            // Call actual download functions from sps_core::build
-            // Ensure these function signatures match exactly what's in sps_core::build
             let download_result: Result<PathBuf> = match &planned_job.target_definition {
                 InstallTargetIdentifier::Formula(f) => {
                     if planned_job.is_source_build {
                         build::formula::source::download_source(f, &config_clone).await
                     } else {
-                        // Pass http client correctly
                         build::formula::bottle::download_bottle(
                             f,
                             &config_clone,
@@ -831,7 +793,6 @@ async fn coordinate_downloads(
                 }
             };
 
-            // Handle Result<PathBuf>, get size manually
             match download_result {
                 Ok(download_path) => {
                     let size_bytes = fs::metadata(&download_path).map(|m| m.len()).unwrap_or(0);
@@ -857,7 +818,7 @@ async fn coordinate_downloads(
                 }
                 Err(e) => {
                     error!("[{}] Download failed: {}", job_id, e);
-                    // Get original URL attempt if possible for better error event
+
                     let url_for_error = match &planned_job.target_definition {
                         InstallTargetIdentifier::Formula(f) => f.url.clone(),
                         InstallTargetIdentifier::Cask(c) => match c.url.clone() {
@@ -879,7 +840,6 @@ async fn coordinate_downloads(
         });
     }
 
-    // Process download results
     while let Some(result) = download_tasks.join_next().await {
         match result {
             Ok(Ok(worker_job)) => {
@@ -890,11 +850,9 @@ async fn coordinate_downloads(
                 }
             }
             Ok(Err((failed_job, e))) => {
-                // Error occurred during download, add to list
                 download_errors.push((failed_job.target_id, e)); // Use ID from request
             }
             Err(join_error) => {
-                // Task panicked during download
                 error!("✖ Download task panicked: {}", join_error);
                 download_errors.push((
                     "[Download Coordinator]".to_string(),
@@ -906,22 +864,17 @@ async fn coordinate_downloads(
     download_errors
 }
 
-// --- Helper Functions ---
-
-/// Fetches Formula or Cask definitions for a list of names.
 #[instrument(skip_all)]
 async fn fetch_target_definitions(
     names: &[String],
-    cache: Arc<Cache>, // Takes Arc
+    cache: Arc<Cache>,
 ) -> HashMap<String, Result<InstallTargetIdentifier>> {
     let mut results = HashMap::new();
     let mut futures = JoinSet::new();
 
-    // Load maps concurrently
-    let formulae_map_handle = tokio::spawn(load_or_fetch_formulae_map(Arc::clone(&cache))); // Clone Arc
-    let casks_map_handle = tokio::spawn(load_or_fetch_casks_map(Arc::clone(&cache))); // Clone Arc
+    let formulae_map_handle = tokio::spawn(load_or_fetch_formulae_map(Arc::clone(&cache)));
+    let casks_map_handle = tokio::spawn(load_or_fetch_casks_map(Arc::clone(&cache)));
 
-    // Wait for maps to load/fetch
     let formulae_map = match formulae_map_handle.await {
         Ok(Ok(map)) => Some(map),
         Ok(Err(e)) => {
@@ -947,24 +900,22 @@ async fn fetch_target_definitions(
 
     for name_str in names {
         let name = name_str.clone();
-        let formulae_map_clone = formulae_map.clone(); // Clone Option<HashMap>
+        let formulae_map_clone = formulae_map.clone();
         let casks_map_clone = casks_map.clone();
 
         futures.spawn(async move {
-            // 1. Check Formulae Map
             if let Some(map) = formulae_map_clone {
                 if let Some(f_arc) = map.get(&name) {
                     return (name, Ok(InstallTargetIdentifier::Formula(f_arc.clone())));
                 }
             }
-            // 2. Check Casks Map
+
             if let Some(map) = casks_map_clone {
                 if let Some(c_arc) = map.get(&name) {
                     return (name, Ok(InstallTargetIdentifier::Cask(c_arc.clone())));
                 }
             }
 
-            // 3. Fallback: Direct API Fetch
             warn!(
                 "Definition for '{}' not found in cached lists, fetching directly from API...",
                 name
@@ -976,7 +927,7 @@ async fn fetch_target_definitions(
                         Ok(InstallTargetIdentifier::Formula(Arc::new(formula))),
                     );
                 }
-                Err(SpsError::NotFound(_)) => { /* Try cask */ }
+                Err(SpsError::NotFound(_)) => {}
                 Err(e) => return (name, Err(e)),
             }
             match api::get_cask(&name).await {
@@ -998,17 +949,13 @@ async fn fetch_target_definitions(
                 results.insert(name, result);
             }
             Err(e) => {
-                // This is a Tokio join error (task panicked)
                 error!("Task join error during definition fetch: {}", e);
-                // Cannot easily associate with a name here. If it becomes an issue,
-                // tasks could return their input name on panic using std::panic::catch_unwind.
             }
         }
     }
     results
 }
 
-/// Helper to load full formula map from cache or fetch/store it.
 async fn load_or_fetch_formulae_map(cache: Arc<Cache>) -> Result<HashMap<String, Arc<Formula>>> {
     match cache.load_raw("formula.json") {
         Ok(data) => {
@@ -1040,7 +987,7 @@ async fn load_or_fetch_formulae_map(cache: Arc<Cache>) -> Result<HashMap<String,
         }
     }
 }
-/// Similar helper for casks.
+
 async fn load_or_fetch_casks_map(cache: Arc<Cache>) -> Result<HashMap<String, Arc<Cask>>> {
     match cache.load_raw("cask.json") {
         Ok(data) => {
@@ -1073,13 +1020,10 @@ async fn load_or_fetch_casks_map(cache: Arc<Cache>) -> Result<HashMap<String, Ar
     }
 }
 
-/// Check if a bottle exists for the current platform. Uses sps_core::build logic.
 fn has_bottle(formula: &Formula) -> bool {
-    // This is the correct place to call the core function
     build::formula::has_bottle_for_current_platform(formula)
 }
 
-/// Helper to sort PlannedJob DTOs by dependency order.
 fn sort_planned_jobs_by_dependency_order(jobs: &mut [PlannedJob], graph: &ResolvedGraph) {
     let formula_order: HashMap<String, usize> = graph
         .install_plan
@@ -1097,9 +1041,7 @@ fn sort_planned_jobs_by_dependency_order(jobs: &mut [PlannedJob], graph: &Resolv
                     .copied()
                     .unwrap_or(usize::MAX)
             }
-            InstallTargetIdentifier::Cask(_) => usize::MAX, // Install casks after all formulae
+            InstallTargetIdentifier::Cask(_) => usize::MAX,
         }
     });
 }
-
-// Removed get_download_url helper function

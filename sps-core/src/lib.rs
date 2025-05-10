@@ -2,7 +2,9 @@
 
 // Declare the top-level modules within the library crate
 pub mod build;
-pub mod installed; // New
+pub mod installed;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod pipeline;
 pub mod tap;
 pub mod uninstall; // New

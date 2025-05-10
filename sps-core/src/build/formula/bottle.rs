@@ -1,13 +1,10 @@
-// FILE: sps-core/src/build/formula/bottle.rs
-// Applies the fix using absolute paths for Python framework relocation.
-
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
-use std::sync::Arc; // Import Arc
+use std::sync::Arc;
 
 use reqwest::Client;
 use semver;
@@ -21,7 +18,6 @@ use tracing::{debug, error, warn};
 use walkdir::WalkDir;
 
 use super::macho;
-// use crate::extract::extract_archive;
 use crate::build::extract::extract_archive;
 use crate::build::formula::get_current_platform;
 
@@ -188,7 +184,6 @@ pub async fn download_bottle(
     Ok(bottle_cache_path)
 }
 
-// get_bottle_for_platform remains unchanged
 pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
     let stable_spec = formula.bottle.stable.as_ref().ok_or_else(|| {
         SpsError::Generic(format!(
@@ -373,7 +368,6 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     Ok(install_dir)
 }
 
-// ensure_write_permissions remains unchanged
 fn ensure_write_permissions(path: &Path) -> Result<()> {
     if !path.exists() {
         debug!(
@@ -394,10 +388,9 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 #[cfg(unix)]
                 {
                     let current_mode = perms.mode();
-                    let new_mode = current_mode | 0o200; // Add owner write permission
+                    let new_mode = current_mode | 0o200;
                     if new_mode != current_mode {
                         perms.set_mode(new_mode);
-                        // Ignore errors setting permissions, best effort
                         let _ = fs::set_permissions(entry_path, perms);
                     }
                 }
@@ -405,21 +398,16 @@ fn ensure_write_permissions(path: &Path) -> Result<()> {
                 {
                     if _is_readonly {
                         perms.set_readonly(false);
-                        // Ignore errors setting permissions, best effort
                         let _ = fs::set_permissions(entry_path, perms);
                     }
                 }
             }
-            Err(_e) => { // Ignore errors reading metadata during this process
-            }
+            Err(_e) => {}
         }
     }
     Ok(())
 }
 
-// sps-core/src/build/formula/bottle.rs
-
-// *** UPDATED perform_bottle_relocation function ***
 fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Config) -> Result<()> {
     let mut repl: HashMap<String, String> = HashMap::new();
     repl.insert(
@@ -453,7 +441,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         );
     }
 
-    // Handle Python framework internal paths for Python formulae
     if formula.name().starts_with("python@") {
         let version_full = formula.version_str_full();
         let mut parts = version_full.split('.');
@@ -469,9 +456,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 .join("bin")
                 .join(format!("python{major}.{minor}"));
 
-            // --- Start: Option 1 Implementation (Absolute Path Fix) ---
-
-            // 1. Calculate the absolute path for the new library ID
             let absolute_python_lib_path_obj = install_dir
                 .join("Frameworks")
                 .join("Python.framework")
@@ -485,7 +469,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 ))
             })?;
 
-            // 2. Change the dynamic library ID to the absolute path
             debug!(
                 "Setting absolute ID for {}: {}",
                 python_lib.display(),
@@ -496,7 +479,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
-                .map_err(|e| SpsError::Io(Arc::new(e)))?; // Use Arc::new
+                .map_err(|e| SpsError::Io(Arc::new(e)))?;
             if !status_id.success() {
                 error!("install_name_tool -id failed for {}", python_lib.display());
                 return Err(SpsError::InstallError(format!(
@@ -505,12 +488,8 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 )));
             }
 
-            // 3. REMOVE the -add_rpath commands (no longer needed with absolute paths)
             debug!("Skipping -add_rpath as absolute paths are used for Python linkage.");
-            // The original code adding rpaths to python_bin and python_app is removed.
 
-            // 4. Change load commands in the main executable to use the absolute path ID
-            // Patterns for the old paths (placeholders and resolved cellar path)
             let old_load_placeholder = format!(
                 "@@HOMEBREW_CELLAR@@/{}/{}/Frameworks/Python.framework/Versions/{}/Python",
                 formula.name(),
@@ -523,8 +502,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 version_full,
                 framework_version
             );
-            // Need install_dir_str from the outer scope
-            let install_dir_str_ref = install_dir.to_string_lossy(); // Use existing borrow
+            let install_dir_str_ref = install_dir.to_string_lossy();
             let abs_old_load = format!(
                 "{install_dir_str_ref}/Frameworks/Python.framework/Versions/{framework_version}/Python"
             );
@@ -532,9 +510,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 "{install_dir_str_ref}/Frameworks/Python.framework/Versions/{framework_version}/Resources/Python.app/Contents/MacOS/Python"
             );
 
-            // Function to run install_name_tool -change, logging errors more clearly
             let run_change = |old: &str, new: &str, target: &Path| -> Result<()> {
-                // Check if target exists before running install_name_tool
                 if !target.exists() {
                     debug!(
                         "Target {} does not exist, skipping install_name_tool -change.",
@@ -550,31 +526,23 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 );
                 let output = StdCommand::new("install_name_tool")
                     .args(["-change", old, new, target.to_str().unwrap()])
-                    .output() // Capture output
+                    .output()
                     .map_err(|e| SpsError::Io(Arc::new(e)))?;
 
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    // Ignore common non-errors, log others as errors
                     if !stderr.contains("file not found")
-                        && !stderr.contains("no LC_LOAD_DYLIB command specifying file") // Exact error message
+                        && !stderr.contains("no LC_LOAD_DYLIB command specifying file")
                         && !stderr.contains("is not a Mach-O file")
-                        && !stderr.contains("object file format invalid") // Another potential non-error
+                        && !stderr.contains("object file format invalid")
                         && !stderr.trim().is_empty()
-                    // Ignore empty stderr
                     {
-                        // Log as error if it's an unexpected failure
                         error!(
                             "install_name_tool -change failed unexpectedly for target {}: {}",
                             target.display(),
                             stderr.trim()
                         );
-                        // Decide whether to return an error here or just log.
-                        // Let's log for now to avoid stopping the whole install prematurely.
-                        // return Err(SpsError::InstallError(format!("install_name_tool -change
-                        // failed: {}", stderr.trim())));
                     } else {
-                        // Log expected "failures" as debug
                         debug!(
                             "install_name_tool -change: old path '{}' likely not found or target '{}' not relevant (stderr: {}).",
                             old,
@@ -586,15 +554,13 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 Ok(())
             };
 
-            // Apply changes to python_bin (the main python3.13 executable)
             debug!("Patching main executable: {}", python_bin.display());
             run_change(&old_load_placeholder, new_id_abs, &python_bin)?;
             run_change(&old_load_resource_placeholder, new_id_abs, &python_bin)?;
             run_change(&abs_old_load, new_id_abs, &python_bin)?;
             run_change(&abs_old_load_resource, new_id_abs, &python_bin)?;
 
-            // 5. EXPLICITLY Patch load commands in the Python.app executable
-            let python_app = framework_dir // Use previously calculated framework_dir
+            let python_app = framework_dir
                 .join("Resources")
                 .join("Python.app")
                 .join("Contents")
@@ -606,11 +572,8 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                     "Explicitly patching Python.app executable: {}",
                     python_app.display()
                 );
-                // Try patching using the placeholder path that otool shows
                 run_change(&old_load_placeholder, new_id_abs, &python_app)?;
-                // Also try patching using the potential original absolute build path
                 run_change(&abs_old_load, new_id_abs, &python_app)?;
-                // It's less likely these resource paths are in the app binary, but try just in case
                 run_change(&old_load_resource_placeholder, new_id_abs, &python_app)?;
                 run_change(&abs_old_load_resource, new_id_abs, &python_app)?;
             } else {
@@ -620,10 +583,8 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 );
             }
 
-            // 7. Re-sign the modified binaries using helper
             codesign_path(&python_lib)?;
             codesign_path(&python_bin)?;
-            // Re-sign the Python.app binary as well, as it might have been patched
             if python_app.exists() {
                 codesign_path(&python_app)?;
             } else {
@@ -632,12 +593,9 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                     python_app.display()
                 );
             }
-
-            // --- End: Option 1 Implementation ---
         }
     }
 
-    // Homebrew PERL and JAVA placeholders (remains unchanged)
     if let Some(perl_path) = find_brewed_perl(config.prefix()).or_else(|| {
         if cfg!(target_os = "macos") {
             Some(PathBuf::from("/usr/bin/perl"))
@@ -650,7 +608,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
             perl_path.to_string_lossy().into(),
         );
     }
-    // Safely check dependencies before accessing
+
     match formula.dependencies() {
         Ok(deps) => {
             if let Some(openjdk) = deps
@@ -677,7 +635,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         }
     }
 
-    // RPATH relocation support (remains unchanged)
     repl.insert("HOMEBREW_RELOCATE_RPATHS".into(), "1".into());
 
     let opt_placeholder = format!(
@@ -692,7 +649,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
             .into(),
     );
 
-    // LLVM Handling (remains unchanged)
     match formula.dependencies() {
         Ok(deps) => {
             let llvm_dep_name = deps
@@ -733,7 +689,6 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     original_relocation_scan_and_patch(formula, install_dir, config, repl)
 }
 
-// original_relocation_scan_and_patch remains unchanged
 fn original_relocation_scan_and_patch(
     _formula: &Formula,
     install_dir: &Path,
@@ -776,11 +731,10 @@ fn original_relocation_scan_and_patch(
                 #[cfg(unix)]
                 let ie = m.permissions().mode() & 0o111 != 0;
                 #[cfg(not(unix))]
-                let ie = true; // Assume executable potential on non-unix
+                let ie = true;
                 (m, ie)
             }
             Err(_e) => {
-                // Log error but continue scan
                 debug!("Failed to get metadata for {}: {}", path.display(), _e);
                 io_errors += 1;
                 continue;
@@ -790,12 +744,11 @@ fn original_relocation_scan_and_patch(
             .parent()
             .is_some_and(|p| p.ends_with("bin") || p.ends_with("sbin"));
         if meta.permissions().readonly() {
-            // Check if we can make it writable before skipping
             #[cfg(unix)]
             {
                 let mut perms = meta.permissions();
                 let current_mode = perms.mode();
-                let new_mode = current_mode | 0o200; // Add owner write permission
+                let new_mode = current_mode | 0o200;
                 if new_mode != current_mode {
                     perms.set_mode(new_mode);
                     if fs::set_permissions(path, perms).is_err() {
@@ -803,7 +756,7 @@ fn original_relocation_scan_and_patch(
                             "Skipping readonly file (and couldn't make writable): {}",
                             path.display()
                         );
-                        continue; // Skip if we couldn't make it writable
+                        continue;
                     } else {
                         debug!("Made readonly file writable: {}", path.display());
                     }
@@ -811,9 +764,6 @@ fn original_relocation_scan_and_patch(
             }
             #[cfg(not(unix))]
             {
-                // On non-unix, if readonly, we likely can't patch.
-                // However, the build process should ideally set permissions correctly.
-                // If we hit this, log and skip.
                 debug!(
                     "Skipping potentially readonly file on non-unix: {}",
                     path.display()
@@ -884,21 +834,18 @@ fn original_relocation_scan_and_patch(
             // Heuristic check for text file (avoid reading huge binaries)
             let mut is_likely_text = false;
             if meta.len() < 5 * 1024 * 1024 {
-                // Only check files smaller than 5MB for text content
                 if let Ok(mut f) = File::open(path) {
                     let mut buf = [0; 1024];
                     match f.read(&mut buf) {
                         Ok(n) if n > 0 => {
-                            // Check for null bytes in the first 1KB
                             if !buf[..n].contains(&0) {
                                 is_likely_text = true;
                             }
                         }
                         Ok(_) => {
-                            /* Empty file, maybe text? */
                             is_likely_text = true;
                         }
-                        Err(_) => { /* Failed to read */ }
+                        Err(_) => {}
                     }
                 }
             }
@@ -932,8 +879,6 @@ fn original_relocation_scan_and_patch(
                         }
                     }
                 } else if meta.len() > 0 {
-                    // Don't warn for empty files
-                    // Failed to read as string (likely binary after all)
                     debug!(
                         "Could not read {} as string for text replacement.",
                         path.display()
@@ -952,14 +897,11 @@ fn original_relocation_scan_and_patch(
                 );
             }
         }
-        // If the file was modified OR was initially executable OR is in bin/sbin,
-        // add it to the list for potential chmod +x later.
         if was_modified || initially_executable || is_in_exec_dir {
             files_to_chmod.push(path.to_path_buf());
         }
     }
 
-    // Final chmod pass for potentially executable files/links
     #[cfg(unix)]
     {
         debug!(
@@ -968,20 +910,16 @@ fn original_relocation_scan_and_patch(
         );
         let unique_files_to_chmod: HashSet<_> = files_to_chmod.into_iter().collect();
         for p in &unique_files_to_chmod {
-            // Check existence again, might have been removed if it was a broken link target etc.
             if !p.exists() && p.symlink_metadata().is_err() {
                 debug!("Skipping chmod for non-existent path: {}", p.display());
                 continue;
             }
             match fs::symlink_metadata(p) {
-                // Use symlink_metadata to handle links correctly
                 Ok(m) => {
-                    // Only chmod files, not directories or links themselves
                     if m.is_file() {
                         let mut perms = m.permissions();
                         let current_mode = perms.mode();
-                        // Unconditionally set ugo+x (execute bits for user, group, other)
-                        let new_mode = current_mode | 0o111; // ensure u+g+o execute
+                        let new_mode = current_mode | 0o111;
                         if new_mode != current_mode {
                             perms.set_mode(new_mode);
                             if let Err(e) = fs::set_permissions(p, perms) {
@@ -1016,23 +954,16 @@ fn original_relocation_scan_and_patch(
             install_dir.display()
         );
         if macho_errors > 0 {
-            // Treat Mach-O errors (path too long, codesign failure) as potentially fatal
             return Err(SpsError::InstallError(format!(
                 "Bottle relocation failed due to {} Mach-O errors in {}",
                 macho_errors,
                 install_dir.display()
             )));
         }
-        // Treat other errors as warnings for now, but maybe make configurable later?
-        // return Err(SpsError::InstallError(format!("Bottle relocation encountered errors in {}",
-        // install_dir.display())));
     }
     Ok(())
 }
 
-/// Convenience wrapper around the `codesign` CLI that signs a single Mach‑O
-/// binary in the same way we previously duplicated in several places.
-/// Keeps the calling sites concise and uniform.
 fn codesign_path(target: &Path) -> Result<()> {
     debug!("Re‑signing: {}", target.display());
     let status = StdCommand::new("codesign")
@@ -1057,8 +988,6 @@ fn codesign_path(target: &Path) -> Result<()> {
     }
     Ok(())
 }
-
-// write_text_file_atomic remains unchanged
 fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
     let dir = original_path.parent().ok_or_else(|| {
         SpsError::Generic(format!(
@@ -1102,8 +1031,7 @@ fn write_text_file_atomic(original_path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
-// find_brewed_perl remains unchanged
-#[cfg(unix)] // This function relies on specific unix paths/conventions
+#[cfg(unix)]
 fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
     let opt_dir = prefix.join("opt");
     if !opt_dir.is_dir() {
@@ -1113,7 +1041,6 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
     match fs::read_dir(opt_dir) {
         Ok(entries) => {
             for entry_res in entries.flatten() {
-                // Use flatten to handle Result
                 let name = entry_res.file_name();
                 let s = name.to_string_lossy();
                 let entry_path = entry_res.path();
@@ -1121,7 +1048,6 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
                     continue;
                 }
                 if let Some(version_part) = s.strip_prefix("perl@") {
-                    // Pad version for proper semver comparison
                     let version_str_padded = if version_part.contains('.') {
                         let parts: Vec<&str> = version_part.split('.').collect();
                         match parts.len() {
@@ -1144,12 +1070,9 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
                         }
                     }
                 } else if s == "perl" {
-                    // Handle unversioned 'perl' link, assume base version for comparison if no
-                    // versioned one found yet
                     let candidate_bin = entry_path.join("bin/perl");
                     if candidate_bin.is_file() && best.is_none() {
                         if let Ok(v_base) = semver::Version::parse("5.0.0") {
-                            // Assign base version
                             best = Some((v_base, candidate_bin));
                         }
                     }
@@ -1163,12 +1086,10 @@ fn find_brewed_perl(prefix: &Path) -> Option<PathBuf> {
     best.map(|(_, path)| path)
 }
 
-#[cfg(not(unix))] // Stub for non-unix
+#[cfg(not(unix))]
 fn find_brewed_perl(_prefix: &Path) -> Option<PathBuf> {
     None
 }
-
-// ensure_llvm_symlinks remains unchanged
 fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) -> Result<()> {
     let lib_dir = install_dir.join("lib");
     if !lib_dir.exists() {
@@ -1178,7 +1099,7 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
         );
         return Ok(());
     }
-    // Safely check dependencies before proceeding
+
     let llvm_dep_name = match formula.dependencies() {
         Ok(deps) => deps
             .iter()
@@ -1256,10 +1177,8 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
             }
         }
 
-        // ----- NEW: also create symlinks inside lib/rustlib/*/lib -----
         let rustlib_dir = install_dir.join("lib").join("rustlib");
         if rustlib_dir.is_dir() {
-            // Iterate over each target‑triple directory (e.g. aarch64‑apple‑darwin)
             if let Ok(entries) = fs::read_dir(&rustlib_dir) {
                 for entry in entries.flatten() {
                     let triple_path = entry.path();
@@ -1267,7 +1186,7 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
                         let triple_lib_dir = triple_path.join("lib");
                         if triple_lib_dir.is_dir() {
                             let nested_symlink = triple_lib_dir.join(llvm_lib_filename);
-                            // Skip if symlink or file already exists
+
                             if nested_symlink.exists() || nested_symlink.symlink_metadata().is_ok()
                             {
                                 debug!(
@@ -1276,7 +1195,7 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
                                 );
                                 continue;
                             }
-                            // Ensure the parent directory exists (should already, but be safe)
+
                             if let Some(parent) = nested_symlink.parent() {
                                 let _ = fs::create_dir_all(parent);
                             }
@@ -1298,7 +1217,6 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
                 }
             }
         }
-        // ----- END NEW -----
     }
     Ok(())
 }

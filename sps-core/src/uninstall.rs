@@ -151,6 +151,9 @@ pub fn uninstall_cask_artifacts(info: &InstalledPackageInfo, config: &Config) ->
 
 // --- Helpers ---
 
+#[cfg(target_os = "macos")]
+use crate::macos::applescript;
+
 fn process_artifact_uninstall_core(artifact: &InstalledArtifact, config: &Config) -> bool {
     debug!("Processing artifact removal: {:?}", artifact);
     match artifact {
@@ -160,6 +163,27 @@ fn process_artifact_uninstall_core(artifact: &InstalledArtifact, config: &Config
                 "Standard uninstall: Removing AppBundle at {}",
                 path.display()
             );
+
+            // Attempt to quit the app before removing (P4 Fix)
+            #[cfg(target_os = "macos")]
+            {
+                if path.exists() {
+                    // Only try to quit if it exists
+                    if let Err(e) = applescript::quit_app_gracefully(path) {
+                        warn!(
+                            "Attempt to gracefully quit app at {} failed or had issues: {} (proceeding with uninstall)",
+                            path.display(),
+                            e
+                        );
+                    }
+                } else {
+                    debug!(
+                        "App bundle at {} does not exist, skipping quit attempt.",
+                        path.display()
+                    );
+                }
+            }
+
             let use_sudo =
                 path.starts_with(config.applications_dir()) || path.starts_with("/Applications");
             remove_filesystem_artifact(path, use_sudo)

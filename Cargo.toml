@@ -32,7 +32,7 @@ object = { version = "0.36.7", features = ["read_core", "write_core", "macho"] }
 humantime = "2.2.0" # Used in common, core
 bitflags = { version = "2.9.0", features = ["serde"] } # Used in common, core (combined features)
 url = "2.5.4" # Used in core, net
-sha2 = "0.10.8" # Used in core, net
+sha2 = "0.10.9" # Used in core, net
 hex = "0.4.3" # Used in core, net
 rand = "0.9.1" # Used in core, net
 infer = "0.19.0" # Used in core, net
