@@ -7,6 +7,7 @@ use sps_common::{Cache, Config};
 
 use crate::cli::info::Info;
 use crate::cli::install::InstallArgs;
+use crate::cli::list::List;
 use crate::cli::reinstall::ReinstallArgs;
 use crate::cli::search::Search;
 use crate::cli::uninstall::Uninstall;
@@ -15,6 +16,7 @@ use crate::cli::upgrade::UpgradeArgs;
 
 pub mod info;
 pub mod install;
+pub mod list;
 pub mod reinstall;
 pub mod runner;
 pub mod search;
@@ -39,7 +41,8 @@ pub struct CliArgs {
 pub enum Command {
     /// Search for available formulas and casks
     Search(Search),
-
+    /// List all installed formulas and casks
+    List(List),
     /// Display information about a formula or cask
     Info(Info),
 
@@ -63,6 +66,7 @@ impl Command {
     pub async fn run(&self, config: &Config, cache: Arc<Cache>) -> Result<()> {
         match self {
             Self::Search(command) => command.run(config, cache).await,
+            Self::List(command) => command.run(config, cache).await,
             Self::Info(command) => command.run(config, cache).await,
             Self::Update(command) => command.run(config, cache).await,
             Self::Install(command) => command.run(config, cache).await,

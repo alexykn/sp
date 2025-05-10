@@ -65,6 +65,15 @@ sps --help
 # Update metadata
 sps update
 
+# List all installed packages
+sps list
+
+# List only installed formulae
+sps list --formula
+
+# List only installed casks
+sps list --cask
+
 # Search for packages
 sps search <formula/cask>
 
