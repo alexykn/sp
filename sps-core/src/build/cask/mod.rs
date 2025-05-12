@@ -53,7 +53,11 @@ pub fn sps_private_cask_app_path(cask: &Cask, config: &Config) -> Option<PathBuf
                     if let Some(app_names) = apps.as_array() {
                         if let Some(app_name_val) = app_names.first() {
                             if let Some(app_name) = app_name_val.as_str() {
-                                return Some(config.private_cask_app_path(&cask.token, &version, app_name));
+                                return Some(config.private_cask_app_path(
+                                    &cask.token,
+                                    &version,
+                                    app_name,
+                                ));
                             }
                         }
                     }
@@ -170,7 +174,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
     debug!("Installing cask: {}", cask.token);
     // This is the path in the *actual* Caskroom (e.g., /opt/homebrew/Caskroom/token/version)
     // where metadata and symlinks to /Applications will go.
-    let actual_caskroom_version_path = config.cask_version_path(&cask.token, &cask.version.clone().unwrap_or_else(|| "latest".to_string()));
+    let actual_caskroom_version_path = config.cask_version_path(
+        &cask.token,
+        &cask.version.clone().unwrap_or_else(|| "latest".to_string()),
+    );
 
     if !actual_caskroom_version_path.exists() {
         fs::create_dir_all(&actual_caskroom_version_path).map_err(|e| {
@@ -183,7 +190,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                 ),
             )))
         })?;
-        debug!("Created actual caskroom version directory: {}", actual_caskroom_version_path.display());
+        debug!(
+            "Created actual caskroom version directory: {}",
+            actual_caskroom_version_path.display()
+        );
     }
     let mut detected_extension = download_path
         .extension()
@@ -278,7 +288,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         if let Err(e) = sps_net::validation::verify_content_type(download_path, expected_ext) {
             tracing::error!("Content type verification failed: {}", e);
             // Attempt cleanup?
-            let _ = fs::remove_dir_all(&cask_version_install_path);
+            let _ = fs::remove_dir_all(&actual_caskroom_version_path);
             return Err(e);
         }
     } else {
@@ -354,7 +364,8 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                         match artifacts::app::install_app_from_staged(
                                             cask,
                                             &staged_app_path,
-                                            &actual_caskroom_version_path, // Pass actual caskroom path
+                                            &actual_caskroom_version_path, /* Pass actual
+                                                                            * caskroom path */
                                             config,
                                         ) {
                                             Ok(mut artifacts) => {
@@ -389,7 +400,8 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                         match artifacts::pkg::install_pkg_from_path(
                                             cask,
                                             &staged_pkg_path,
-                                            &actual_caskroom_version_path, // Pass actual caskroom path
+                                            &actual_caskroom_version_path, /* Pass actual
+                                                                            * caskroom path */
                                             config,
                                         ) {
                                             Ok(mut artifacts) => {
@@ -569,7 +581,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         );
         // Clean up the created actual_caskroom_version_path if no artifacts are defined
         let _ = fs::remove_dir_all(&actual_caskroom_version_path);
-        return Err(SpsError::InstallError(format!("Cask '{}' has no artifacts defined.", cask.token)));
+        return Err(SpsError::InstallError(format!(
+            "Cask '{}' has no artifacts defined.",
+            cask.token
+        )));
     }
     if !artifact_install_errors.is_empty() {
         error!(
@@ -647,11 +662,12 @@ pub fn write_cask_manifest(
         .duration_since(UNIX_EPOCH)
         .map_err(|e: SystemTimeError| SpsError::Generic(format!("System time error: {e}")))?
         .as_secs();
-        
+
     // Determine primary app file name from artifacts
     let primary_app_file_name = artifacts.iter().find_map(|artifact| {
         if let InstalledArtifact::AppBundle { path } = artifact {
-            path.file_name().map(|name| name.to_string_lossy().to_string())
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
         } else {
             None
         }
@@ -695,7 +711,8 @@ pub fn write_cask_manifest(
 }
 
 /// Recursively cleans up empty parent directories in the private cask store.
-/// Starts from the given path and walks up, removing empty directories until a non-empty or root is found.
+/// Starts from the given path and walks up, removing empty directories until a non-empty or root is
+/// found.
 pub fn cleanup_empty_parent_dirs_in_private_store(start_path: &Path, stop_at: &Path) {
     let mut current = start_path.to_path_buf();
     while current != *stop_at {
