@@ -168,22 +168,22 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
 
 pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Result<()> {
     debug!("Installing cask: {}", cask.token);
-    let cask_version_install_path = sps_private_cask_version_dir(cask, config);
-    if !cask_version_install_path.exists() {
-        fs::create_dir_all(&cask_version_install_path).map_err(|e| {
+    // This is the path in the *actual* Caskroom (e.g., /opt/homebrew/Caskroom/token/version)
+    // where metadata and symlinks to /Applications will go.
+    let actual_caskroom_version_path = config.cask_version_path(&cask.token, &cask.version.clone().unwrap_or_else(|| "latest".to_string()));
+
+    if !actual_caskroom_version_path.exists() {
+        fs::create_dir_all(&actual_caskroom_version_path).map_err(|e| {
             SpsError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!(
                     "Failed create cask dir {}: {}",
-                    cask_version_install_path.display(),
+                    actual_caskroom_version_path.display(),
                     e
                 ),
             )))
         })?;
-        debug!(
-            "Created cask version directory: {}",
-            cask_version_install_path.display()
-        );
+        debug!("Created actual caskroom version directory: {}", actual_caskroom_version_path.display());
     }
     let mut detected_extension = download_path
         .extension()
@@ -232,18 +232,18 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
         match artifacts::pkg::install_pkg_from_path(
             cask,
             download_path,
-            &cask_version_install_path,
+            &actual_caskroom_version_path, // PKG manifest items go into the actual caskroom
             config,
         ) {
             Ok(installed_artifacts) => {
                 debug!("Writing PKG install manifest");
-                write_cask_manifest(cask, &cask_version_install_path, installed_artifacts)?;
+                write_cask_manifest(cask, &actual_caskroom_version_path, installed_artifacts)?;
                 debug!("Successfully installed PKG cask: {}", cask.token);
                 return Ok(());
             }
             Err(e) => {
                 error!("PKG installation failed: {}", e);
-                let _ = fs::remove_dir_all(&cask_version_install_path);
+                let _ = fs::remove_dir_all(&actual_caskroom_version_path);
                 return Err(e);
             }
         }
@@ -354,7 +354,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                         match artifacts::app::install_app_from_staged(
                                             cask,
                                             &staged_app_path,
-                                            &cask_version_install_path,
+                                            &actual_caskroom_version_path, // Pass actual caskroom path
                                             config,
                                         ) {
                                             Ok(mut artifacts) => {
@@ -389,7 +389,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                         match artifacts::pkg::install_pkg_from_path(
                                             cask,
                                             &staged_pkg_path,
-                                            &cask_version_install_path,
+                                            &actual_caskroom_version_path, // Pass actual caskroom path
                                             config,
                                         ) {
                                             Ok(mut artifacts) => {
@@ -414,111 +414,111 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                         "suite" => artifacts::suite::install_suite(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "installer" => artifacts::installer::run_installer(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "binary" => artifacts::binary::install_binary(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "manpage" => artifacts::manpage::install_manpage(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "colorpicker" => artifacts::colorpicker::install_colorpicker(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "dictionary" => artifacts::dictionary::install_dictionary(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "font" => artifacts::font::install_font(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "input_method" => artifacts::input_method::install_input_method(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "internet_plugin" => artifacts::internet_plugin::install_internet_plugin(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "keyboard_layout" => artifacts::keyboard_layout::install_keyboard_layout(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "prefpane" => artifacts::prefpane::install_prefpane(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "qlplugin" => artifacts::qlplugin::install_qlplugin(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "mdimporter" => artifacts::mdimporter::install_mdimporter(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "screen_saver" => artifacts::screen_saver::install_screen_saver(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "service" => artifacts::service::install_service(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "audio_unit_plugin" => {
                             artifacts::audio_unit_plugin::install_audio_unit_plugin(
                                 cask,
                                 stage_path,
-                                &cask_version_install_path,
+                                &actual_caskroom_version_path,
                                 config,
                             )
                         }
                         "vst_plugin" => artifacts::vst_plugin::install_vst_plugin(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "vst3_plugin" => artifacts::vst3_plugin::install_vst3_plugin(
                             cask,
                             stage_path,
-                            &cask_version_install_path,
+                            &actual_caskroom_version_path,
                             config,
                         ),
                         "zap" => artifacts::zap::install_zap(cask, config),
@@ -567,10 +567,9 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             "Cask {} definition is missing the required 'artifacts' array. Cannot determine what to install.",
             cask.token
         );
-        return Err(SpsError::InstallError(format!(
-            "Cask '{}' has no artifacts defined.",
-            cask.token
-        )));
+        // Clean up the created actual_caskroom_version_path if no artifacts are defined
+        let _ = fs::remove_dir_all(&actual_caskroom_version_path);
+        return Err(SpsError::InstallError(format!("Cask '{}' has no artifacts defined.", cask.token)));
     }
     if !artifact_install_errors.is_empty() {
         error!(
@@ -578,7 +577,7 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             artifact_install_errors.len(),
             cask.token
         );
-        let _ = fs::remove_dir_all(&cask_version_install_path);
+        let _ = fs::remove_dir_all(&actual_caskroom_version_path); // Clean up actual caskroom on error
         return Err(artifact_install_errors.remove(0));
     }
     let actual_install_count = all_installed_artifacts
@@ -595,10 +594,10 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
             "No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.",
             cask.token
         );
-        write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
+        write_cask_manifest(cask, &actual_caskroom_version_path, all_installed_artifacts)?;
     } else {
         debug!("Writing cask installation manifest");
-        write_cask_manifest(cask, &cask_version_install_path, all_installed_artifacts)?;
+        write_cask_manifest(cask, &actual_caskroom_version_path, all_installed_artifacts)?;
     }
     debug!("Successfully installed cask: {}", cask.token);
     Ok(())
