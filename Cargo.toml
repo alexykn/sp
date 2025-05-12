@@ -19,7 +19,7 @@ thiserror = "2.0.12"
 serde = { version = "1.0.219", features = ["derive"] } # Using the highest specified version and common features
 serde_json = "1.0.140" # Used across multiple crates
 reqwest = { version = "0.12.15", features = ["json", "stream", "blocking"] } # Combined features from core, net, cli, common
-tokio = { version = "1.44.2", features = ["full"] } # Used across cli, core, net
+tokio = { version = "1.45.0", features = ["full"] } # Used across cli, core, net
 futures = "0.3.31" # Used across cli, core, net
 tracing = "0.1.41" # Used across cli, common, core, net
 semver = "1.0.26" # Used in common, core
@@ -36,7 +36,7 @@ sha2 = "0.10.8" # Used in core, net
 hex = "0.4.3" # Used in core, net
 rand = "0.9.1" # Used in core, net
 infer = "0.19.0" # Used in core, net
-tempfile = "3.19.1"
+tempfile = "3.20.0"
 
 # Workspace-wide release profile
 [profile.release]
