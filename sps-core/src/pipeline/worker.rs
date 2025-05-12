@@ -10,7 +10,7 @@ use sps_common::model::formula::FormulaDependencies;
 use sps_common::model::InstallTargetIdentifier;
 use sps_common::pipeline::{JobAction, PipelineEvent, PipelinePackageType, WorkerJob};
 use tokio::sync::broadcast;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::installed::{InstalledPackageInfo, PackageType as CorePackageType};
 use crate::{build, uninstall};
@@ -195,6 +195,36 @@ fn do_execute_sync_steps(
                         ) {
                             warn!("Failed to create Caskroom symlink: {}", e);
                         }
+                    }
+
+                    // --- Write CASK_INSTALL_MANIFEST.json after private store reinstall ---
+                    let created_artifacts = vec![
+                        sps_common::model::artifact::InstalledArtifact::AppBundle {
+                            path: applications_app_path.clone(),
+                        },
+                        sps_common::model::artifact::InstalledArtifact::CaskroomLink {
+                            link_path: caskroom_symlink_path.clone(),
+                            target_path: applications_app_path.clone(),
+                        },
+                    ];
+
+                    debug!(
+                        "[{}] Writing manifest for private store reinstall...",
+                        job_request.target_id
+                    );
+                    if let Err(e) = build::cask::write_cask_manifest(
+                        cask,
+                        &cask_version_path,
+                        created_artifacts,
+                    ) {
+                        error!(
+                            "[{}] Failed to write CASK_INSTALL_MANIFEST.json during private store reinstall: {}",
+                            job_request.target_id, e
+                        );
+                        return Err(SpsError::InstallError(format!(
+                            "Failed to write manifest during private store reinstall for {}: {}",
+                            job_request.target_id, e
+                        )));
                     }
                 } else {
                     return Err(SpsError::InstallError(format!(

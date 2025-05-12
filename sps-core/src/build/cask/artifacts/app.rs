@@ -292,6 +292,23 @@ pub fn install_app_from_staged(
         "Successfully installed app artifact: {} (Cask: {})",
         app_name, cask.token
     );
+
+    // Write CASK_INSTALL_MANIFEST.json to ensure package is always detected as installed
+    if let Err(e) = crate::build::cask::write_cask_manifest(
+        cask,
+        cask_version_install_path,
+        created_artifacts.clone(),
+    ) {
+        error!(
+            "Failed to write CASK_INSTALL_MANIFEST.json for {}: {}",
+            cask.token, e
+        );
+        return Err(SpsError::InstallError(format!(
+            "Failed to write CASK_INSTALL_MANIFEST.json for {}: {}",
+            cask.token, e
+        )));
+    }
+
     Ok(created_artifacts)
 }
 

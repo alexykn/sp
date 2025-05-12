@@ -316,6 +316,47 @@ async fn plan_operations(
                         processed.insert(name.clone());
                     }
                     Ok(None) => {
+                        // --- CASK PRIVATE STORE REUSE LOGIC ---
+                        // Try to find a private store bundle for this cask/version
+                        // (This logic is similar to the Reinstall branch)
+                        let cask_token_path = config.cask_dir(name);
+                        if cask_token_path.is_dir() {
+                            if let Ok(version_entries_iter) = fs::read_dir(&cask_token_path) {
+                                for version_entry in version_entries_iter.flatten() {
+                                    let version_path = version_entry.path();
+                                    if version_path.is_dir()
+                                        && version_path.join("CASK_INSTALL_MANIFEST.json").is_file()
+                                    {
+                                        // Read manifest to get app name
+                                        if let Ok(manifest_str) = fs::read_to_string(
+                                            version_path.join("CASK_INSTALL_MANIFEST.json"),
+                                        ) {
+                                            if let Ok::<build::cask::CaskInstallManifest, _>(
+                                                manifest,
+                                            ) = serde_json::from_str(&manifest_str)
+                                            {
+                                                if let Some(app_name) =
+                                                    manifest.primary_app_file_name
+                                                {
+                                                    let private_path = config
+                                                        .private_cask_app_path(
+                                                            name,
+                                                            &manifest.version,
+                                                            &app_name,
+                                                        );
+                                                    if std::fs::metadata(&private_path).is_ok() {
+                                                        tracing::info!("(plan_operations) [INSTALL] Found app in private store for install: {}", private_path.display());
+                                                        private_store_sources
+                                                            .insert(name.clone(), private_path);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        break; // Only check the first version found
+                                    }
+                                }
+                            }
+                        }
                         initial_ops.insert(name.clone(), (JobAction::Install, None));
                     }
                     Err(e) => {
@@ -340,40 +381,92 @@ async fn plan_operations(
                     Ok(Some(installed_info)) => {
                         // For Casks, check if app exists in private store
                         if installed_info.pkg_type == installed::PackageType::Cask {
+                            tracing::info!(
+                                "(plan_operations) [CASK] Checking for manifest at: {}",
+                                installed_info
+                                    .path
+                                    .join("CASK_INSTALL_MANIFEST.json")
+                                    .display()
+                            );
                             // Try to read manifest to get app name
                             let manifest_path =
                                 installed_info.path.join("CASK_INSTALL_MANIFEST.json");
                             if manifest_path.exists() {
-                                if let Ok(manifest_str) = fs::read_to_string(&manifest_path) {
-                                    if let Ok::<build::cask::CaskInstallManifest, _>(manifest) =
-                                        serde_json::from_str(&manifest_str)
-                                    {
-                                        if let Some(app_name) = manifest.primary_app_file_name {
-                                            let private_path = config.private_cask_app_path(
-                                                &installed_info.name,
-                                                &installed_info.version,
-                                                &app_name,
-                                            );
-                                            // Accept path even if it differs only by case or
-                                            // NFC/NFD.
-                                            // Use metadata().is_ok() for compatibility.
-                                            if std::fs::metadata(&private_path).is_ok() {
-                                                debug!(
-                                                    "Found app in private store for reinstall: {}",
-                                                    private_path.display()
-                                                );
-                                                private_store_sources
-                                                    .insert(name.clone(), private_path);
-                                            } else {
-                                                warn!(
-                                                    "Cask {}: private store bundle not found at {}",
-                                                    name,
-                                                    private_path.display()
-                                                );
+                                tracing::info!(
+                                    "(plan_operations) Manifest exists at: {}",
+                                    manifest_path.display()
+                                );
+                                match fs::read_to_string(&manifest_path) {
+                                    Ok(manifest_str) => {
+                                        tracing::info!(
+                                            "(plan_operations) Manifest read OK for {}: {} bytes",
+                                            name,
+                                            manifest_str.len()
+                                        );
+                                        match serde_json::from_str::<build::cask::CaskInstallManifest>(
+                                            &manifest_str,
+                                        ) {
+                                            Ok(manifest) => {
+                                                tracing::info!("(plan_operations) Manifest JSON parsed OK for {}", name);
+                                                if let Some(app_name) =
+                                                    manifest.primary_app_file_name
+                                                {
+                                                    tracing::info!("(plan_operations) Manifest primary_app_file_name: '{}'", app_name);
+                                                    let private_path = config
+                                                        .private_cask_app_path(
+                                                            &installed_info.name,
+                                                            &installed_info.version,
+                                                            &app_name,
+                                                        );
+                                                    tracing::info!("(plan_operations) Built private store path: {}", private_path.display());
+                                                    // Accept path even if it differs only by case
+                                                    // or NFC/NFD.
+                                                    // Use metadata().is_ok() for compatibility.
+                                                    if std::fs::metadata(&private_path).is_ok() {
+                                                        tracing::info!("(plan_operations) Found app in private store for reinstall: {}", private_path.display());
+                                                        private_store_sources
+                                                            .insert(name.clone(), private_path);
+                                                    } else {
+                                                        tracing::warn!("(plan_operations) Cask {}: private store bundle not found at {}", name, private_path.display());
+                                                        // Extra: enumerate directory contents for
+                                                        // debugging
+                                                        if let Some(parent) = private_path.parent()
+                                                        {
+                                                            match std::fs::read_dir(parent) {
+                                                                Ok(entries) => {
+                                                                    tracing::info!("(plan_operations) Directory listing for {}:", parent.display());
+                                                                    for entry in entries.flatten() {
+                                                                        tracing::info!("(plan_operations)   - {}", entry.path().display());
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    tracing::warn!("(plan_operations) Could not list directory {}: {}", parent.display(), e);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    tracing::warn!("(plan_operations) Manifest for {} has no primary_app_file_name", name);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("(plan_operations) Failed to parse manifest JSON for {}: {}", name, e);
                                             }
                                         }
                                     }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "(plan_operations) Failed to read manifest for {}: {}",
+                                            name,
+                                            e
+                                        );
+                                    }
                                 }
+                            } else {
+                                tracing::warn!(
+                                    "(plan_operations) Manifest does not exist at: {}",
+                                    manifest_path.display()
+                                );
                             }
                         }
 
@@ -683,7 +776,6 @@ async fn plan_operations(
         .ok();
 
     let mut final_planned_jobs: Vec<PlannedJob> = Vec::new();
-    let private_store_sources: HashMap<String, PathBuf> = HashMap::new();
     // Add initial ops first
     for (name, (action, opt_def)) in initial_ops {
         if errors.iter().any(|(n, _)| n == &name) {
@@ -807,23 +899,57 @@ async fn coordinate_downloads(
         let job_id = planned_job.target_id.clone();
         let client_clone = Arc::clone(&http_client);
 
+        tracing::info!("(coordinate_downloads) Processing planned_job: {}", job_id);
+        tracing::info!(
+            "(coordinate_downloads) use_private_store_source: {:?}",
+            planned_job.use_private_store_source
+        );
+        tracing::info!(
+            "(coordinate_downloads) target_definition: {:?}",
+            planned_job.target_definition
+        );
+        tracing::info!(
+            "(coordinate_downloads) is_source_from_private_store: {}",
+            planned_job.use_private_store_source.is_some()
+        );
+
         // If using private store source, skip download and send directly to worker
         if let Some(private_path) = planned_job.use_private_store_source.clone() {
+            tracing::info!(
+                "(coordinate_downloads) [{}] Using app from private store for WorkerJob: {}",
+                job_id,
+                private_path.display()
+            );
             debug!(
                 "[{}] Using app from private store for WorkerJob: {}",
                 job_id,
                 private_path.display()
             );
+            let size = fs::metadata(&private_path).map(|m| m.len()).unwrap_or(0);
+            tracing::info!(
+                "(coordinate_downloads) [{}] private_path metadata size: {}",
+                job_id,
+                size
+            );
             let worker_job = WorkerJob {
                 request: planned_job,
                 download_path: private_path.clone(),
-                download_size_bytes: fs::metadata(&private_path).map(|m| m.len()).unwrap_or(0),
+                download_size_bytes: size,
                 is_source_from_private_store: true,
             };
+            tracing::info!(
+                "(coordinate_downloads) [{}] Sending WorkerJob to worker_job_tx (private store)",
+                job_id
+            );
             if let Err(e) = worker_job_tx.send(worker_job) {
                 error!(
                     "[{}] Failed to queue worker job (private store): {}",
                     job_id, e
+                );
+                tracing::error!(
+                    "(coordinate_downloads) [{}] Failed to queue worker job (private store): {}",
+                    job_id,
+                    e
                 );
                 download_errors.push((
                     job_id,
@@ -833,7 +959,13 @@ async fn coordinate_downloads(
             continue;
         }
 
+        tracing::info!(
+            "(coordinate_downloads) [{}] No private store source, proceeding to download phase",
+            job_id
+        );
+
         download_tasks.spawn(async move {
+            tracing::info!("(coordinate_downloads) [{}] Spawning download task", job_id);
             let tentative_url = match &planned_job.target_definition {
                 InstallTargetIdentifier::Formula(f) => f.url.clone(),
                 InstallTargetIdentifier::Cask(c) => match c.url.clone() {
@@ -842,18 +974,31 @@ async fn coordinate_downloads(
                     None => "unknown_cask_url".to_string(),
                 },
             };
+            tracing::info!(
+                "(coordinate_downloads) [{}] Download URL: {}",
+                job_id,
+                tentative_url
+            );
             event_tx_clone
                 .send(PipelineEvent::DownloadStarted {
                     target_id: job_id.clone(),
-                    url: tentative_url,
+                    url: tentative_url.clone(),
                 })
                 .ok();
 
             let download_result: Result<PathBuf> = match &planned_job.target_definition {
                 InstallTargetIdentifier::Formula(f) => {
                     if planned_job.is_source_build {
+                        tracing::info!(
+                            "(coordinate_downloads) [{}] Downloading formula source",
+                            job_id
+                        );
                         build::formula::source::download_source(f, &config_clone).await
                     } else {
+                        tracing::info!(
+                            "(coordinate_downloads) [{}] Downloading formula bottle",
+                            job_id
+                        );
                         build::formula::bottle::download_bottle(
                             f,
                             &config_clone,
@@ -863,6 +1008,7 @@ async fn coordinate_downloads(
                     }
                 }
                 InstallTargetIdentifier::Cask(c) => {
+                    tracing::info!("(coordinate_downloads) [{}] Downloading cask", job_id);
                     build::cask::download_cask(c, cache_clone.as_ref()).await
                 }
             };
@@ -870,6 +1016,12 @@ async fn coordinate_downloads(
             match download_result {
                 Ok(download_path) => {
                     let size_bytes = fs::metadata(&download_path).map(|m| m.len()).unwrap_or(0);
+                    tracing::info!(
+                        "(coordinate_downloads) [{}] Downloaded to {}, size: {}",
+                        job_id,
+                        download_path.display(),
+                        size_bytes
+                    );
                     debug!(
                         "[{}] Downloaded to: {} ({} bytes)",
                         job_id,
