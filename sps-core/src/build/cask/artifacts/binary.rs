@@ -11,6 +11,8 @@ use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
 
+use crate::build::cask::helpers::remove_path_robustly;
+
 /// Installs `binary` artifacts, which can be declared as:
 ///  - a simple string: `"foo"` (source and target both `"foo"`)
 ///  - a map: `{ "source": "path/in/stage", "target": "name", "chmod": "0755" }`
@@ -117,11 +119,11 @@ pub fn install_binary(
 
                         // Also create a Caskroom symlink for reference
                         let caskroom_link = cask_version_install_path.join(&target_name);
-                        let _ = fs::remove_file(&caskroom_link);
+                        let _ = remove_path_robustly(&caskroom_link, config, true);
                         symlink(&link_path, &caskroom_link)?;
                         installed.push(InstalledArtifact::CaskroomLink {
                             link_path: caskroom_link,
-                            target_path: link_path,
+                            target_path: link_path.clone(),
                         });
                     }
 

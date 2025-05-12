@@ -1,7 +1,7 @@
 // In sps-core/src/build/cask/app.rs
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sps_common::config::Config;
@@ -12,6 +12,32 @@ use tracing::{debug, error, warn}; // Ensure warn is imported
 
 #[cfg(target_os = "macos")]
 use crate::macos::xattr; // Import the xattr utility
+
+/// Finds the primary .app bundle in a directory. Returns an error if none or ambiguous.
+/// If multiple .app bundles are found, returns the first and logs a warning.
+pub fn find_primary_app_bundle_in_dir(dir: &Path) -> Result<PathBuf> {
+    if !dir.is_dir() {
+        return Err(SpsError::NotFound(format!("Directory {} not found for app bundle scan.", dir.display())));
+    }
+    let mut app_bundles = Vec::new();
+    for entry_res in fs::read_dir(dir)? {
+        let entry = entry_res?;
+        let path = entry.path();
+        if path.is_dir() && path.extension().map_or(false, |ext| ext == "app") {
+            app_bundles.push(path);
+        }
+    }
+    if app_bundles.is_empty() {
+        Err(SpsError::NotFound(format!("No .app bundle found in {}", dir.display())))
+    } else if app_bundles.len() == 1 {
+        Ok(app_bundles.remove(0))
+    } else {
+        // Heuristic: return the largest .app bundle if multiple are found, or one matching a common pattern.
+        // For now, error if multiple are present to force explicit handling in Cask definitions if needed.
+        warn!("Multiple .app bundles found in {}: {:?}. Returning the first one, but this might be ambiguous.", dir.display(), app_bundles);
+        Ok(app_bundles.remove(0)) // Or error out
+    }
+}
 
 /// Installs an app bundle from a staged location to /Applications and creates a symlink in the
 /// caskroom. Returns a Vec containing the details of artifacts created.
@@ -39,21 +65,21 @@ pub fn install_app_from_staged(
         })?
         .to_string_lossy();
 
-    // Path for the "master" copy of the app bundle within the Caskroom
-    let caskroom_app_master_path = cask_version_install_path.join(app_name.as_ref());
+    // Path for the pristine copy of the app bundle in the private cask store
+    let private_store_app_path = config.private_cask_app_path(&cask.token, &cask.version.clone().unwrap_or_else(|| "latest".to_string()), app_name.as_ref());
     // Final destination for the app bundle
     let final_app_destination_in_applications = config.applications_dir().join(app_name.as_ref());
     // Path for the symlink within the Caskroom that points to the app in /Applications
     let caskroom_symlink_to_final_app = cask_version_install_path.join(app_name.as_ref());
 
     debug!(
-        "Installing app '{}': Staged -> Caskroom Master -> /Applications -> Caskroom Symlink",
+        "Installing app '{}': Staged -> Private Store -> /Applications -> Caskroom Symlink",
         app_name
     );
     debug!("  Staged app source: {}", staged_app_path.display());
     debug!(
-        "  Caskroom master copy target: {}",
-        caskroom_app_master_path.display()
+        "  Private store copy target: {}",
+        private_store_app_path.display()
     );
     debug!(
         "  Final /Applications target: {}",
@@ -78,49 +104,69 @@ pub fn install_app_from_staged(
         })?;
     }
 
-    // 2. Clean existing Caskroom master path (if any from a failed prior attempt)
-    if caskroom_app_master_path.exists() || caskroom_app_master_path.symlink_metadata().is_ok() {
+    // 2. Create private store directory if it doesn't exist
+    if let Some(parent) = private_store_app_path.parent() {
+        if !parent.exists() {
+            debug!(
+                "Creating private store directory: {}",
+                parent.display()
+            );
+            fs::create_dir_all(parent).map_err(|e| {
+                SpsError::Io(std::sync::Arc::new(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to create private store dir {}: {}",
+                        parent.display(),
+                        e
+                    ),
+                )))
+            })?;
+        }
+    }
+    
+    // 3. Clean existing app in private store (if any from a failed prior attempt)
+    if private_store_app_path.exists() || private_store_app_path.symlink_metadata().is_ok() {
         debug!(
-            "Removing existing item at Caskroom master path: {}",
-            caskroom_app_master_path.display()
+            "Removing existing item at private store path: {}",
+            private_store_app_path.display()
         );
-        let _ = remove_path_robustly(&caskroom_app_master_path, config, false);
+        let _ = remove_path_robustly(&private_store_app_path, config, false);
     }
 
-    // 3. Move from temporary stage to Caskroom master path
+    // 4. Move from temporary stage to private store
     debug!(
-        "Moving staged app {} to Caskroom master path {}",
+        "Moving staged app {} to private store path {}",
         staged_app_path.display(),
-        caskroom_app_master_path.display()
+        private_store_app_path.display()
     );
-    if let Err(e) = fs::rename(staged_app_path, &caskroom_app_master_path) {
+    if let Err(e) = fs::rename(staged_app_path, &private_store_app_path) {
         error!(
-            "Failed to move staged app to Caskroom: {}. Source: {}, Dest: {}",
+            "Failed to move staged app to private store: {}. Source: {}, Dest: {}",
             e,
             staged_app_path.display(),
-            caskroom_app_master_path.display()
+            private_store_app_path.display()
         );
         return Err(SpsError::Io(std::sync::Arc::new(e)));
     }
 
-    // 4. Set/Verify Quarantine on Caskroom master copy
+    // 5. Set/Verify Quarantine on private store copy
     #[cfg(target_os = "macos")]
     {
         debug!(
-            "Setting/verifying quarantine on Caskroom master copy: {}",
-            caskroom_app_master_path.display()
+            "Setting/verifying quarantine on private store copy: {}",
+            private_store_app_path.display()
         );
-        if let Err(e) = xattr::set_quarantine_attribute(&caskroom_app_master_path, &cask.token) {
+        if let Err(e) = xattr::set_quarantine_attribute(&private_store_app_path, &cask.token) {
             error!(
-                "Failed to set quarantine on Caskroom master copy {}: {}. This is critical.",
-                caskroom_app_master_path.display(),
+                "Failed to set quarantine on private store copy {}: {}. This is critical.",
+                private_store_app_path.display(),
                 e
             );
             return Err(e);
         }
     }
 
-    // 5. Clean existing final app destination in /Applications
+    // 6. Clean existing final app destination in /Applications
     if final_app_destination_in_applications.exists()
         || final_app_destination_in_applications
             .symlink_metadata()
@@ -138,49 +184,35 @@ pub fn install_app_from_staged(
         }
     }
 
-    // 6. Move from Caskroom master to final /Applications destination
+    // 7. Copy from private store to final /Applications destination
     debug!(
-        "Moving app from Caskroom master {} to /Applications {}",
-        caskroom_app_master_path.display(),
+        "Copying app from private store {} to /Applications {}",
+        private_store_app_path.display(),
         final_app_destination_in_applications.display()
     );
-    let mv_to_apps_output = Command::new("mv")
-        .arg(&caskroom_app_master_path)
+    // Use cp -Rp to preserve attributes during copy
+    let cp_to_apps_output = Command::new("cp")
+        .arg("-Rp")
+        .arg(&private_store_app_path)
         .arg(&final_app_destination_in_applications)
         .output()?;
 
-    if !mv_to_apps_output.status.success() {
-        let stderr = String::from_utf8_lossy(&mv_to_apps_output.stderr);
+    if !cp_to_apps_output.status.success() {
+        let stderr = String::from_utf8_lossy(&cp_to_apps_output.stderr);
         error!(
-            "Failed to move app from Caskroom master {} to /Applications {} (status: {}): {}. Attempting copy as fallback.",
-            caskroom_app_master_path.display(),
+            "Failed to copy app from private store {} to /Applications {} (status: {}): {}.",
+            private_store_app_path.display(),
             final_app_destination_in_applications.display(),
-            mv_to_apps_output.status,
+            cp_to_apps_output.status,
             stderr.trim()
         );
-        let cp_output = Command::new("cp")
-            .arg("-R")
-            .arg(&caskroom_app_master_path)
-            .arg(&final_app_destination_in_applications)
-            .output()?;
-        if !cp_output.status.success() {
-            let cp_stderr = String::from_utf8_lossy(&cp_output.stderr);
-            error!(
-                "`cp -R` from Caskroom to /Applications also failed (status: {}): {}",
-                cp_output.status,
-                cp_stderr.trim()
-            );
-            return Err(SpsError::InstallError(format!(
-                "Failed to move or copy app from Caskroom to {}: {}",
-                final_app_destination_in_applications.display(),
-                cp_stderr.trim()
-            )));
-        }
-        debug!("Successfully copied app from Caskroom to /Applications using `cp -R`.");
-        let _ = fs::remove_dir_all(&caskroom_app_master_path);
-    } else {
-        debug!("Successfully moved app from Caskroom master to /Applications using `mv`.");
+        return Err(SpsError::InstallError(format!(
+            "Failed to copy app from private store to {}: {}",
+            final_app_destination_in_applications.display(),
+            stderr.trim()
+        )));
     }
+    debug!("Successfully copied app from private store to /Applications using `cp -Rp`.");
 
     // 7. Re-Set/Ensure Quarantine on the Final App in /Applications
     #[cfg(target_os = "macos")]

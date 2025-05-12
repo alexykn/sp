@@ -11,6 +11,8 @@ use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
 
+use crate::build::cask::helpers::remove_path_robustly;
+
 /// Installs any `colorpicker` stanzas from the Cask definition.
 ///
 /// Homebrew’s `Colorpicker` artifact simply subclasses `Moved` with
@@ -50,7 +52,7 @@ pub fn install_colorpicker(
                             let dest = dest_dir.join(bundle_name);
                             // Remove any previous copy
                             if dest.exists() {
-                                fs::remove_dir_all(&dest)?;
+                                let _ = remove_path_robustly(&dest, config, true);
                             }
 
                             debug!(
@@ -70,11 +72,11 @@ pub fn install_colorpicker(
                             // Symlink back into Caskroom for reference
                             // :contentReference[oaicite:5]{index=5}
                             let link = cask_version_install_path.join(bundle_name);
-                            let _ = fs::remove_file(&link);
+                            let _ = remove_path_robustly(&link, config, true);
                             symlink(&dest, &link)?;
                             installed.push(InstalledArtifact::CaskroomLink {
                                 link_path: link,
-                                target_path: dest,
+                                target_path: dest.clone(),
                             });
                         }
                     }

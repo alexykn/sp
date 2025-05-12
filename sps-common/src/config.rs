@@ -48,6 +48,7 @@ pub struct Config {
     pub docker_registry_token: Option<String>,
     pub docker_registry_basic_auth: Option<String>,
     pub github_api_token: Option<String>,
+    pub private_cask_store_dir: PathBuf,
 }
 
 impl Config {
@@ -58,6 +59,13 @@ impl Config {
         let taps_dir = prefix.join("Library/Taps");
         let cache_dir = cache::get_cache_dir()?;
         let api_base_url = "https://formulae.brew.sh/api".to_string();
+
+        // Set up private cask store in ~/.local/share/sps/cask_store
+        let mut private_cask_store_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        private_cask_store_dir.push(".local");
+        private_cask_store_dir.push("share");
+        private_cask_store_dir.push("sps");
+        private_cask_store_dir.push("cask_store");
 
         let artifact_domain = env::var("HOMEBREW_ARTIFACT_DOMAIN").ok();
         let docker_registry_token = env::var("HOMEBREW_DOCKER_REGISTRY_TOKEN").ok();
@@ -88,6 +96,7 @@ impl Config {
             docker_registry_token,
             docker_registry_basic_auth,
             github_api_token,
+            private_cask_store_dir,
         })
     }
 
@@ -135,6 +144,31 @@ impl Config {
 
     pub fn cask_dir(&self, cask_token: &str) -> PathBuf {
         self.caskroom_dir().join(cask_token)
+    }
+
+    /// Returns the path to the cask's token directory in the caskroom.
+    pub fn cask_token_path(&self, cask_token: &str) -> PathBuf {
+        self.caskroom_dir().join(cask_token)
+    }
+    
+    /// Returns the base directory for the private cask store
+    pub fn private_cask_store_base_dir(&self) -> &Path {
+        &self.private_cask_store_dir
+    }
+    
+    /// Returns the path to the cask's token directory in the private store
+    pub fn private_cask_token_path(&self, cask_token: &str) -> PathBuf {
+        self.private_cask_store_dir.join(cask_token)
+    }
+    
+    /// Returns the path to the version directory in the private store
+    pub fn private_cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
+        self.private_cask_token_path(cask_token).join(version_str)
+    }
+    
+    /// Returns the path to an app in the private store
+    pub fn private_cask_app_path(&self, cask_token: &str, version_str: &str, app_name: &str) -> PathBuf {
+        self.private_cask_version_path(cask_token, version_str).join(app_name)
     }
 
     pub fn cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {

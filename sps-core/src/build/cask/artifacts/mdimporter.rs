@@ -11,6 +11,8 @@ use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
 
+use crate::build::cask::helpers::remove_path_robustly;
+
 /// Installs `mdimporter` bundles from the staging area into
 /// `~/Library/Spotlight`, then symlinks them into the Caskroom,
 /// and reloads them via `mdimport -r` so Spotlight picks them up.
@@ -45,7 +47,7 @@ pub fn install_mdimporter(
 
                             let dest = dest_dir.join(bundle_name);
                             if dest.exists() {
-                                fs::remove_dir_all(&dest)?;
+                                let _ = remove_path_robustly(&dest, config, true);
                             }
 
                             debug!(
@@ -64,7 +66,7 @@ pub fn install_mdimporter(
 
                             // Symlink for reference
                             let link = cask_version_install_path.join(bundle_name);
-                            let _ = fs::remove_file(&link);
+                            let _ = remove_path_robustly(&link, config, true);
                             symlink(&dest, &link)?;
                             installed.push(InstalledArtifact::CaskroomLink {
                                 link_path: link,

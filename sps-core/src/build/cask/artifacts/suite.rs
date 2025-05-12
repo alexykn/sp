@@ -1,6 +1,5 @@
 // src/build/cask/artifacts/suite.rs
 
-use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
@@ -10,6 +9,8 @@ use sps_common::error::Result;
 use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
+
+use crate::build::cask::helpers::remove_path_robustly;
 
 /// Implements the `suite` stanza by moving each named directory from
 /// the staging area into `/Applications`, then symlinking it in the Caskroom.
@@ -43,7 +44,7 @@ pub fn install_suite(
                             let dest_dir = config.applications_dir(); // e.g. /Applications
                             let dest = dest_dir.join(dir_name); // e.g. /Applications/Foobar Suite
                             if dest.exists() {
-                                fs::remove_dir_all(&dest)?; // remove old
+                                let _ = remove_path_robustly(&dest, config, true); // remove old
                             }
 
                             debug!("Moving suite '{}' → '{}'", src.display(), dest.display());
@@ -58,11 +59,11 @@ pub fn install_suite(
 
                             // Then symlink it under Caskroom for reference
                             let link = cask_version_install_path.join(dir_name);
-                            let _ = fs::remove_file(&link);
+                            let _ = remove_path_robustly(&link, config, true);
                             symlink(&dest, &link)?;
                             installed.push(InstalledArtifact::CaskroomLink {
                                 link_path: link,
-                                target_path: dest,
+                                target_path: dest.clone(),
                             });
                         }
                     }

@@ -9,6 +9,7 @@ use sps_common::error::Result;
 use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 
+use crate::build::cask::helpers::remove_path_robustly;
 use crate::build::cask::write_cask_manifest;
 
 /// Install `input_method` artifacts from the staged directory into
@@ -40,7 +41,7 @@ pub fn install_input_method(
 
                                 // Remove existing input method if present
                                 if target.exists() {
-                                    fs::remove_dir_all(&target)?;
+                                    let _ = remove_path_robustly(&target, config, true);
                                 }
 
                                 // Move (or rename) the staged bundle
@@ -55,7 +56,7 @@ pub fn install_input_method(
                                 // Create a caskroom symlink for uninstallation
                                 let link_path = cask_version_install_path.join(name);
                                 if link_path.exists() {
-                                    fs::remove_file(&link_path)?;
+                                    let _ = remove_path_robustly(&link_path, config, true);
                                 }
                                 #[cfg(unix)]
                                 std::os::unix::fs::symlink(&target, &link_path)?;

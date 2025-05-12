@@ -510,6 +510,61 @@ fn trash_path(path: &Path) -> bool {
     }
 }
 
+/// Removes the app from the private cask store and cleans up empty parent directories.
+/// 
+/// # Arguments
+/// 
+/// * `cask_token` - The cask token.
+/// * `version` - The cask version.
+/// * `app_name` - The optional app name to remove from the private store.
+/// * `config` - The configuration.
+/// 
+/// # Returns
+/// 
+/// `true` if the cleanup was successful or if nothing needed to be cleaned up, `false` otherwise.
+fn cleanup_private_store(
+    cask_token: &str,
+    version: &str,
+    app_name: Option<&str>,
+    config: &Config,
+) -> bool {
+    debug!(
+        "Cleaning up private store for cask {} version {}",
+        cask_token, version
+    );
+    
+    let private_version_dir = config.private_cask_version_path(cask_token, version);
+    
+    // If the app name is provided, try to remove that specific app
+    if let Some(app) = app_name {
+        let app_path = private_version_dir.join(app);
+        if app_path.exists() || app_path.symlink_metadata().is_ok() {
+            debug!("Removing app from private store: {}", app_path.display());
+            let _ = super::build::cask::helpers::remove_path_robustly(&app_path, config, false);
+        }
+    }
+    
+    // Remove any other content in the version directory
+    if private_version_dir.exists() {
+        debug!("Removing private store version directory: {}", private_version_dir.display());
+        match fs::remove_dir_all(&private_version_dir) {
+            Ok(_) => debug!("Successfully removed private store version directory"),
+            Err(e) => {
+                warn!("Failed to remove private store version directory: {}", e);
+                return false;
+            }
+        }
+    }
+    
+    // Clean up empty parent directories
+    super::build::cask::helpers::cleanup_empty_parent_dirs_in_private_store(
+        &private_version_dir,
+        config.private_cask_store_base_dir(),
+    );
+    
+    true
+}
+
 pub async fn zap_cask_artifacts(
     info: &InstalledPackageInfo,
     cask_def: &Cask,
@@ -519,6 +574,22 @@ pub async fn zap_cask_artifacts(
     let home = config.home_dir();
     let cask_version_path = &info.path;
     let mut zap_errors: Vec<String> = Vec::new();
+    
+    // Read manifest to get primary app name for private store cleanup
+    let mut primary_app_name = None;
+    let manifest_path = info.path.join("CASK_INSTALL_MANIFEST.json");
+    if manifest_path.is_file() {
+        if let Ok(manifest_str) = fs::read_to_string(&manifest_path) {
+            if let Ok(manifest) = serde_json::from_str::<CaskInstallManifest>(&manifest_str) {
+                primary_app_name = manifest.primary_app_file_name.as_deref();
+            }
+        }
+    }
+    
+    // Clean up the private store
+    if !cleanup_private_store(&cask_def.token, &info.version, primary_app_name, config) {
+        zap_errors.push(format!("Failed to clean up private store for {}", cask_def.token));
+    }
 
     let zap_stanzas = match &cask_def.zap {
         Some(stanzas) => stanzas,

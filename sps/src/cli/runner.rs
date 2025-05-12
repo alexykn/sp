@@ -337,6 +337,32 @@ async fn plan_operations(
                 }
                 match installed::get_installed_package(name, config).await {
                     Ok(Some(installed_info)) => {
+                        // For Casks, check if app exists in private store
+                        if installed_info.pkg_type == installed::PackageType::Cask {
+                            // Try to read manifest to get app name
+                            let manifest_path = installed_info.path.join("CASK_INSTALL_MANIFEST.json");
+                            if manifest_path.exists() {
+                                if let Ok(manifest_str) = fs::read_to_string(&manifest_path) {
+                                    if let Ok::<build::cask::CaskInstallManifest, _>(manifest) = serde_json::from_str(&manifest_str) {
+                                        if let Some(app_name) = manifest.primary_app_file_name {
+                                            let private_path = config.private_cask_app_path(
+                                                &installed_info.name, 
+                                                &installed_info.version, 
+                                                &app_name
+                                            );
+                                            if private_path.exists() {
+                                                debug!(
+                                                    "Found app in private store for reinstall: {}",
+                                                    private_path.display()
+                                                );
+                                                private_store_sources.insert(name.clone(), private_path);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
                         initial_ops.insert(
                             name.clone(),
                             (
@@ -347,6 +373,8 @@ async fn plan_operations(
                                 None,
                             ),
                         );
+                        // Note: We've already added the path to private_store_sources if found 
+                        // It will be used during job creation after the target definition is resolved
                     }
                     Ok(None) => {
                         let msg = format!("Cannot reinstall '{name}': not installed.");
@@ -640,6 +668,7 @@ async fn plan_operations(
         .ok();
 
     let mut final_planned_jobs: Vec<PlannedJob> = Vec::new();
+    let mut private_store_sources: HashMap<String, PathBuf> = HashMap::new();
     // Add initial ops first
     for (name, (action, opt_def)) in initial_ops {
         if errors.iter().any(|(n, _)| n == &name) {
@@ -658,6 +687,7 @@ async fn plan_operations(
                     target_definition: target_def.clone(),
                     action: action.clone(),
                     is_source_build,
+                    use_private_store_source: private_store_sources.get(&name).cloned(),
                 });
             }
             None => {
@@ -690,12 +720,14 @@ async fn plan_operations(
                         target_definition: InstallTargetIdentifier::Formula(dep.formula.clone()),
                         action: JobAction::Install,
                         is_source_build,
+                        use_private_store_source: None,
                     });
                 }
             } else if let Some(initial_job) =
                 final_planned_jobs.iter_mut().find(|j| j.target_id == name)
             {
                 initial_job.is_source_build = flags.build_from_source || !has_bottle(&dep.formula);
+                initial_job.use_private_store_source = None;
             }
         }
         final_planned_jobs.extend(dependency_jobs);
@@ -712,6 +744,7 @@ async fn plan_operations(
                             target_definition: InstallTargetIdentifier::Cask(cask_arc.clone()),
                             action: JobAction::Install,
                             is_source_build: false,
+                            use_private_store_source: private_store_sources.get(&token).cloned(),
                         });
                     }
                     Ok(Some(_)) => {
@@ -758,6 +791,35 @@ async fn coordinate_downloads(
         let event_tx_clone = event_tx.clone();
         let job_id = planned_job.target_id.clone();
         let client_clone = Arc::clone(&http_client);
+        
+        // If using private store source, skip download and send directly to worker
+        if let Some(private_store_path) = &planned_job.use_private_store_source {
+            debug!(
+                "[{}] Using app from private store: {}",
+                job_id,
+                private_store_path.display()
+            );
+            
+            let worker_job = WorkerJob {
+                request: planned_job,
+                download_path: private_store_path.clone(),
+                download_size_bytes: fs::metadata(&private_store_path).map(|m| m.len()).unwrap_or(0),
+                is_source_from_private_store: true,
+            };
+            
+            if let Err(e) = worker_job_tx.send(worker_job) {
+                error!(
+                    "[{}] Failed to queue worker job: {}",
+                    job_id,
+                    e
+                );
+                download_errors.push((
+                    job_id,
+                    SpsError::Generic(format!("Failed to queue worker job: {}", e)),
+                ));
+            }
+            continue;
+        }
 
         download_tasks.spawn(async move {
             let tentative_url = match &planned_job.target_definition {
@@ -810,9 +872,10 @@ async fn coordinate_downloads(
                         })
                         .ok();
                     let worker_job = WorkerJob {
-                        request: planned_job,
+                        request: planned_job.clone(),
                         download_path,
                         download_size_bytes: size_bytes,
+                        is_source_from_private_store: false,
                     };
                     Ok(worker_job) // Return WorkerJob
                 }

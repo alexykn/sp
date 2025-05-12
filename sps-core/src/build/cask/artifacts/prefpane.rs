@@ -11,6 +11,8 @@ use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
 
+use crate::build::cask::helpers::remove_path_robustly;
+
 /// Implements the `prefpane` stanza by moving each declared
 /// preference pane bundle from the staging area into
 /// `~/Library/PreferencePanes`, then symlinking it in the Caskroom.
@@ -46,7 +48,7 @@ pub fn install_prefpane(
 
                             let dest = dest_dir.join(bundle_name);
                             if dest.exists() {
-                                fs::remove_dir_all(&dest)?;
+                                let _ = remove_path_robustly(&dest, config, true);
                             }
 
                             debug!(
@@ -65,11 +67,11 @@ pub fn install_prefpane(
 
                             // Symlink into Caskroom for reference
                             let link = cask_version_install_path.join(bundle_name);
-                            let _ = fs::remove_file(&link);
+                            let _ = remove_path_robustly(&link, config, true);
                             symlink(&dest, &link)?;
                             installed.push(InstalledArtifact::CaskroomLink {
                                 link_path: link,
-                                target_path: dest,
+                                target_path: dest.clone(),
                             });
                         }
                     }

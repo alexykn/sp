@@ -1,5 +1,6 @@
 pub mod artifacts;
 pub mod dmg;
+pub mod helpers;
 
 use std::fs;
 use std::io::Write;
@@ -27,11 +28,40 @@ pub struct CaskInstallManifest {
     pub version: String,
     pub installed_at: u64,
     pub artifacts: Vec<InstalledArtifact>,
+    pub primary_app_file_name: Option<String>,
 }
 
-pub fn get_cask_version_path(cask: &Cask, config: &Config) -> PathBuf {
+/// Returns the path to the cask's version directory in the private store.
+pub fn sps_private_cask_version_dir(cask: &Cask, config: &Config) -> PathBuf {
     let version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
-    config.cask_version_path(&cask.token, &version)
+    config.private_cask_version_path(&cask.token, &version)
+}
+
+/// Returns the path to the cask's token directory in the private store.
+pub fn sps_private_cask_token_dir(cask: &Cask, config: &Config) -> PathBuf {
+    config.private_cask_token_path(&cask.token)
+}
+
+/// Returns the path to the main app bundle for a cask in the private store.
+/// This assumes the primary app bundle is named as specified in the cask's artifacts.
+pub fn sps_private_cask_app_path(cask: &Cask, config: &Config) -> Option<PathBuf> {
+    let version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
+    if let Some(artifacts) = &cask.artifacts {
+        for artifact in artifacts {
+            if let Some(obj) = artifact.as_object() {
+                if let Some(apps) = obj.get("app") {
+                    if let Some(app_names) = apps.as_array() {
+                        if let Some(app_name_val) = app_names.first() {
+                            if let Some(app_name) = app_name_val.as_str() {
+                                return Some(config.private_cask_app_path(&cask.token, &version, app_name));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
@@ -138,7 +168,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
 
 pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Result<()> {
     debug!("Installing cask: {}", cask.token);
-    let cask_version_install_path = get_cask_version_path(cask, config);
+    let cask_version_install_path = sps_private_cask_version_dir(cask, config);
     if !cask_version_install_path.exists() {
         fs::create_dir_all(&cask_version_install_path).map_err(|e| {
             SpsError::Io(std::sync::Arc::new(std::io::Error::new(
@@ -618,12 +648,23 @@ pub fn write_cask_manifest(
         .duration_since(UNIX_EPOCH)
         .map_err(|e: SystemTimeError| SpsError::Generic(format!("System time error: {e}")))?
         .as_secs();
+        
+    // Determine primary app file name from artifacts
+    let primary_app_file_name = artifacts.iter().find_map(|artifact| {
+        if let InstalledArtifact::AppBundle { path } = artifact {
+            path.file_name().map(|name| name.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    });
+
     let manifest_data = CaskInstallManifest {
         manifest_format_version: "1.0".to_string(),
         token: cask.token.clone(),
         version: cask.version.clone().unwrap_or_else(|| "latest".to_string()),
         installed_at: timestamp,
         artifacts,
+        primary_app_file_name,
     };
     if let Some(parent) = manifest_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -652,4 +693,34 @@ pub fn write_cask_manifest(
         manifest_data.artifacts.len()
     );
     Ok(())
+}
+
+/// Recursively cleans up empty parent directories in the private cask store.
+/// Starts from the given path and walks up, removing empty directories until a non-empty or root is found.
+pub fn cleanup_empty_parent_dirs_in_private_store(start_path: &Path, stop_at: &Path) {
+    let mut current = start_path.to_path_buf();
+    while current != *stop_at {
+        if let Ok(read_dir) = fs::read_dir(&current) {
+            if read_dir.count() == 0 {
+                match fs::remove_dir(&current) {
+                    Ok(_) => {
+                        debug!("Removed empty directory: {}", current.display());
+                    }
+                    Err(e) => {
+                        debug!("Failed to remove directory {}: {}", current.display(), e);
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
 }

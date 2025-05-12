@@ -12,6 +12,8 @@ use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
 
+use crate::build::cask::helpers::remove_path_robustly;
+
 // --- Moved Regex Creation Outside ---
 static MANPAGE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\.([1-8nl])(?:\.gz)?$").unwrap());
@@ -70,7 +72,7 @@ pub fn install_manpage(
                             // Remove any existing file or symlink
                             // :contentReference[oaicite:7]{index=7}
                             if dest.exists() || dest.symlink_metadata().is_ok() {
-                                fs::remove_file(&dest)?;
+                                let _ = remove_path_robustly(&dest, config, true);
                             }
 
                             debug!("Linking manpage '{}' → '{}'", src.display(), dest.display());

@@ -37,6 +37,7 @@ pub struct PlannedJob {
     pub target_definition: InstallTargetIdentifier, // Keep Arc<...> inside
     pub action: JobAction,
     pub is_source_build: bool,
+    pub use_private_store_source: Option<PathBuf>,
 }
 
 // --- Worker Job DTO (CLI Downloader -> Core Worker Pool via Crossbeam) ---
@@ -45,6 +46,7 @@ pub struct WorkerJob {
     pub request: PlannedJob,
     pub download_path: PathBuf,
     pub download_size_bytes: u64,
+    pub is_source_from_private_store: bool,
 }
 
 // --- Pipeline Event (Core Worker Pool/CLI Runner -> CLI Status via Broadcast) ---

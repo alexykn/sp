@@ -11,6 +11,8 @@ use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
 use tracing::debug;
 
+use crate::build::cask::helpers::remove_path_robustly;
+
 /// Implements the `font` stanza by moving each declared
 /// font file or directory from the staging area into
 /// `~/Library/Fonts`, then symlinking it in the Caskroom.
@@ -43,7 +45,7 @@ pub fn install_font(
 
                             let dest = dest_dir.join(name);
                             if dest.exists() {
-                                fs::remove_file(&dest)?;
+                                let _ = remove_path_robustly(&dest, config, true);
                             }
 
                             debug!("Installing font '{}' → '{}'", src.display(), dest.display());
@@ -58,11 +60,11 @@ pub fn install_font(
 
                             // Symlink into Caskroom for reference
                             let link = cask_version_install_path.join(name);
-                            let _ = fs::remove_file(&link);
+                            let _ = remove_path_robustly(&link, config, true);
                             symlink(&dest, &link)?;
                             installed.push(InstalledArtifact::CaskroomLink {
                                 link_path: link,
-                                target_path: dest,
+                                target_path: dest.clone(),
                             });
                         }
                     }
