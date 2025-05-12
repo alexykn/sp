@@ -576,18 +576,19 @@ pub async fn zap_cask_artifacts(
     let mut zap_errors: Vec<String> = Vec::new();
     
     // Read manifest to get primary app name for private store cleanup
-    let mut primary_app_name = None;
+    let mut primary_app_name: Option<String> = None;
     let manifest_path = info.path.join("CASK_INSTALL_MANIFEST.json");
     if manifest_path.is_file() {
         if let Ok(manifest_str) = fs::read_to_string(&manifest_path) {
             if let Ok(manifest) = serde_json::from_str::<CaskInstallManifest>(&manifest_str) {
-                primary_app_name = manifest.primary_app_file_name.as_deref();
+                // Clone the Option<String> to take ownership
+                primary_app_name = manifest.primary_app_file_name.clone();
             }
         }
     }
     
     // Clean up the private store
-    if !cleanup_private_store(&cask_def.token, &info.version, primary_app_name, config) {
+    if !cleanup_private_store(&cask_def.token, &info.version, primary_app_name.as_deref(), config) {
         zap_errors.push(format!("Failed to clean up private store for {}", cask_def.token));
     }
 
