@@ -246,7 +246,7 @@ pub fn quarantine_extracted_apps_in_stage(stage_dir: &Path, agent_name: &str) ->
         for entry_result in fs::read_dir(stage_dir)? {
             let entry = entry_result?;
             let entry_path = entry.path();
-            if entry_path.is_dir() && entry_path.extension().map_or(false, |ext| ext == "app") {
+            if entry_path.is_dir() && entry_path.extension().is_some_and(|ext| ext == "app") {
                 debug!(
                     "Found app bundle in stage: {}. Applying quarantine.",
                     entry_path.display()

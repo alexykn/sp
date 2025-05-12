@@ -70,7 +70,9 @@ pub fn install_vst3_plugin(
 
                             // Symlink into Caskroom for reference
                             let link = cask_version_install_path.join(bundle_name);
-                            let _ = crate::build::cask::helpers::remove_path_robustly(&link, config, true);
+                            let _ = crate::build::cask::helpers::remove_path_robustly(
+                                &link, config, true,
+                            );
                             symlink(&dest, &link)?;
                             installed.push(InstalledArtifact::CaskroomLink {
                                 link_path: link,

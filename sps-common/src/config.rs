@@ -150,25 +150,31 @@ impl Config {
     pub fn cask_token_path(&self, cask_token: &str) -> PathBuf {
         self.caskroom_dir().join(cask_token)
     }
-    
+
     /// Returns the base directory for the private cask store
     pub fn private_cask_store_base_dir(&self) -> &Path {
         &self.private_cask_store_dir
     }
-    
+
     /// Returns the path to the cask's token directory in the private store
     pub fn private_cask_token_path(&self, cask_token: &str) -> PathBuf {
         self.private_cask_store_dir.join(cask_token)
     }
-    
+
     /// Returns the path to the version directory in the private store
     pub fn private_cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
         self.private_cask_token_path(cask_token).join(version_str)
     }
-    
+
     /// Returns the path to an app in the private store
-    pub fn private_cask_app_path(&self, cask_token: &str, version_str: &str, app_name: &str) -> PathBuf {
-        self.private_cask_version_path(cask_token, version_str).join(app_name)
+    pub fn private_cask_app_path(
+        &self,
+        cask_token: &str,
+        version_str: &str,
+        app_name: &str,
+    ) -> PathBuf {
+        self.private_cask_version_path(cask_token, version_str)
+            .join(app_name)
     }
 
     pub fn cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {

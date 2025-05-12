@@ -17,23 +17,30 @@ use crate::macos::xattr; // Import the xattr utility
 /// If multiple .app bundles are found, returns the first and logs a warning.
 pub fn find_primary_app_bundle_in_dir(dir: &Path) -> Result<PathBuf> {
     if !dir.is_dir() {
-        return Err(SpsError::NotFound(format!("Directory {} not found for app bundle scan.", dir.display())));
+        return Err(SpsError::NotFound(format!(
+            "Directory {} not found for app bundle scan.",
+            dir.display()
+        )));
     }
     let mut app_bundles = Vec::new();
     for entry_res in fs::read_dir(dir)? {
         let entry = entry_res?;
         let path = entry.path();
-        if path.is_dir() && path.extension().map_or(false, |ext| ext == "app") {
+        if path.is_dir() && path.extension().is_some_and(|ext| ext == "app") {
             app_bundles.push(path);
         }
     }
     if app_bundles.is_empty() {
-        Err(SpsError::NotFound(format!("No .app bundle found in {}", dir.display())))
+        Err(SpsError::NotFound(format!(
+            "No .app bundle found in {}",
+            dir.display()
+        )))
     } else if app_bundles.len() == 1 {
         Ok(app_bundles.remove(0))
     } else {
-        // Heuristic: return the largest .app bundle if multiple are found, or one matching a common pattern.
-        // For now, error if multiple are present to force explicit handling in Cask definitions if needed.
+        // Heuristic: return the largest .app bundle if multiple are found, or one matching a common
+        // pattern. For now, error if multiple are present to force explicit handling in
+        // Cask definitions if needed.
         warn!("Multiple .app bundles found in {}: {:?}. Returning the first one, but this might be ambiguous.", dir.display(), app_bundles);
         Ok(app_bundles.remove(0)) // Or error out
     }
@@ -66,7 +73,11 @@ pub fn install_app_from_staged(
         .to_string_lossy();
 
     // Path for the pristine copy of the app bundle in the private cask store
-    let private_store_app_path = config.private_cask_app_path(&cask.token, &cask.version.clone().unwrap_or_else(|| "latest".to_string()), app_name.as_ref());
+    let private_store_app_path = config.private_cask_app_path(
+        &cask.token,
+        &cask.version.clone().unwrap_or_else(|| "latest".to_string()),
+        app_name.as_ref(),
+    );
     // Final destination for the app bundle
     let final_app_destination_in_applications = config.applications_dir().join(app_name.as_ref());
     // Path for the symlink within the Caskroom that points to the app in /Applications
@@ -107,10 +118,7 @@ pub fn install_app_from_staged(
     // 2. Create private store directory if it doesn't exist
     if let Some(parent) = private_store_app_path.parent() {
         if !parent.exists() {
-            debug!(
-                "Creating private store directory: {}",
-                parent.display()
-            );
+            debug!("Creating private store directory: {}", parent.display());
             fs::create_dir_all(parent).map_err(|e| {
                 SpsError::Io(std::sync::Arc::new(std::io::Error::new(
                     e.kind(),
@@ -123,7 +131,7 @@ pub fn install_app_from_staged(
             })?;
         }
     }
-    
+
     // 3. Clean existing app in private store (if any from a failed prior attempt)
     if private_store_app_path.exists() || private_store_app_path.symlink_metadata().is_ok() {
         debug!(
@@ -289,14 +297,14 @@ pub fn install_app_from_staged(
 
 /// Helper function for robust path removal (internal to app.rs or moved to a common util)
 fn remove_path_robustly(path: &Path, _config: &Config, use_sudo_if_needed: bool) -> bool {
-    if !path.exists() && !path.symlink_metadata().is_ok() {
+    if !path.exists() && path.symlink_metadata().is_err() {
         debug!("Path {} not found for removal.", path.display());
         return true;
     }
     let is_dir = path.is_dir()
         && !path
             .symlink_metadata()
-            .map_or(false, |m| m.file_type().is_symlink());
+            .is_ok_and(|m| m.file_type().is_symlink());
     let removal_op = || -> std::io::Result<()> {
         if is_dir {
             fs::remove_dir_all(path)

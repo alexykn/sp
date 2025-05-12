@@ -818,7 +818,7 @@ async fn coordinate_downloads(
                 );
                 download_errors.push((
                     job_id,
-                    SpsError::Generic(format!("Failed to queue worker job (private store): {}", e)),
+                    SpsError::Generic(format!("Failed to queue worker job (private store): {e}")),
                 ));
             }
             continue;

@@ -13,10 +13,6 @@ use tracing::debug;
 
 use crate::build::cask::helpers::remove_path_robustly;
 
-/// Installs `keyboard_layout` bundles from the staging area into
-/// `~/Library/Keyboard Layouts`, then symlinks them into the Caskroom.
-///
-
 /// Mirrors Homebrew’s `KeyboardLayout < Moved` behavior.
 pub fn install_keyboard_layout(
     cask: &Cask,
@@ -46,9 +42,9 @@ pub fn install_keyboard_layout(
                             }
 
                             let dest = dest_dir.join(bundle_name);
-                           if dest.exists() {
-                               let _ = remove_path_robustly(&dest, config, true);
-                           }
+                            if dest.exists() {
+                                let _ = remove_path_robustly(&dest, config, true);
+                            }
 
                             debug!(
                                 "Installing keyboard layout '{}' → '{}'",
@@ -65,13 +61,13 @@ pub fn install_keyboard_layout(
                             installed.push(InstalledArtifact::MovedResource { path: dest.clone() });
 
                             // Symlink into Caskroom
-                           let link = cask_version_install_path.join(bundle_name);
-                           let _ = remove_path_robustly(&link, config, true);
-                           symlink(&dest, &link)?;
-                           installed.push(InstalledArtifact::CaskroomLink {
-                               link_path: link,
-                               target_path: dest.clone(),
-                           });
+                            let link = cask_version_install_path.join(bundle_name);
+                            let _ = remove_path_robustly(&link, config, true);
+                            symlink(&dest, &link)?;
+                            installed.push(InstalledArtifact::CaskroomLink {
+                                link_path: link,
+                                target_path: dest.clone(),
+                            });
                         }
                     }
                     break; // one stanza only

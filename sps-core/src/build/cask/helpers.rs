@@ -7,14 +7,14 @@ use tracing::debug;
 /// Robustly removes a file or directory, handling symlinks and permissions.
 /// If `use_sudo_if_needed` is true, will attempt `sudo rm -rf` on permission errors.
 pub fn remove_path_robustly(path: &Path, _config: &Config, use_sudo_if_needed: bool) -> bool {
-    if !path.exists() && !path.symlink_metadata().is_ok() {
+    if !path.exists() && path.symlink_metadata().is_err() {
         debug!("Path {} not found for removal.", path.display());
         return true;
     }
     let is_dir = path.is_dir()
         && !path
             .symlink_metadata()
-            .map_or(false, |m| m.file_type().is_symlink());
+            .is_ok_and(|m| m.file_type().is_symlink());
     let removal_op = || -> std::io::Result<()> {
         if is_dir {
             fs::remove_dir_all(path)
