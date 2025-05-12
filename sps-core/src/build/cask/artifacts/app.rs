@@ -8,11 +8,9 @@ use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
 use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
-use tracing::{debug, error, warn}; // Ensure warn is imported
+use tracing::{debug, error, info, warn};
 
 #[cfg(target_os = "macos")]
-use crate::macos::xattr; // Import the xattr utility
-
 /// Finds the primary .app bundle in a directory. Returns an error if none or ambiguous.
 /// If multiple .app bundles are found, returns the first and logs a warning.
 pub fn find_primary_app_bundle_in_dir(dir: &Path) -> Result<PathBuf> {
@@ -46,8 +44,6 @@ pub fn find_primary_app_bundle_in_dir(dir: &Path) -> Result<PathBuf> {
     }
 }
 
-/// Installs an app bundle from a staged location to /Applications and creates a symlink in the
-/// caskroom. Returns a Vec containing the details of artifacts created.
 pub fn install_app_from_staged(
     cask: &Cask,
     staged_app_path: &Path,
@@ -157,20 +153,26 @@ pub fn install_app_from_staged(
         return Err(SpsError::Io(std::sync::Arc::new(e)));
     }
 
-    // 5. Set/Verify Quarantine on private store copy
+    // 5. Set/Verify Quarantine on private store copy (only if not already present)
     #[cfg(target_os = "macos")]
     {
         debug!(
             "Setting/verifying quarantine on private store copy: {}",
             private_store_app_path.display()
         );
-        if let Err(e) = xattr::set_quarantine_attribute(&private_store_app_path, &cask.token) {
+        if let Err(e) =
+            crate::macos::xattr::ensure_quarantine_attribute(&private_store_app_path, &cask.token)
+        {
             error!(
                 "Failed to set quarantine on private store copy {}: {}. This is critical.",
                 private_store_app_path.display(),
                 e
             );
-            return Err(e);
+            return Err(SpsError::InstallError(format!(
+                "Failed to set quarantine on private store copy {}: {}",
+                private_store_app_path.display(),
+                e
+            )));
         }
     }
 
@@ -192,51 +194,49 @@ pub fn install_app_from_staged(
         }
     }
 
-    // 7. Copy from private store to final /Applications destination
-    debug!(
-        "Copying app from private store {} to /Applications {}",
+    // 7. Symlink from /Applications to private store app bundle
+    info!(
+        "INFO: About to symlink app from private store {} to /Applications {}",
         private_store_app_path.display(),
         final_app_destination_in_applications.display()
     );
-    // Use cp -Rp to preserve attributes during copy
-    let cp_to_apps_output = Command::new("cp")
-        .arg("-Rp")
-        .arg(&private_store_app_path)
-        .arg(&final_app_destination_in_applications)
-        .output()?;
-
-    if !cp_to_apps_output.status.success() {
-        let stderr = String::from_utf8_lossy(&cp_to_apps_output.stderr);
+    if let Err(e) = std::os::unix::fs::symlink(
+        &private_store_app_path,
+        &final_app_destination_in_applications,
+    ) {
         error!(
-            "Failed to copy app from private store {} to /Applications {} (status: {}): {}.",
+            "Failed to symlink app from private store to /Applications: {} -> {}: {}",
             private_store_app_path.display(),
             final_app_destination_in_applications.display(),
-            cp_to_apps_output.status,
-            stderr.trim()
+            e
         );
         return Err(SpsError::InstallError(format!(
-            "Failed to copy app from private store to {}: {}",
+            "Failed to symlink app from private store to {}: {}",
             final_app_destination_in_applications.display(),
-            stderr.trim()
+            e
         )));
     }
-    debug!("Successfully copied app from private store to /Applications using `cp -Rp`.");
-
-    // 7. Re-Set/Ensure Quarantine on the Final App in /Applications
     #[cfg(target_os = "macos")]
     {
-        debug!(
-            "Final quarantine check/set on /Applications copy: {}",
-            final_app_destination_in_applications.display()
+        use xattr;
+        let _ = xattr::remove(
+            &final_app_destination_in_applications,
+            "com.apple.quarantine",
         );
-        if let Err(e) =
-            xattr::set_quarantine_attribute(&final_app_destination_in_applications, &cask.token)
-        {
-            error!("CRITICAL: Failed to set final quarantine attribute on {}: {}. This WILL likely cause data loss or Gatekeeper issues.", final_app_destination_in_applications.display(), e);
-            let _ = remove_path_robustly(&final_app_destination_in_applications, config, true);
-            return Err(e);
-        }
+        let _ = xattr::remove(
+            &final_app_destination_in_applications,
+            "com.apple.provenance",
+        );
+        let _ = xattr::remove(&final_app_destination_in_applications, "com.apple.macl");
     }
+    info!(
+        "INFO: Successfully symlinked app from private store {} to /Applications {}",
+        private_store_app_path.display(),
+        final_app_destination_in_applications.display()
+    );
+
+    // 7. No quarantine set on the symlink in /Applications; attribute remains on private store
+    //    copy.
 
     // 8. Create Caskroom Symlink TO the app in /Applications
     let actual_caskroom_symlink_path = cask_version_install_path.join(app_name.as_ref());

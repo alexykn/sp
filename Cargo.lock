@@ -4496,6 +4496,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "which",
+ "xattr",
  "xz2",
  "zip",
 ]

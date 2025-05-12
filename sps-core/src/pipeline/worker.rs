@@ -154,35 +154,23 @@ fn do_execute_sync_steps(
                         );
                     }
 
-                    // Copy from private store to /Applications using cp -Rp to preserve attributes
+                    // Symlink from /Applications to private store app bundle
                     debug!(
-                        "Copying app from private store {} to {}",
+                        "Symlinking app from private store {} to {}",
                         download_path.display(),
                         applications_app_path.display()
                     );
-                    let cp_output = std::process::Command::new("cp")
-                        .arg("-Rp")
-                        .arg(&download_path)
-                        .arg(&applications_app_path)
-                        .output()?;
-
-                    if !cp_output.status.success() {
-                        let stderr = String::from_utf8_lossy(&cp_output.stderr);
+                    if let Err(e) =
+                        std::os::unix::fs::symlink(&download_path, &applications_app_path)
+                    {
                         return Err(SpsError::InstallError(format!(
-                            "Failed to copy app from private store to {}: {}",
+                            "Failed to symlink app from private store to {}: {}",
                             applications_app_path.display(),
-                            stderr.trim()
+                            e
                         )));
                     }
-
-                    // Apply fresh quarantine attribute to /Applications copy
-                    #[cfg(target_os = "macos")]
-                    {
-                        crate::macos::xattr::set_quarantine_attribute(
-                            &applications_app_path,
-                            &cask.token,
-                        )?
-                    }
+                    // No quarantine attribute set on the symlink; attribute lives on the private
+                    // store bundle.
 
                     // Create symlink in Caskroom if needed
                     let cask_version = cask.version.clone().unwrap_or_else(|| "latest".to_string());

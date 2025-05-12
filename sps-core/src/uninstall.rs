@@ -164,29 +164,51 @@ fn process_artifact_uninstall_core(artifact: &InstalledArtifact, config: &Config
                 path.display()
             );
 
-            // Attempt to quit the app before removing (P4 Fix)
-            #[cfg(target_os = "macos")]
-            {
-                if path.exists() {
-                    // Only try to quit if it exists
-                    if let Err(e) = applescript::quit_app_gracefully(path) {
-                        warn!(
-                            "Attempt to gracefully quit app at {} failed or had issues: {} (proceeding with uninstall)",
-                            path.display(),
-                            e
-                        );
+            // If it's a symlink, just unlink it. If it's a real directory, remove as before.
+            match path.symlink_metadata() {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    debug!("AppBundle at {} is a symlink; unlinking.", path.display());
+                    match std::fs::remove_file(path) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            warn!("Failed to unlink symlink at {}: {}", path.display(), e);
+                            false
+                        }
                     }
-                } else {
-                    debug!(
-                        "App bundle at {} does not exist, skipping quit attempt.",
-                        path.display()
-                    );
+                }
+                Ok(metadata) if metadata.file_type().is_dir() => {
+                    // Attempt to quit the app before removing (P4 Fix)
+                    #[cfg(target_os = "macos")]
+                    {
+                        if path.exists() {
+                            // Only try to quit if it exists
+                            if let Err(e) = applescript::quit_app_gracefully(path) {
+                                warn!(
+                                    "Attempt to gracefully quit app at {} failed or had issues: {} (proceeding with uninstall)",
+                                    path.display(),
+                                    e
+                                );
+                            }
+                        } else {
+                            debug!(
+                                "App bundle at {} does not exist, skipping quit attempt.",
+                                path.display()
+                            );
+                        }
+                    }
+
+                    let use_sudo = path.starts_with(config.applications_dir())
+                        || path.starts_with("/Applications");
+                    remove_filesystem_artifact(path, use_sudo)
+                }
+                Ok(_) | Err(_) => {
+                    // Not a symlink or directory, or error getting metadata; fallback to original
+                    // logic
+                    let use_sudo = path.starts_with(config.applications_dir())
+                        || path.starts_with("/Applications");
+                    remove_filesystem_artifact(path, use_sudo)
                 }
             }
-
-            let use_sudo =
-                path.starts_with(config.applications_dir()) || path.starts_with("/Applications");
-            remove_filesystem_artifact(path, use_sudo)
         }
         InstalledArtifact::BinaryLink { link_path, .. } => {
             debug!(

@@ -1,9 +1,11 @@
 use std::path::Path;
 use std::process::Command;
 
+use anyhow::Context;
 use sps_common::error::{Result, SpsError};
-use tracing::{debug, error}; // Added error
+use tracing::{debug, error};
 use uuid::Uuid;
+use xattr;
 
 // Helper to get current timestamp as hex
 fn get_timestamp_hex() -> String {
@@ -17,6 +19,32 @@ fn get_timestamp_hex() -> String {
 // Helper to generate a UUID as hex string
 fn get_uuid_hex() -> String {
     Uuid::new_v4().as_hyphenated().to_string().to_uppercase()
+}
+
+/// true  → file **has** a com.apple.quarantine attribute  
+/// false → attribute missing
+pub fn has_quarantine_attribute(path: &Path) -> anyhow::Result<bool> {
+    // The `xattr` crate has both path-level and FileExt APIs.
+    // Path-level is simpler here.
+    match xattr::get(path, "com.apple.quarantine") {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(anyhow::Error::new(e))
+            .with_context(|| format!("checking xattr on {}", path.display())),
+    }
+}
+
+/// Apply our standard quarantine only *if* none exists already.
+///
+/// `agent` should be the same string you currently pass to
+/// `set_quarantine_attribute()` – usually the cask token.
+pub fn ensure_quarantine_attribute(path: &Path, agent: &str) -> anyhow::Result<()> {
+    if has_quarantine_attribute(path)? {
+        // Already quarantined (or the user cleared it and we respect that) → done
+        return Ok(());
+    }
+    set_quarantine_attribute(path, agent)
+        .with_context(|| format!("adding quarantine to {}", path.display()))
 }
 
 /// Sets the 'com.apple.quarantine' extended attribute on a file or directory.
