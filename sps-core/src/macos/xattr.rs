@@ -72,9 +72,9 @@ pub fn set_quarantine_attribute(path: &Path, agent_name: &str) -> Result<()> {
 
     let timestamp_hex = get_timestamp_hex();
     let uuid_hex = get_uuid_hex();
-    // Using "0081" as it's broadly recognized as "downloaded, check pending".
+    // Use "0181" to disable translocation and quarantine mirroring (Homebrew-style).
     // Format: "flags;timestamp_hex;agent_name;uuid_hex"
-    let quarantine_value = format!("0081;{timestamp_hex};{agent_name};{uuid_hex}");
+    let quarantine_value = format!("0181;{timestamp_hex};{agent_name};{uuid_hex}");
 
     debug!(
         "Setting quarantine attribute on {}: value='{}'",

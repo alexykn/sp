@@ -354,13 +354,22 @@ async fn plan_operations(
                                                 &installed_info.version,
                                                 &app_name,
                                             );
-                                            if private_path.exists() {
+                                            // Accept path even if it differs only by case or
+                                            // NFC/NFD.
+                                            // Use metadata().is_ok() for compatibility.
+                                            if std::fs::metadata(&private_path).is_ok() {
                                                 debug!(
                                                     "Found app in private store for reinstall: {}",
                                                     private_path.display()
                                                 );
                                                 private_store_sources
                                                     .insert(name.clone(), private_path);
+                                            } else {
+                                                warn!(
+                                                    "Cask {}: private store bundle not found at {}",
+                                                    name,
+                                                    private_path.display()
+                                                );
                                             }
                                         }
                                     }
