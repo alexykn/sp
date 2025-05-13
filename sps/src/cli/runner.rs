@@ -345,7 +345,7 @@ async fn plan_operations(
                                                             &app_name,
                                                         );
                                                     if std::fs::metadata(&private_path).is_ok() {
-                                                        tracing::info!("(plan_operations) [INSTALL] Found app in private store for install: {}", private_path.display());
+                                                        tracing::debug!("(plan_operations) [INSTALL] Found app in private store for install: {}", private_path.display());
                                                         private_store_sources
                                                             .insert(name.clone(), private_path);
                                                     }
@@ -381,7 +381,7 @@ async fn plan_operations(
                     Ok(Some(installed_info)) => {
                         // For Casks, check if app exists in private store
                         if installed_info.pkg_type == installed::PackageType::Cask {
-                            tracing::info!(
+                            tracing::debug!(
                                 "(plan_operations) [CASK] Checking for manifest at: {}",
                                 installed_info
                                     .path
@@ -392,13 +392,13 @@ async fn plan_operations(
                             let manifest_path =
                                 installed_info.path.join("CASK_INSTALL_MANIFEST.json");
                             if manifest_path.exists() {
-                                tracing::info!(
+                                tracing::debug!(
                                     "(plan_operations) Manifest exists at: {}",
                                     manifest_path.display()
                                 );
                                 match fs::read_to_string(&manifest_path) {
                                     Ok(manifest_str) => {
-                                        tracing::info!(
+                                        tracing::debug!(
                                             "(plan_operations) Manifest read OK for {}: {} bytes",
                                             name,
                                             manifest_str.len()
@@ -407,23 +407,23 @@ async fn plan_operations(
                                             &manifest_str,
                                         ) {
                                             Ok(manifest) => {
-                                                tracing::info!("(plan_operations) Manifest JSON parsed OK for {}", name);
+                                                tracing::debug!("(plan_operations) Manifest JSON parsed OK for {}", name);
                                                 if let Some(app_name) =
                                                     manifest.primary_app_file_name
                                                 {
-                                                    tracing::info!("(plan_operations) Manifest primary_app_file_name: '{}'", app_name);
+                                                    tracing::debug!("(plan_operations) Manifest primary_app_file_name: '{}'", app_name);
                                                     let private_path = config
                                                         .private_cask_app_path(
                                                             &installed_info.name,
                                                             &installed_info.version,
                                                             &app_name,
                                                         );
-                                                    tracing::info!("(plan_operations) Built private store path: {}", private_path.display());
+                                                    tracing::debug!("(plan_operations) Built private store path: {}", private_path.display());
                                                     // Accept path even if it differs only by case
                                                     // or NFC/NFD.
                                                     // Use metadata().is_ok() for compatibility.
                                                     if std::fs::metadata(&private_path).is_ok() {
-                                                        tracing::info!("(plan_operations) Found app in private store for reinstall: {}", private_path.display());
+                                                        tracing::debug!("(plan_operations) Found app in private store for reinstall: {}", private_path.display());
                                                         private_store_sources
                                                             .insert(name.clone(), private_path);
                                                     } else {
@@ -434,9 +434,9 @@ async fn plan_operations(
                                                         {
                                                             match std::fs::read_dir(parent) {
                                                                 Ok(entries) => {
-                                                                    tracing::info!("(plan_operations) Directory listing for {}:", parent.display());
+                                                                    tracing::debug!("(plan_operations) Directory listing for {}:", parent.display());
                                                                     for entry in entries.flatten() {
-                                                                        tracing::info!("(plan_operations)   - {}", entry.path().display());
+                                                                        tracing::debug!("(plan_operations)   - {}", entry.path().display());
                                                                     }
                                                                 }
                                                                 Err(e) => {
@@ -899,23 +899,23 @@ async fn coordinate_downloads(
         let job_id = planned_job.target_id.clone();
         let client_clone = Arc::clone(&http_client);
 
-        tracing::info!("(coordinate_downloads) Processing planned_job: {}", job_id);
-        tracing::info!(
+        tracing::debug!("(coordinate_downloads) Processing planned_job: {}", job_id);
+        tracing::debug!(
             "(coordinate_downloads) use_private_store_source: {:?}",
             planned_job.use_private_store_source
         );
-        tracing::info!(
+        tracing::debug!(
             "(coordinate_downloads) target_definition: {:?}",
             planned_job.target_definition
         );
-        tracing::info!(
+        tracing::debug!(
             "(coordinate_downloads) is_source_from_private_store: {}",
             planned_job.use_private_store_source.is_some()
         );
 
         // If using private store source, skip download and send directly to worker
         if let Some(private_path) = planned_job.use_private_store_source.clone() {
-            tracing::info!(
+            tracing::debug!(
                 "(coordinate_downloads) [{}] Using app from private store for WorkerJob: {}",
                 job_id,
                 private_path.display()
@@ -926,7 +926,7 @@ async fn coordinate_downloads(
                 private_path.display()
             );
             let size = fs::metadata(&private_path).map(|m| m.len()).unwrap_or(0);
-            tracing::info!(
+            tracing::debug!(
                 "(coordinate_downloads) [{}] private_path metadata size: {}",
                 job_id,
                 size
@@ -937,7 +937,7 @@ async fn coordinate_downloads(
                 download_size_bytes: size,
                 is_source_from_private_store: true,
             };
-            tracing::info!(
+            tracing::debug!(
                 "(coordinate_downloads) [{}] Sending WorkerJob to worker_job_tx (private store)",
                 job_id
             );
@@ -959,13 +959,13 @@ async fn coordinate_downloads(
             continue;
         }
 
-        tracing::info!(
+        tracing::debug!(
             "(coordinate_downloads) [{}] No private store source, proceeding to download phase",
             job_id
         );
 
         download_tasks.spawn(async move {
-            tracing::info!("(coordinate_downloads) [{}] Spawning download task", job_id);
+            tracing::debug!("(coordinate_downloads) [{}] Spawning download task", job_id);
             let tentative_url = match &planned_job.target_definition {
                 InstallTargetIdentifier::Formula(f) => f.url.clone(),
                 InstallTargetIdentifier::Cask(c) => match c.url.clone() {
@@ -974,7 +974,7 @@ async fn coordinate_downloads(
                     None => "unknown_cask_url".to_string(),
                 },
             };
-            tracing::info!(
+            tracing::debug!(
                 "(coordinate_downloads) [{}] Download URL: {}",
                 job_id,
                 tentative_url
@@ -989,13 +989,13 @@ async fn coordinate_downloads(
             let download_result: Result<PathBuf> = match &planned_job.target_definition {
                 InstallTargetIdentifier::Formula(f) => {
                     if planned_job.is_source_build {
-                        tracing::info!(
+                        tracing::debug!(
                             "(coordinate_downloads) [{}] Downloading formula source",
                             job_id
                         );
                         build::formula::source::download_source(f, &config_clone).await
                     } else {
-                        tracing::info!(
+                        tracing::debug!(
                             "(coordinate_downloads) [{}] Downloading formula bottle",
                             job_id
                         );
@@ -1008,7 +1008,7 @@ async fn coordinate_downloads(
                     }
                 }
                 InstallTargetIdentifier::Cask(c) => {
-                    tracing::info!("(coordinate_downloads) [{}] Downloading cask", job_id);
+                    tracing::debug!("(coordinate_downloads) [{}] Downloading cask", job_id);
                     build::cask::download_cask(c, cache_clone.as_ref()).await
                 }
             };
@@ -1016,7 +1016,7 @@ async fn coordinate_downloads(
             match download_result {
                 Ok(download_path) => {
                     let size_bytes = fs::metadata(&download_path).map(|m| m.len()).unwrap_or(0);
-                    tracing::info!(
+                    tracing::debug!(
                         "(coordinate_downloads) [{}] Downloaded to {}, size: {}",
                         job_id,
                         download_path.display(),
