@@ -8,7 +8,7 @@ use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
 use sps_common::model::artifact::InstalledArtifact;
 use sps_common::model::cask::Cask;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 #[cfg(target_os = "macos")]
 /// Finds the primary .app bundle in a directory. Returns an error if none or ambiguous.
@@ -195,7 +195,7 @@ pub fn install_app_from_staged(
     }
 
     // 7. Symlink from /Applications to private store app bundle
-    info!(
+    debug!(
         "INFO: About to symlink app from private store {} to /Applications {}",
         private_store_app_path.display(),
         final_app_destination_in_applications.display()
@@ -229,7 +229,7 @@ pub fn install_app_from_staged(
         );
         let _ = xattr::remove(&final_app_destination_in_applications, "com.apple.macl");
     }
-    info!(
+    debug!(
         "INFO: Successfully symlinked app from private store {} to /Applications {}",
         private_store_app_path.display(),
         final_app_destination_in_applications.display()
