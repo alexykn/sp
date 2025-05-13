@@ -128,29 +128,49 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     }
     let mut file = fs::File::create(&cache_path)?;
     file.write_all(&bytes)?;
-    let expected_sha256 = match cask.sha256.as_ref() {
-        Some(Sha256Field::Hex(s)) => s.as_str(),
-        _ => "",
-    };
-    if !expected_sha256.is_empty() {
-        match sps_net::validation::verify_checksum(&cache_path, expected_sha256) {
-            Ok(_) => {
-                tracing::debug!("Cask download checksum verified: {}", cache_path.display());
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Cask download checksum mismatch ({}). Deleting cached file.",
-                    e
+    match cask.sha256.as_ref() {
+        Some(Sha256Field::Hex(s)) => {
+            if s.eq_ignore_ascii_case("no_check") {
+                tracing::debug!(
+                    "Skipping checksum verification for cask {} due to 'no_check' string.",
+                    cache_path.display()
                 );
-                let _ = fs::remove_file(&cache_path);
-                return Err(e);
+            } else if !s.is_empty() {
+                match sps_net::validation::verify_checksum(&cache_path, s) {
+                    Ok(_) => {
+                        tracing::debug!(
+                            "Cask download checksum verified: {}",
+                            cache_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Cask download checksum mismatch ({}). Deleting cached file.",
+                            e
+                        );
+                        let _ = fs::remove_file(&cache_path);
+                        return Err(e);
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "Skipping checksum verification for cask {} - empty sha256 provided.",
+                    cache_path.display()
+                );
             }
         }
-    } else {
-        tracing::warn!(
-            "Skipping checksum verification for cask {} - none provided.",
-            cache_path.display()
-        );
+        Some(Sha256Field::NoCheck { no_check: true }) => {
+            tracing::debug!(
+                "Skipping checksum verification for cask {} due to 'no_check'.",
+                cache_path.display()
+            );
+        }
+        _ => {
+            tracing::warn!(
+                "Skipping checksum verification for cask {} - none provided.",
+                cache_path.display()
+            );
+        }
     }
     debug!("Download completed: {}", cache_path.display());
 
