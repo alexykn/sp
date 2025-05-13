@@ -24,7 +24,7 @@ pub const DEFAULT_GHCR_DOMAIN: &str = "ghcr.io";
 
 const CONNECT_TIMEOUT_SECS: u64 = 30;
 const REQUEST_TIMEOUT_SECS: u64 = 300;
-const USER_AGENT_STRING: &str = "sps package manager (Rust; +https://github.com/alexykn/sp)";
+const USER_AGENT_STRING: &str = "sps package manager (Rust; +https://github.com/alexykn/sps)";
 
 #[derive(Deserialize, Debug)]
 struct OciTokenResponse {
