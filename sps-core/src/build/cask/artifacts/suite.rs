@@ -44,7 +44,8 @@ pub fn install_suite(
                             let dest_dir = config.applications_dir(); // e.g. /Applications
                             let dest = dest_dir.join(dir_name); // e.g. /Applications/Foobar Suite
                             if dest.exists() {
-                                let _ = remove_path_robustly(&dest, config, true); // remove old
+                                let _ = remove_path_robustly(&dest, config, true);
+                                // remove old
                             }
 
                             debug!("Moving suite '{}' → '{}'", src.display(), dest.display());
