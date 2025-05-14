@@ -1,6 +1,6 @@
 [package]
 name = "sps"
-version = "0.1.3"
+version = "0.1.31"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Package Manager for macOS"
@@ -42,9 +42,9 @@ crossbeam-channel = "0.5.15"
 threadpool = "1.8.1"
 once_cell = "1.21.3"
 tracing-appender = "0.2.3"
-sps-common = "0.1.3"
-sps-net = "0.1.3"
-sps-core = "0.1.3"
+sps-common = "0.1.31"
+sps-net = "0.1.31"
+sps-core = "0.1.31"
 ratatui = "0.29.0"
 crossterm = "0.29.0"
 
