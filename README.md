@@ -2,7 +2,7 @@
 
 > [!WARNING]
 > **ALPHA SOFTWARE**
-> sps his experimental, under heavy development, and may be unstable. Use at your own risk!
+> sps is experimental, under heavy development, and may be unstable. Use at your own risk!
 >
 > Uninstalling a cask with brew then reinstalling it with sps will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
