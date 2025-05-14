@@ -1,17 +1,14 @@
 [package]
-name        = "sps"
-version     = "0.1.2"
-edition     = "2021"
-authors     = [
-    "Alexander Knott <alexander.knott@posteo.de>",
-    "sps contributors"
-]
+name = "sps"
+version = "0.1.3"
+edition = "2021"
+authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Package Manager for macOS"
-repository  = "https://github.com/alexykn/sps"
-license     = "BSD-3-Clause"
-readme      = "README.md"
-keywords    = ["package-manager", "macos", "homebrew"]
-categories  = ["development-tools", "command-line-utilities"]
+repository = "https://github.com/alexykn/sps"
+license = "BSD-3-Clause"
+readme = "README.md"
+keywords = ["package-manager", "macos", "homebrew"]
+categories = ["development-tools", "command-line-utilities"]
 
 [[bin]]
 name = "sps"
@@ -45,9 +42,9 @@ crossbeam-channel = "0.5.15"
 threadpool = "1.8.1"
 once_cell = "1.21.3"
 tracing-appender = "0.2.3"
-sps-common = "0.1.2"
-sps-net    = "0.1.2"
-sps-core   = "0.1.2"
+sps-common = "0.1.3"
+sps-net = "0.1.3"
+sps-core = "0.1.3"
 ratatui = "0.29.0"
 crossterm = "0.29.0"
 

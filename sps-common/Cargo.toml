@@ -1,14 +1,11 @@
 [package]
-name        = "sps-common"
-version     = "0.1.2"
-edition     = "2021"
-authors     = [
-    "Alexander Knott <alexander.knott@posteo.de>",
-    "sps contributors"
-]
+name = "sps-common"
+version = "0.1.3"
+edition = "2021"
+authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Shared utilities for the sps package manager"
-repository  = "https://github.com/alexykn/sps"
-license     = "BSD-3-Clause"
+repository = "https://github.com/alexykn/sps"
+license = "BSD-3-Clause"
 
 [dependencies]
 # Inherited from workspace
@@ -21,4 +18,4 @@ bitflags = { version = "2.9.0", features = ["serde"] }
 thiserror = "2.0.12"
 reqwest = { version = "0.12.15", features = ["json", "stream", "blocking"] }
 object = { version = "0.36.7", features = ["read_core", "write_core", "macho"] }
-semver = { version = "1.0.26", features = ["serde"] }  
+semver = { version = "1.0.26", features = ["serde"] }

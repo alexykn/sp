@@ -1,6 +1,6 @@
 [package]
 name = "sps-core"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Core library for the sps package manager"
@@ -8,8 +8,8 @@ repository = "https://github.com/alexykn/sps"
 license = "BSD-3-Clause"
 
 [dependencies]
-sps-net = "0.1.2"
-sps-common = "0.1.2"
+sps-net = "0.1.3"
+sps-common = "0.1.3"
 
 anyhow = "1.0.98"
 uuid = { version = "1.16.0", features = ["v4"] }
