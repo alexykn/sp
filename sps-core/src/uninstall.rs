@@ -85,7 +85,7 @@ pub fn uninstall_cask_artifacts(info: &InstalledPackageInfo, config: &Config) ->
         debug!("Processing manifest: {}", manifest_path.display());
         match fs::read_to_string(&manifest_path) {
             Ok(manifest_str) => match serde_json::from_str::<CaskInstallManifest>(&manifest_str) {
-                Ok(manifest) => {
+                Ok(mut manifest) => {
                     debug!(
                         "Uninstalling {} artifacts listed in manifest...",
                         manifest.artifacts.len()
@@ -94,6 +94,23 @@ pub fn uninstall_cask_artifacts(info: &InstalledPackageInfo, config: &Config) ->
                         if !process_artifact_uninstall_core(artifact, config) {
                             removal_errors.push(format!("Failed: {artifact:?}"));
                         }
+                    }
+                    // Soft uninstall: set is_installed=false and rewrite manifest
+                    manifest.is_installed = false;
+                    if let Ok(file) = fs::File::create(&manifest_path) {
+                        let writer = std::io::BufWriter::new(file);
+                        if let Err(e) = serde_json::to_writer_pretty(writer, &manifest) {
+                            warn!(
+                                "Failed to update manifest with is_installed=false for {}: {}",
+                                manifest_path.display(),
+                                e
+                            );
+                        }
+                    } else {
+                        warn!(
+                            "Failed to open manifest for writing (soft uninstall) at {}",
+                            manifest_path.display()
+                        );
                     }
                 }
                 Err(e) => warn!(
@@ -115,28 +132,7 @@ pub fn uninstall_cask_artifacts(info: &InstalledPackageInfo, config: &Config) ->
         );
     }
 
-    if info.path.exists() {
-        debug!("Removing cask version directory: {}", info.path.display());
-        if let Err(e) = fs::remove_dir_all(&info.path) {
-            error!(
-                "Failed to remove cask directory {}: {}",
-                info.path.display(),
-                e
-            );
-            removal_errors.push(format!(
-                "Failed to remove main dir: {}",
-                info.path.display()
-            ));
-        } else {
-            let parent_cask_dir = config.cask_dir(&info.name);
-            cleanup_parent_cask_dir(&parent_cask_dir);
-        }
-    } else {
-        warn!(
-            "Cask directory {} not found during uninstall.",
-            info.path.display()
-        );
-    }
+    // Soft uninstall: do NOT remove the cask version directory or manifest file.
 
     if removal_errors.is_empty() {
         Ok(())
@@ -440,40 +436,6 @@ fn unload_and_remove_launchd(label: &str, path: Option<&Path>) -> bool {
          // needed
 }
 
-fn cleanup_parent_cask_dir(parent_cask_dir: &Path) {
-    if parent_cask_dir.exists() {
-        match std::fs::read_dir(parent_cask_dir) {
-            Ok(mut entries) => {
-                if entries.next().is_none() {
-                    debug!(
-                        "Parent cask directory {} is empty, removing it.",
-                        parent_cask_dir.display()
-                    );
-                    if let Err(e) = std::fs::remove_dir(parent_cask_dir) {
-                        warn!(
-                            "Failed to remove empty parent cask directory {}: {}",
-                            parent_cask_dir.display(),
-                            e
-                        );
-                    }
-                } else {
-                    debug!(
-                        "Parent cask directory {} is not empty, keeping it.",
-                        parent_cask_dir.display()
-                    );
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to read parent cask directory {} for cleanup check: {}",
-                    parent_cask_dir.display(),
-                    e
-                );
-            }
-        }
-    }
-}
-
 // --- Zap Helpers ---
 
 // Helper function to expand tilde
@@ -605,9 +567,26 @@ pub async fn zap_cask_artifacts(
     let manifest_path = info.path.join("CASK_INSTALL_MANIFEST.json");
     if manifest_path.is_file() {
         if let Ok(manifest_str) = fs::read_to_string(&manifest_path) {
-            if let Ok(manifest) = serde_json::from_str::<CaskInstallManifest>(&manifest_str) {
+            if let Ok(mut manifest) = serde_json::from_str::<CaskInstallManifest>(&manifest_str) {
                 // Clone the Option<String> to take ownership
                 primary_app_name = manifest.primary_app_file_name.clone();
+                // Soft zap: set is_installed=false and rewrite manifest
+                manifest.is_installed = false;
+                if let Ok(file) = fs::File::create(&manifest_path) {
+                    let writer = std::io::BufWriter::new(file);
+                    if let Err(e) = serde_json::to_writer_pretty(writer, &manifest) {
+                        warn!(
+                            "Failed to update manifest with is_installed=false for {}: {}",
+                            manifest_path.display(),
+                            e
+                        );
+                    }
+                } else {
+                    warn!(
+                        "Failed to open manifest for writing (soft zap) at {}",
+                        manifest_path.display()
+                    );
+                }
             }
         }
     }

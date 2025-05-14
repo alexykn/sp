@@ -212,6 +212,7 @@ fn do_execute_sync_steps(
                         "[{}] Writing manifest for private store reinstall...",
                         job_request.target_id
                     );
+                    // Always ensure is_installed=true when writing manifest after reinstall
                     if let Err(e) = build::cask::write_cask_manifest(
                         cask,
                         &cask_version_path,
@@ -234,6 +235,7 @@ fn do_execute_sync_steps(
                 }
             } else {
                 debug!("[{}] Installing cask...", job_request.target_id);
+                // Always ensure is_installed=true when writing manifest after install
                 build::cask::install_cask(cask, &download_path, config)?;
             }
         }

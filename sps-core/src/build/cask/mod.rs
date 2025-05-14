@@ -29,6 +29,8 @@ pub struct CaskInstallManifest {
     pub installed_at: u64,
     pub artifacts: Vec<InstalledArtifact>,
     pub primary_app_file_name: Option<String>,
+    pub is_installed: bool,              // New flag for soft uninstall
+    pub cask_store_path: Option<String>, // Path to private store app, if available
 }
 
 /// Returns the path to the cask's version directory in the private store.
@@ -693,6 +695,16 @@ pub fn write_cask_manifest(
         }
     });
 
+    // Always set is_installed=true when writing manifest (install or reinstall)
+    // Try to determine cask_store_path from artifacts (AppBundle or CaskroomLink)
+    let cask_store_path = artifacts.iter().find_map(|artifact| match artifact {
+        InstalledArtifact::AppBundle { path } => Some(path.to_string_lossy().to_string()),
+        InstalledArtifact::CaskroomLink { target_path, .. } => {
+            Some(target_path.to_string_lossy().to_string())
+        }
+        _ => None,
+    });
+
     let manifest_data = CaskInstallManifest {
         manifest_format_version: "1.0".to_string(),
         token: cask.token.clone(),
@@ -700,6 +712,8 @@ pub fn write_cask_manifest(
         installed_at: timestamp,
         artifacts,
         primary_app_file_name,
+        is_installed: true,
+        cask_store_path,
     };
     if let Some(parent) = manifest_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {

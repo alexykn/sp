@@ -219,9 +219,24 @@ impl Cask {
                         // Check for the existence of the manifest file
                         let manifest_path = version_path.join("CASK_INSTALL_MANIFEST.json"); // <-- Correct filename
                         if manifest_path.is_file() {
-                            // Found a manifest in at least one version directory, consider it
-                            // installed
-                            return true;
+                            // Check is_installed flag in manifest
+                            let mut include = true;
+                            if let Ok(manifest_str) = std::fs::read_to_string(&manifest_path) {
+                                if let Ok(manifest_json) =
+                                    serde_json::from_str::<serde_json::Value>(&manifest_str)
+                                {
+                                    if let Some(is_installed) =
+                                        manifest_json.get("is_installed").and_then(|v| v.as_bool())
+                                    {
+                                        include = is_installed;
+                                    }
+                                }
+                            }
+                            if include {
+                                // Found a manifest in at least one version directory, consider it
+                                // installed
+                                return true;
+                            }
                         }
                     }
                 }

@@ -327,7 +327,7 @@ async fn plan_operations(
                                     if version_path.is_dir()
                                         && version_path.join("CASK_INSTALL_MANIFEST.json").is_file()
                                     {
-                                        // Read manifest to get app name
+                                        // Read manifest to get app name and check is_installed
                                         if let Ok(manifest_str) = fs::read_to_string(
                                             version_path.join("CASK_INSTALL_MANIFEST.json"),
                                         ) {
@@ -335,6 +335,8 @@ async fn plan_operations(
                                                 manifest,
                                             ) = serde_json::from_str(&manifest_str)
                                             {
+                                                // Always reuse private store if manifest/app exist,
+                                                // regardless of is_installed
                                                 if let Some(app_name) =
                                                     manifest.primary_app_file_name
                                                 {
@@ -350,9 +352,14 @@ async fn plan_operations(
                                                             .insert(name.clone(), private_path);
                                                     }
                                                 }
+                                                // Only treat as installed if is_installed is true
+                                                if manifest.is_installed {
+                                                    break; // Only check the first version found if
+                                                           // installed
+                                                }
                                             }
                                         }
-                                        break; // Only check the first version found
+                                        // If is_installed is false, do not break; allow install
                                     }
                                 }
                             }
@@ -502,14 +509,45 @@ async fn plan_operations(
             }
         }
         CommandType::Upgrade { all } => {
-            debug!("Planning for UPGRADE command (all={})", all);
+            debug!("Planning for UPGRADE command");
             let packages_to_check = match if all {
                 installed::get_installed_packages(config).await
             } else {
                 let mut specific = Vec::new();
                 for name in initial_targets {
                     match installed::get_installed_package(name, config).await {
-                        Ok(Some(info)) => specific.push(info),
+                        Ok(Some(info)) => {
+                            // For casks, skip upgrades if is_installed is false
+                            if info.pkg_type == installed::PackageType::Cask {
+                                let manifest_path = info.path.join("CASK_INSTALL_MANIFEST.json");
+                                let mut skip_upgrade = false;
+                                if manifest_path.is_file() {
+                                    if let Ok(manifest_str) =
+                                        std::fs::read_to_string(&manifest_path)
+                                    {
+                                        if let Ok(manifest_json) =
+                                            serde_json::from_str::<serde_json::Value>(&manifest_str)
+                                        {
+                                            if let Some(is_installed) = manifest_json
+                                                .get("is_installed")
+                                                .and_then(|v| v.as_bool())
+                                            {
+                                                if !is_installed {
+                                                    skip_upgrade = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if skip_upgrade {
+                                    let msg = format!("Skipping upgrade for '{name}': not installed (is_installed=false).");
+                                    warn!("! {}", msg);
+                                    processed.insert(name.clone());
+                                    continue;
+                                }
+                            }
+                            specific.push(info)
+                        }
                         Ok(None) => {
                             let msg = format!("Cannot upgrade '{name}': not installed.");
                             warn!("! {}", msg);
@@ -530,9 +568,11 @@ async fn plan_operations(
             } {
                 Ok(pkgs) => pkgs,
                 Err(e) => {
-                    return Err(SpsError::Generic(format!(
-                        "Failed to get installed packages: {e}"
-                    )))
+                    errors.push((
+                        "<all>".to_string(),
+                        SpsError::Generic(format!("Failed to get installed packages: {e}")),
+                    ));
+                    Vec::new()
                 }
             };
 

@@ -90,12 +90,36 @@ pub async fn get_installed_packages(config: &Config) -> Result<Vec<InstalledPack
                                 {
                                     let version_str =
                                         version_entry.file_name().to_string_lossy().to_string();
-                                    installed.push(InstalledPackageInfo {
-                                        name: cask_token.clone(),
-                                        version: version_str,
-                                        pkg_type: PackageType::Cask,
-                                        path: version_path,
-                                    });
+                                    // Check is_installed flag in manifest
+                                    let manifest_path =
+                                        version_path.join("CASK_INSTALL_MANIFEST.json");
+                                    let mut include = true;
+                                    if manifest_path.is_file() {
+                                        if let Ok(manifest_str) =
+                                            std::fs::read_to_string(&manifest_path)
+                                        {
+                                            if let Ok(manifest_json) =
+                                                serde_json::from_str::<serde_json::Value>(
+                                                    &manifest_str,
+                                                )
+                                            {
+                                                if let Some(is_installed) = manifest_json
+                                                    .get("is_installed")
+                                                    .and_then(|v| v.as_bool())
+                                                {
+                                                    include = is_installed;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if include {
+                                        installed.push(InstalledPackageInfo {
+                                            name: cask_token.clone(),
+                                            version: version_str,
+                                            pkg_type: PackageType::Cask,
+                                            path: version_path,
+                                        });
+                                    }
                                     break; // Assume one installed version
                                 }
                             }
@@ -150,12 +174,30 @@ pub async fn get_installed_package(
                     && version_path.join("CASK_INSTALL_MANIFEST.json").is_file()
                 {
                     let version_str = version_entry.file_name().to_string_lossy().to_string();
-                    return Ok(Some(InstalledPackageInfo {
-                        name: name.to_string(),
-                        version: version_str,
-                        pkg_type: PackageType::Cask,
-                        path: version_path,
-                    }));
+                    // Check is_installed flag in manifest
+                    let manifest_path = version_path.join("CASK_INSTALL_MANIFEST.json");
+                    let mut include = true;
+                    if manifest_path.is_file() {
+                        if let Ok(manifest_str) = std::fs::read_to_string(&manifest_path) {
+                            if let Ok(manifest_json) =
+                                serde_json::from_str::<serde_json::Value>(&manifest_str)
+                            {
+                                if let Some(is_installed) =
+                                    manifest_json.get("is_installed").and_then(|v| v.as_bool())
+                                {
+                                    include = is_installed;
+                                }
+                            }
+                        }
+                    }
+                    if include {
+                        return Ok(Some(InstalledPackageInfo {
+                            name: name.to_string(),
+                            version: version_str,
+                            pkg_type: PackageType::Cask,
+                            path: version_path,
+                        }));
+                    }
                 }
             }
         }
