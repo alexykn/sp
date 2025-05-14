@@ -192,7 +192,14 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     Ok(cache_path)
 }
 
-pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Result<()> {
+use sps_common::pipeline::JobAction;
+
+pub fn install_cask(
+    cask: &Cask,
+    download_path: &Path,
+    config: &Config,
+    job_action: &JobAction,
+) -> Result<()> {
     debug!("Installing cask: {}", cask.token);
     // This is the path in the *actual* Caskroom (e.g., /opt/homebrew/Caskroom/token/version)
     // where metadata and symlinks to /Applications will go.
@@ -386,9 +393,9 @@ pub fn install_cask(cask: &Cask, download_path: &Path, config: &Config) -> Resul
                                         match artifacts::app::install_app_from_staged(
                                             cask,
                                             &staged_app_path,
-                                            &actual_caskroom_version_path, /* Pass actual
-                                                                            * caskroom path */
+                                            &actual_caskroom_version_path,
                                             config,
+                                            job_action, // Pass job_action for upgrade logic
                                         ) {
                                             Ok(mut artifacts) => {
                                                 app_artifacts.append(&mut artifacts)

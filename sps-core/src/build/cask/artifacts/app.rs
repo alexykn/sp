@@ -44,11 +44,14 @@ pub fn find_primary_app_bundle_in_dir(dir: &Path) -> Result<PathBuf> {
     }
 }
 
+use sps_common::pipeline::JobAction;
+
 pub fn install_app_from_staged(
     cask: &Cask,
     staged_app_path: &Path,
     cask_version_install_path: &Path,
     config: &Config,
+    job_action: &JobAction,
 ) -> Result<Vec<InstalledArtifact>> {
     if !staged_app_path.exists() || !staged_app_path.is_dir() {
         return Err(SpsError::NotFound(format!(
@@ -68,15 +71,93 @@ pub fn install_app_from_staged(
         })?
         .to_string_lossy();
 
-    // Path for the pristine copy of the app bundle in the private cask store
-    let private_store_app_path = config.private_cask_app_path(
-        &cask.token,
-        &cask.version.clone().unwrap_or_else(|| "latest".to_string()),
-        app_name.as_ref(),
-    );
-    // Final destination for the app bundle
+    let new_version_str = cask.version.clone().unwrap_or_else(|| "latest".to_string());
+    let final_private_store_app_path: PathBuf;
+
+    // Determine if we are upgrading and if the old private store app path exists
+    let mut did_upgrade = false;
+
+    if let JobAction::Upgrade {
+        from_version,
+        old_install_path,
+        ..
+    } = job_action
+    {
+        debug!(
+            "[{}] Processing app install as UPGRADE from version {}",
+            cask.token, from_version
+        );
+
+        // Try to get primary_app_file_name from the old manifest to build the old private store
+        // path
+        let old_manifest_path = old_install_path.join("CASK_INSTALL_MANIFEST.json");
+        let old_primary_app_name = if old_manifest_path.is_file() {
+            fs::read_to_string(&old_manifest_path)
+                .ok()
+                .and_then(|s| {
+                    serde_json::from_str::<crate::build::cask::CaskInstallManifest>(&s).ok()
+                })
+                .and_then(|m| m.primary_app_file_name)
+        } else {
+            // Fallback if old manifest is missing, use current app_name (less reliable if app name
+            // changed)
+            warn!("[{}] Old manifest not found at {} during upgrade. Using current app name '{}' for private store path derivation.", cask.token, old_manifest_path.display(), app_name);
+            Some(app_name.to_string())
+        };
+
+        if let Some(name_for_old_path) = old_primary_app_name {
+            let old_private_store_app_dir_path =
+                config.private_cask_version_path(&cask.token, from_version);
+            let old_private_store_app_bundle_path =
+                old_private_store_app_dir_path.join(&name_for_old_path);
+
+            if old_private_store_app_bundle_path.exists()
+                && old_private_store_app_bundle_path.is_dir()
+            {
+                debug!("[{}] UPGRADE: Old private store app bundle found at {}. Syncing new content into it.", cask.token, old_private_store_app_bundle_path.display());
+                crate::build::cask::helpers::sync_app_bundle_contents(
+                    staged_app_path,
+                    &old_private_store_app_bundle_path,
+                    config,
+                )?;
+
+                // Now, rename the parent version directory (e.g., .../1.0 -> .../1.1)
+                let new_private_store_version_dir =
+                    config.private_cask_version_path(&cask.token, &new_version_str);
+                if old_private_store_app_dir_path != new_private_store_version_dir {
+                    debug!(
+                        "[{}] Renaming private store version dir from {} to {}",
+                        cask.token,
+                        old_private_store_app_dir_path.display(),
+                        new_private_store_version_dir.display()
+                    );
+                    fs::rename(
+                        &old_private_store_app_dir_path,
+                        &new_private_store_version_dir,
+                    )
+                    .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+                }
+                final_private_store_app_path =
+                    new_private_store_version_dir.join(app_name.as_ref());
+                did_upgrade = true;
+            } else {
+                warn!("[{}] UPGRADE: Old private store app path {} not found or not a dir. Proceeding with fresh private store placement for new version.", cask.token, old_private_store_app_bundle_path.display());
+                // Fallback to fresh placement
+                final_private_store_app_path =
+                    config.private_cask_app_path(&cask.token, &new_version_str, app_name.as_ref());
+            }
+        } else {
+            warn!("[{}] UPGRADE: Could not determine old app bundle name. Proceeding with fresh private store placement for new version.", cask.token);
+            final_private_store_app_path =
+                config.private_cask_app_path(&cask.token, &new_version_str, app_name.as_ref());
+        }
+    } else {
+        // Not an upgrade
+        final_private_store_app_path =
+            config.private_cask_app_path(&cask.token, &new_version_str, app_name.as_ref());
+    }
+
     let final_app_destination_in_applications = config.applications_dir().join(app_name.as_ref());
-    // Path for the symlink within the Caskroom that points to the app in /Applications
     let caskroom_symlink_to_final_app = cask_version_install_path.join(app_name.as_ref());
 
     debug!(
@@ -86,7 +167,7 @@ pub fn install_app_from_staged(
     debug!("  Staged app source: {}", staged_app_path.display());
     debug!(
         "  Private store copy target: {}",
-        private_store_app_path.display()
+        final_private_store_app_path.display()
     );
     debug!(
         "  Final /Applications target: {}",
@@ -112,7 +193,7 @@ pub fn install_app_from_staged(
     }
 
     // 2. Create private store directory if it doesn't exist
-    if let Some(parent) = private_store_app_path.parent() {
+    if let Some(parent) = final_private_store_app_path.parent() {
         if !parent.exists() {
             debug!("Creating private store directory: {}", parent.display());
             fs::create_dir_all(parent).map_err(|e| {
@@ -128,29 +209,33 @@ pub fn install_app_from_staged(
         }
     }
 
-    // 3. Clean existing app in private store (if any from a failed prior attempt)
-    if private_store_app_path.exists() || private_store_app_path.symlink_metadata().is_ok() {
-        debug!(
-            "Removing existing item at private store path: {}",
-            private_store_app_path.display()
-        );
-        let _ = remove_path_robustly(&private_store_app_path, config, false);
-    }
+    if !did_upgrade {
+        // 3. Clean existing app in private store (if any from a failed prior attempt)
+        if final_private_store_app_path.exists()
+            || final_private_store_app_path.symlink_metadata().is_ok()
+        {
+            debug!(
+                "Removing existing item at private store path: {}",
+                final_private_store_app_path.display()
+            );
+            let _ = remove_path_robustly(&final_private_store_app_path, config, false);
+        }
 
-    // 4. Move from temporary stage to private store
-    debug!(
-        "Moving staged app {} to private store path {}",
-        staged_app_path.display(),
-        private_store_app_path.display()
-    );
-    if let Err(e) = fs::rename(staged_app_path, &private_store_app_path) {
-        error!(
-            "Failed to move staged app to private store: {}. Source: {}, Dest: {}",
-            e,
+        // 4. Move from temporary stage to private store
+        debug!(
+            "Moving staged app {} to private store path {}",
             staged_app_path.display(),
-            private_store_app_path.display()
+            final_private_store_app_path.display()
         );
-        return Err(SpsError::Io(std::sync::Arc::new(e)));
+        if let Err(e) = fs::rename(staged_app_path, &final_private_store_app_path) {
+            error!(
+                "Failed to move staged app to private store: {}. Source: {}, Dest: {}",
+                e,
+                staged_app_path.display(),
+                final_private_store_app_path.display()
+            );
+            return Err(SpsError::Io(std::sync::Arc::new(e)));
+        }
     }
 
     // 5. Set/Verify Quarantine on private store copy (only if not already present)
@@ -158,19 +243,20 @@ pub fn install_app_from_staged(
     {
         debug!(
             "Setting/verifying quarantine on private store copy: {}",
-            private_store_app_path.display()
+            final_private_store_app_path.display()
         );
-        if let Err(e) =
-            crate::macos::xattr::ensure_quarantine_attribute(&private_store_app_path, &cask.token)
-        {
+        if let Err(e) = crate::macos::xattr::ensure_quarantine_attribute(
+            &final_private_store_app_path,
+            &cask.token,
+        ) {
             error!(
                 "Failed to set quarantine on private store copy {}: {}. This is critical.",
-                private_store_app_path.display(),
+                final_private_store_app_path.display(),
                 e
             );
             return Err(SpsError::InstallError(format!(
                 "Failed to set quarantine on private store copy {}: {}",
-                private_store_app_path.display(),
+                final_private_store_app_path.display(),
                 e
             )));
         }
@@ -197,16 +283,16 @@ pub fn install_app_from_staged(
     // 7. Symlink from /Applications to private store app bundle
     debug!(
         "INFO: About to symlink app from private store {} to /Applications {}",
-        private_store_app_path.display(),
+        final_private_store_app_path.display(),
         final_app_destination_in_applications.display()
     );
     if let Err(e) = std::os::unix::fs::symlink(
-        &private_store_app_path,
+        &final_private_store_app_path,
         &final_app_destination_in_applications,
     ) {
         error!(
             "Failed to symlink app from private store to /Applications: {} -> {}: {}",
-            private_store_app_path.display(),
+            final_private_store_app_path.display(),
             final_app_destination_in_applications.display(),
             e
         );
@@ -231,7 +317,7 @@ pub fn install_app_from_staged(
     }
     debug!(
         "INFO: Successfully symlinked app from private store {} to /Applications {}",
-        private_store_app_path.display(),
+        final_private_store_app_path.display(),
         final_app_destination_in_applications.display()
     );
 

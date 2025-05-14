@@ -236,7 +236,7 @@ fn do_execute_sync_steps(
             } else {
                 debug!("[{}] Installing cask...", job_request.target_id);
                 // Always ensure is_installed=true when writing manifest after install
-                build::cask::install_cask(cask, &download_path, config)?;
+                build::cask::install_cask(cask, &download_path, config, &job_request.action)?;
             }
         }
     };

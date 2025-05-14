@@ -1,8 +1,76 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command; // Added for rsync
 
 use sps_common::config::Config;
-use tracing::debug;
+use sps_common::error::{Result, SpsError};
+use tracing::{debug, error};
+
+/// Synchronizes the content of a source app bundle into a destination app bundle directory using
+/// rsync. If the destination does not exist, it behaves like a move.
+/// This is intended for cask upgrades to preserve user data within the bundle.
+pub fn sync_app_bundle_contents(
+    source_app_path: &Path,
+    destination_app_path: &Path,
+    _config: &Config,
+) -> Result<()> {
+    debug!(
+        "Syncing app bundle contents from {} to {}",
+        source_app_path.display(),
+        destination_app_path.display()
+    );
+
+    if !source_app_path.exists() || !source_app_path.is_dir() {
+        return Err(SpsError::NotFound(format!(
+            "Source app bundle for sync not found or not a directory: {}",
+            source_app_path.display()
+        )));
+    }
+
+    // Ensure parent of destination exists for rsync.
+    if let Some(parent) = destination_app_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+        }
+    } else {
+        // Should not happen for typical app paths but good to be safe
+        return Err(SpsError::Generic(format!(
+            "Destination app path {} has no parent",
+            destination_app_path.display()
+        )));
+    }
+
+    // rsync -a --delete source_app_path/ destination_app_path/
+    let rsync_source = format!("{}/", source_app_path.to_string_lossy());
+    let rsync_dest = format!("{}/", destination_app_path.to_string_lossy());
+
+    debug!(
+        "Executing rsync -a --delete \"{}\" \"{}\"",
+        rsync_source, rsync_dest
+    );
+    let status = Command::new("rsync")
+        .arg("-a") // archive mode: recursive, preserves symlinks, perms, times, group, owner, devices
+        .arg("--delete") // delete extraneous files from dest dirs (making it a true sync)
+        .arg(&rsync_source)
+        .arg(&rsync_dest)
+        .status()
+        .map_err(|e| SpsError::CommandExecError(format!("Failed to execute rsync: {e}")))?;
+
+    if !status.success() {
+        error!("rsync command failed with status: {:?}", status);
+        return Err(SpsError::InstallError(format!(
+            "rsync failed to sync app bundle from {} to {}",
+            source_app_path.display(),
+            destination_app_path.display()
+        )));
+    }
+
+    debug!(
+        "Successfully synced app bundle contents to {}",
+        destination_app_path.display()
+    );
+    Ok(())
+} // Added error, warn
 
 /// Robustly removes a file or directory, handling symlinks and permissions.
 /// If `use_sudo_if_needed` is true, will attempt `sudo rm -rf` on permission errors.
