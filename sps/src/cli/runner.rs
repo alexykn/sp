@@ -11,8 +11,9 @@ use crossbeam_channel::{bounded, Sender as CrossbeamSender};
 use reqwest::Client;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
-use sps_common::dependency::{
-    DependencyResolver, ResolutionContext, ResolutionStatus, ResolvedGraph,
+use sps_common::dependency::resolver::{
+    DependencyResolver, PerTargetInstallPreferences, ResolutionContext, ResolutionStatus,
+    ResolvedGraph,
 };
 use sps_common::error::{Result, SpsError};
 use sps_common::formulary::Formulary;
@@ -777,15 +778,20 @@ async fn plan_operations(
         let targets: Vec<_> = formulae_for_resolution.keys().cloned().collect();
         debug!("Resolving dependencies for formulae: {:?}", targets);
         let formulary = Formulary::new(config.clone());
-        let keg = KegRegistry::new(config.clone());
+        let keg_registry = KegRegistry::new(config.clone());
+        let per_target_prefs = PerTargetInstallPreferences::default();
         let ctx = ResolutionContext {
             formulary: &formulary,
-            keg_registry: &keg,
+            keg_registry: &keg_registry,
             sps_prefix: config.sps_root(),
             include_optional: flags.include_optional,
             include_test: false,
             skip_recommended: flags.skip_recommended,
-            force_build: flags.build_from_source,
+            initial_target_preferences: &per_target_prefs,
+            build_all_from_source: flags.build_from_source,
+            cascade_source_preference_to_dependencies: true,
+            has_bottle_for_current_platform:
+                sps_core::build::formula::has_bottle_for_current_platform,
         };
         let mut resolver = DependencyResolver::new(ctx);
         match resolver.resolve_targets(&targets) {
@@ -1311,3 +1317,7 @@ fn sort_planned_jobs_by_dependency_order(jobs: &mut [PlannedJob], graph: &Resolv
         }
     });
 }
+
+// Remove or fix sort_planned_jobs_using_resolution_details if it refers to ResolutionDetail or
+// other non-existent types. If you need to sort by dependency order, use install_plan from
+// ResolvedGraph as in sort_planned_jobs_by_dependency_order.
