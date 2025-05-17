@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
+use std::slice; // added for slice::from_ref usage
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -697,7 +698,7 @@ async fn plan_operations(
         let cask_result = if let Some(c) = cask_deps_map.get(&token) {
             Ok(c.clone())
         } else {
-            fetch_target_definitions(&[token.clone()], cache.clone())
+            fetch_target_definitions(slice::from_ref(&token), cache.clone())
                 .await
                 .remove(&token)
                 .map_or(
@@ -729,7 +730,7 @@ async fn plan_operations(
                     && !errors.iter().any(|(n, _)| n == formula_dep)
                     && !processed_casks.contains(formula_dep)
                 {
-                    match fetch_target_definitions(&[formula_dep.clone()], cache.clone())
+                    match fetch_target_definitions(slice::from_ref(formula_dep), cache.clone())
                         .await
                         .remove(formula_dep)
                     {
