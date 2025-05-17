@@ -10,7 +10,7 @@
 >
 > Uninstalling a cask with brew then reinstalling it with sps will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
-sps his a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
+sps is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
 - **Formulae:** command‑line tools, libraries, and languages  
 - **Casks:** desktop applications and related artifacts on macOS
