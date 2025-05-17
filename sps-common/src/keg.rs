@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use semver::Version;
 
@@ -28,13 +28,13 @@ impl KegRegistry {
 
     /// Gets the path to the directory containing all versions for a formula.
     fn formula_cellar_path(&self, name: &str) -> PathBuf {
-        self.config.cellar.join(name)
+        self.config.cellar_dir().join(name)
     }
 
     /// Calculates the conventional 'opt' path for a formula (e.g., /opt/homebrew/opt/foo).
     /// This path typically points to the currently linked/active version.
     pub fn get_opt_path(&self, name: &str) -> PathBuf {
-        self.config.prefix.join("opt").join(name)
+        self.config.opt_dir().join(name)
     }
 
     /// Checks if a formula is installed and returns its Keg info if it is.
@@ -160,8 +160,8 @@ impl KegRegistry {
     }
 
     /// Returns the root path of the Cellar.
-    pub fn cellar_path(&self) -> &Path {
-        &self.config.cellar
+    pub fn cellar_path(&self) -> PathBuf {
+        self.config.cellar_dir()
     }
 
     /// Returns the path for a specific versioned keg (whether installed or not).

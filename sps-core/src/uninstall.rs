@@ -457,7 +457,7 @@ fn is_safe_path(path: &Path, home: &Path, config: &Config) -> bool {
         home.join(".config"),
         PathBuf::from("/Applications"),
         PathBuf::from("/Library"),
-        config.cache_dir.clone(),
+        config.cache_dir().clone(),
     ];
     if allowed_roots.iter().any(|root| path.starts_with(root)) {
         if path == Path::new("/")
@@ -517,7 +517,7 @@ fn cleanup_private_store(
         cask_token, version
     );
 
-    let private_version_dir = config.private_cask_version_path(cask_token, version);
+    let private_version_dir = config.cask_store_version_path(cask_token, version);
 
     // If the app name is provided, try to remove that specific app
     if let Some(app) = app_name {
@@ -546,7 +546,7 @@ fn cleanup_private_store(
     // Clean up empty parent directories
     super::build::cask::helpers::cleanup_empty_parent_dirs_in_private_store(
         &private_version_dir,
-        config.private_cask_store_base_dir(),
+        &config.cask_store_dir(),
     );
 
     true

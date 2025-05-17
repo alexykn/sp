@@ -61,7 +61,7 @@ pub async fn get_installed_packages(config: &Config) -> Result<Vec<InstalledPack
     }
 
     // Get Casks (Sync Part - Reading Dirs)
-    let caskroom_dir = config.caskroom_dir();
+    let caskroom_dir = config.cask_room_dir();
     if caskroom_dir.is_dir() {
         let caskroom_dir_str = caskroom_dir.to_str().unwrap_or("caskroom").to_string();
         let cask_token_entries_iter =
@@ -159,7 +159,7 @@ pub async fn get_installed_package(
     }
 
     // Check Cask (Sync Part - Reading Dirs)
-    let cask_token_path = config.cask_dir(name);
+    let cask_token_path = config.cask_room_token_path(name);
     if cask_token_path.is_dir() {
         let version_entries_iter =
             fs::read_dir(&cask_token_path).map_err(|e| SpsError::Io(Arc::new(e)))?;

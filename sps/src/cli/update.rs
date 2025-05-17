@@ -17,7 +17,7 @@ impl Update {
         // Use the ui utility function to create the spinner
         println!("Updating package lists"); // <-- CHANGED
 
-        tracing::debug!("Using cache directory: {:?}", config.cache_dir);
+        tracing::debug!("Using cache directory: {:?}", config.cache_dir());
 
         // Fetch and store raw formula data
         match api::fetch_all_formulas().await {
@@ -49,7 +49,7 @@ impl Update {
         }
 
         // Update timestamp file
-        let timestamp_file = config.cache_dir.join(".sps_last_update_check");
+        let timestamp_file = config.cache_dir().join(".sps_last_update_check");
         tracing::debug!(
             "Manual update successful. Updating timestamp file: {}",
             timestamp_file.display()

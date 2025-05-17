@@ -100,7 +100,7 @@ fn do_execute_sync_steps(
 
     match &job_request.target_definition {
         InstallTargetIdentifier::Formula(formula) => {
-            let install_dir_base = formula.install_prefix(&config.cellar)?;
+            let install_dir_base = formula.install_prefix(config.cellar_dir().as_path())?;
             if let Some(parent_dir) = install_dir_base.parent() {
                 fs::create_dir_all(parent_dir).map_err(|e| SpsError::Io(Arc::new(e)))?;
             }
@@ -174,7 +174,8 @@ fn do_execute_sync_steps(
 
                     // Create symlink in Caskroom if needed
                     let cask_version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
-                    let cask_version_path = config.cask_version_path(&cask.token, &cask_version);
+                    let cask_version_path =
+                        config.cask_room_version_path(&cask.token, &cask_version);
 
                     if !cask_version_path.exists() {
                         fs::create_dir_all(&cask_version_path)?;

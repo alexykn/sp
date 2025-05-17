@@ -44,7 +44,7 @@ pub async fn download_bottle(
         "{}-{}.{}.bottle.tar.gz",
         formula.name, standard_version_str, platform_tag
     );
-    let cache_dir = config.cache_dir.join("bottles");
+    let cache_dir = config.cache_dir().join("bottles");
     fs::create_dir_all(&cache_dir).map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
     let bottle_cache_path = cache_dir.join(&filename);
     if bottle_cache_path.is_file() {
@@ -306,7 +306,7 @@ pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &Bot
 }
 
 pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) -> Result<PathBuf> {
-    let install_dir = formula.install_prefix(&config.cellar)?;
+    let install_dir = formula.install_prefix(config.cellar_dir().as_path())?;
     if install_dir.exists() {
         debug!(
             "Removing existing keg directory before installing: {}",
@@ -412,25 +412,28 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     let mut repl: HashMap<String, String> = HashMap::new();
     repl.insert(
         "@@HOMEBREW_CELLAR@@".into(),
-        config.cellar_path().to_string_lossy().into(),
+        config.cellar_dir().to_string_lossy().into(),
     );
     repl.insert(
         "@@HOMEBREW_PREFIX@@".into(),
-        config.prefix().to_string_lossy().into(),
+        config.sps_root().to_string_lossy().into(),
     );
-    let prefix_path_str = config.prefix().to_string_lossy();
+    let _prefix_path_str = config.sps_root().to_string_lossy();
     let library_path_str = config
-        .prefix()
+        .sps_root()
         .join("Library")
         .to_string_lossy()
-        .to_string();
+        .to_string(); // Assuming Library is under sps_root for this placeholder
+                      // HOMEBREW_REPOSITORY usually points to the Homebrew/brew git repo, not relevant for sps in
+                      // this context. If needed for a specific formula, it should point to
+                      // /opt/sps or similar.
     repl.insert(
         "@@HOMEBREW_REPOSITORY@@".into(),
-        prefix_path_str.to_string(),
+        config.sps_root().to_string_lossy().into(),
     );
     repl.insert("@@HOMEBREW_LIBRARY@@".into(), library_path_str.to_string());
 
-    let formula_opt_path = config.formula_opt_link_path(formula.name());
+    let formula_opt_path = config.formula_opt_path(formula.name());
     let formula_opt_str = formula_opt_path.to_string_lossy();
     let install_dir_str = install_dir.to_string_lossy();
     if formula_opt_str != install_dir_str {
@@ -596,7 +599,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
         }
     }
 
-    if let Some(perl_path) = find_brewed_perl(config.prefix()).or_else(|| {
+    if let Some(perl_path) = find_brewed_perl(config.sps_root()).or_else(|| {
         if cfg!(target_os = "macos") {
             Some(PathBuf::from("/usr/bin/perl"))
         } else {
@@ -616,7 +619,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 .find(|d| d.name.starts_with("openjdk"))
                 .map(|d| d.name.clone())
             {
-                let openjdk_opt = config.formula_opt_link_path(&openjdk);
+                let openjdk_opt = config.formula_opt_path(&openjdk);
                 repl.insert(
                     "@@HOMEBREW_JAVA@@".into(),
                     openjdk_opt
@@ -644,7 +647,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
     repl.insert(
         opt_placeholder,
         config
-            .formula_opt_link_path(formula.name())
+            .formula_opt_path(formula.name())
             .to_string_lossy()
             .into(),
     );
@@ -656,7 +659,7 @@ fn perform_bottle_relocation(formula: &Formula, install_dir: &Path, config: &Con
                 .find(|d| d.name.starts_with("llvm"))
                 .map(|d| d.name.clone());
             if let Some(name) = llvm_dep_name {
-                let llvm_opt_path = config.formula_opt_link_path(&name);
+                let llvm_opt_path = config.formula_opt_path(&name);
                 let llvm_lib = llvm_opt_path.join("lib");
                 if llvm_lib.is_dir() {
                     repl.insert(
@@ -1127,7 +1130,7 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
         }
     };
 
-    let llvm_opt_path = config.formula_opt_link_path(&llvm_dep_name);
+    let llvm_opt_path = config.formula_opt_path(&llvm_dep_name);
     let llvm_lib_filename = if cfg!(target_os = "macos") {
         "libLLVM.dylib"
     } else if cfg!(target_os = "linux") {

@@ -56,9 +56,8 @@ pub fn install_manpage(
                                 continue;
                             };
 
-                            // Build the target directory: e.g. /usr/local/share/man/man1
-                            // :contentReference[oaicite:6]{index=6}
-                            let man_dir = config.manpagedir().join(format!("man{section}"));
+                            // Build the target directory: e.g. /opt/sps/share/man/man1
+                            let man_dir = config.man_base_dir().join(format!("man{section}"));
                             fs::create_dir_all(&man_dir)?;
 
                             // Determine the target path

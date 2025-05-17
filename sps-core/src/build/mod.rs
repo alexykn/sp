@@ -19,8 +19,8 @@ pub use formula::{get_formula_cellar_path, write_receipt};
 
 // --- Path helpers using Config ---
 pub fn get_formula_opt_path(formula: &Formula, config: &Config) -> PathBuf {
-    // Use Config method
-    config.formula_opt_link_path(formula.name())
+    // Use new Config method
+    config.formula_opt_path(formula.name())
 }
 
 // --- DEPRECATED EXTRACTION FUNCTIONS REMOVED ---

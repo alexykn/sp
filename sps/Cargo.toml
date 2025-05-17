@@ -27,6 +27,7 @@ walkdir = "2.5.0"
 indicatif = "0.17.11"
 env_logger = "0.11.8"
 num_cpus = "1.16.0"
+regex = "1.11.1"
 
 # CLI specific dependencies
 clap = { version = "4.5.38", features = ["derive"] }

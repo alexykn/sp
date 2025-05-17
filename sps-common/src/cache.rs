@@ -5,31 +5,29 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-
 use super::error::{Result, SpsError};
+use crate::Config;
 
-// TODO: Define cache directory structure (e.g., ~/.cache/sp)
-// TODO: Implement functions for storing, retrieving, and clearing cached data.
-
-const CACHE_SUBDIR: &str = "sps";
-// Define how long cache entries are considered valid
+/// Define how long cache entries are considered valid
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // 24 hours
 
 /// Cache struct to manage cache operations
 pub struct Cache {
     cache_dir: PathBuf,
+    _config: Config, // Keep a reference to config if needed for other paths or future use
 }
 
 impl Cache {
-    pub fn new(cache_dir: &Path) -> Result<Self> {
+    /// Create a new Cache using the config's cache_dir
+    pub fn new(config: &Config) -> Result<Self> {
+        let cache_dir = config.cache_dir();
         if !cache_dir.exists() {
-            fs::create_dir_all(cache_dir)?;
+            fs::create_dir_all(&cache_dir)?;
         }
 
         Ok(Self {
-            cache_dir: cache_dir.to_path_buf(),
+            cache_dir,
+            _config: config.clone(),
         })
     }
 
@@ -93,91 +91,4 @@ impl Cache {
         }
         Ok(())
     }
-}
-
-/// Gets the path to the application's cache directory, creating it if necessary.
-/// Uses dirs::cache_dir() to find the appropriate system cache location.
-pub fn get_cache_dir() -> Result<PathBuf> {
-    let base_cache_dir = dirs::cache_dir()
-        .ok_or_else(|| SpsError::Cache("Could not determine system cache directory".to_string()))?;
-    let app_cache_dir = base_cache_dir.join(CACHE_SUBDIR);
-
-    if !app_cache_dir.exists() {
-        tracing::debug!("Creating cache directory at {:?}", app_cache_dir);
-        fs::create_dir_all(&app_cache_dir)?;
-    }
-    Ok(app_cache_dir)
-}
-
-/// Constructs the full path for a given cache filename.
-fn get_cache_path(filename: &str) -> Result<PathBuf> {
-    Ok(get_cache_dir()?.join(filename))
-}
-
-/// Saves serializable data to a file in the cache directory.
-/// The data is serialized as JSON.
-pub fn save_to_cache<T: Serialize>(filename: &str, data: &T) -> Result<()> {
-    let path = get_cache_path(filename)?;
-    tracing::debug!("Saving data to cache file: {:?}", path);
-    let file = fs::File::create(&path)?;
-    // Use serde_json::to_writer_pretty for readable cache files (optional)
-    serde_json::to_writer_pretty(file, data)?;
-    Ok(())
-}
-
-/// Loads and deserializes data from a file in the cache directory.
-/// Checks if the cache file exists and is within the TTL (Time To Live).
-pub fn load_from_cache<T: DeserializeOwned>(filename: &str) -> Result<T> {
-    let path = get_cache_path(filename)?;
-    tracing::debug!("Attempting to load from cache file: {:?}", path);
-
-    if !path.exists() {
-        tracing::debug!("Cache file not found.");
-        return Err(SpsError::Cache("Cache file does not exist".to_string()));
-    }
-
-    // Check cache file age
-    let metadata = fs::metadata(&path)?;
-    let modified_time = metadata.modified()?;
-    let age = SystemTime::now()
-        .duration_since(modified_time)
-        .map_err(|e| SpsError::Cache(format!("System time error: {e}")))?;
-
-    if age > CACHE_TTL {
-        tracing::debug!("Cache file expired (age: {:?}, TTL: {:?}).", age, CACHE_TTL);
-        return Err(SpsError::Cache(format!(
-            "Cache file expired ({} > {})",
-            humantime::format_duration(age),
-            humantime::format_duration(CACHE_TTL)
-        )));
-    }
-
-    tracing::debug!("Cache file is valid. Loading");
-    let file = fs::File::open(&path)?;
-    let data: T = serde_json::from_reader(file)?;
-    Ok(data)
-}
-
-/// Clears the entire application cache directory.
-pub fn clear_cache() -> Result<()> {
-    let path = get_cache_dir()?;
-    tracing::debug!("Clearing cache directory: {:?}", path);
-    if path.exists() {
-        fs::remove_dir_all(&path)?;
-    }
-    Ok(())
-}
-
-/// Checks if a specific cache file exists and is valid (within TTL).
-pub fn is_cache_valid(filename: &str) -> Result<bool> {
-    let path = get_cache_path(filename)?;
-    if !path.exists() {
-        return Ok(false);
-    }
-    let metadata = fs::metadata(&path)?;
-    let modified_time = metadata.modified()?;
-    let age = SystemTime::now()
-        .duration_since(modified_time)
-        .map_err(|e| SpsError::Cache(format!("System time error: {e}")))?;
-    Ok(age <= CACHE_TTL)
 }

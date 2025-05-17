@@ -23,7 +23,7 @@ pub struct Formulary {
 impl Formulary {
     pub fn new(config: Config) -> Self {
         // Initialize the cache helper using the directory from config
-        let cache = Cache::new(&config.cache_dir).unwrap_or_else(|e| {
+        let cache = Cache::new(&config).unwrap_or_else(|e| {
             // Handle error appropriately - maybe panic or return Result?
             // Using expect here for simplicity, but Result is better.
             panic!("Failed to initialize cache in Formulary: {e}");

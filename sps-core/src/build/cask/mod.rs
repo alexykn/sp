@@ -36,26 +36,26 @@ pub struct CaskInstallManifest {
 /// Returns the path to the cask's version directory in the private store.
 pub fn sps_private_cask_version_dir(cask: &Cask, config: &Config) -> PathBuf {
     let version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
-    config.private_cask_version_path(&cask.token, &version)
+    config.cask_store_version_path(&cask.token, &version)
 }
 
 /// Returns the path to the cask's token directory in the private store.
 pub fn sps_private_cask_token_dir(cask: &Cask, config: &Config) -> PathBuf {
-    config.private_cask_token_path(&cask.token)
+    config.cask_store_token_path(&cask.token)
 }
 
 /// Returns the path to the main app bundle for a cask in the private store.
 /// This assumes the primary app bundle is named as specified in the cask's artifacts.
 pub fn sps_private_cask_app_path(cask: &Cask, config: &Config) -> Option<PathBuf> {
     let version = cask.version.clone().unwrap_or_else(|| "latest".to_string());
-    if let Some(artifacts) = &cask.artifacts {
-        for artifact in artifacts {
+    if let Some(cask_artifacts) = &cask.artifacts {
+        for artifact in cask_artifacts {
             if let Some(obj) = artifact.as_object() {
                 if let Some(apps) = obj.get("app") {
                     if let Some(app_names) = apps.as_array() {
                         if let Some(app_name_val) = app_names.first() {
                             if let Some(app_name) = app_name_val.as_str() {
-                                return Some(config.private_cask_app_path(
+                                return Some(config.cask_store_app_path(
                                     &cask.token,
                                     &version,
                                     app_name,
@@ -101,7 +101,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
             format!("cask-{}-download.tmp", cask.token.replace('/', "_"))
         });
     let cache_key = format!("cask-{}-{}", cask.token, file_name);
-    let cache_path = cache.get_dir().join(&cache_key);
+    let cache_path = cache.get_dir().join("cask_downloads").join(&cache_key);
 
     if cache_path.exists() {
         debug!("Using cached download: {}", cache_path.display());
@@ -203,25 +203,25 @@ pub fn install_cask(
     debug!("Installing cask: {}", cask.token);
     // This is the path in the *actual* Caskroom (e.g., /opt/homebrew/Caskroom/token/version)
     // where metadata and symlinks to /Applications will go.
-    let actual_caskroom_version_path = config.cask_version_path(
+    let actual_cask_room_version_path = config.cask_room_version_path(
         &cask.token,
         &cask.version.clone().unwrap_or_else(|| "latest".to_string()),
     );
 
-    if !actual_caskroom_version_path.exists() {
-        fs::create_dir_all(&actual_caskroom_version_path).map_err(|e| {
+    if !actual_cask_room_version_path.exists() {
+        fs::create_dir_all(&actual_cask_room_version_path).map_err(|e| {
             SpsError::Io(std::sync::Arc::new(std::io::Error::new(
                 e.kind(),
                 format!(
-                    "Failed create cask dir {}: {}",
-                    actual_caskroom_version_path.display(),
+                    "Failed create cask_room dir {}: {}",
+                    actual_cask_room_version_path.display(),
                     e
                 ),
             )))
         })?;
         debug!(
-            "Created actual caskroom version directory: {}",
-            actual_caskroom_version_path.display()
+            "Created actual cask_room version directory: {}",
+            actual_cask_room_version_path.display()
         );
     }
     let mut detected_extension = download_path
@@ -271,18 +271,19 @@ pub fn install_cask(
         match artifacts::pkg::install_pkg_from_path(
             cask,
             download_path,
-            &actual_caskroom_version_path, // PKG manifest items go into the actual caskroom
+            &actual_cask_room_version_path, // PKG manifest items go into the actual cask_room
             config,
         ) {
             Ok(installed_artifacts) => {
                 debug!("Writing PKG install manifest");
-                write_cask_manifest(cask, &actual_caskroom_version_path, installed_artifacts)?;
+                write_cask_manifest(cask, &actual_cask_room_version_path, installed_artifacts)?;
                 debug!("Successfully installed PKG cask: {}", cask.token);
                 return Ok(());
             }
             Err(e) => {
-                error!("PKG installation failed: {}", e);
-                let _ = fs::remove_dir_all(&actual_caskroom_version_path);
+                debug!("Failed to install PKG: {}", e);
+                // Clean up cask_room on error
+                let _ = fs::remove_dir_all(&actual_cask_room_version_path);
                 return Err(e);
             }
         }
@@ -317,7 +318,7 @@ pub fn install_cask(
         if let Err(e) = sps_net::validation::verify_content_type(download_path, expected_ext) {
             tracing::error!("Content type verification failed: {}", e);
             // Attempt cleanup?
-            let _ = fs::remove_dir_all(&actual_caskroom_version_path);
+            let _ = fs::remove_dir_all(&actual_cask_room_version_path);
             return Err(e);
         }
     } else {
@@ -393,7 +394,7 @@ pub fn install_cask(
                                         match artifacts::app::install_app_from_staged(
                                             cask,
                                             &staged_app_path,
-                                            &actual_caskroom_version_path,
+                                            &actual_cask_room_version_path,
                                             config,
                                             job_action, // Pass job_action for upgrade logic
                                         ) {
@@ -429,8 +430,8 @@ pub fn install_cask(
                                         match artifacts::pkg::install_pkg_from_path(
                                             cask,
                                             &staged_pkg_path,
-                                            &actual_caskroom_version_path, /* Pass actual
-                                                                            * caskroom path */
+                                            &actual_cask_room_version_path, /* Pass actual
+                                                                             * cask_room path */
                                             config,
                                         ) {
                                             Ok(mut artifacts) => {
@@ -452,123 +453,8 @@ pub fn install_cask(
                             }
                             Ok(installed_pkgs)
                         }
-                        "suite" => artifacts::suite::install_suite(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "installer" => artifacts::installer::run_installer(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "binary" => artifacts::binary::install_binary(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "manpage" => artifacts::manpage::install_manpage(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "colorpicker" => artifacts::colorpicker::install_colorpicker(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "dictionary" => artifacts::dictionary::install_dictionary(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "font" => artifacts::font::install_font(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "input_method" => artifacts::input_method::install_input_method(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "internet_plugin" => artifacts::internet_plugin::install_internet_plugin(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "keyboard_layout" => artifacts::keyboard_layout::install_keyboard_layout(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "prefpane" => artifacts::prefpane::install_prefpane(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "qlplugin" => artifacts::qlplugin::install_qlplugin(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "mdimporter" => artifacts::mdimporter::install_mdimporter(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "screen_saver" => artifacts::screen_saver::install_screen_saver(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "service" => artifacts::service::install_service(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "audio_unit_plugin" => {
-                            artifacts::audio_unit_plugin::install_audio_unit_plugin(
-                                cask,
-                                stage_path,
-                                &actual_caskroom_version_path,
-                                config,
-                            )
-                        }
-                        "vst_plugin" => artifacts::vst_plugin::install_vst_plugin(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "vst3_plugin" => artifacts::vst3_plugin::install_vst3_plugin(
-                            cask,
-                            stage_path,
-                            &actual_caskroom_version_path,
-                            config,
-                        ),
-                        "zap" => artifacts::zap::install_zap(cask, config),
-                        "preflight" => {
-                            artifacts::preflight::run_preflight(cask, stage_path, config)
-                        }
-                        "uninstall" => artifacts::uninstall::record_uninstall(cask),
-                        other => {
-                            debug!("Artifact type '{}' not supported yet — skipping.", other);
+                        _ => {
+                            debug!("Artifact type '{}' not supported yet — skipping.", key);
                             Ok(vec![])
                         }
                     };
@@ -609,7 +495,7 @@ pub fn install_cask(
             cask.token
         );
         // Clean up the created actual_caskroom_version_path if no artifacts are defined
-        let _ = fs::remove_dir_all(&actual_caskroom_version_path);
+        let _ = fs::remove_dir_all(&actual_cask_room_version_path);
         return Err(SpsError::InstallError(format!(
             "Cask '{}' has no artifacts defined.",
             cask.token
@@ -621,7 +507,7 @@ pub fn install_cask(
             artifact_install_errors.len(),
             cask.token
         );
-        let _ = fs::remove_dir_all(&actual_caskroom_version_path); // Clean up actual caskroom on error
+        let _ = fs::remove_dir_all(&actual_cask_room_version_path); // Clean up actual cask_room on error
         return Err(artifact_install_errors.remove(0));
     }
     let actual_install_count = all_installed_artifacts
@@ -638,10 +524,18 @@ pub fn install_cask(
             "No installable artifacts (like app, pkg, binary, etc.) were processed for cask '{}' from the staged content. Check cask definition.",
             cask.token
         );
-        write_cask_manifest(cask, &actual_caskroom_version_path, all_installed_artifacts)?;
+        write_cask_manifest(
+            cask,
+            &actual_cask_room_version_path,
+            all_installed_artifacts,
+        )?;
     } else {
         debug!("Writing cask installation manifest");
-        write_cask_manifest(cask, &actual_caskroom_version_path, all_installed_artifacts)?;
+        write_cask_manifest(
+            cask,
+            &actual_cask_room_version_path,
+            all_installed_artifacts,
+        )?;
     }
     debug!("Successfully installed cask: {}", cask.token);
     Ok(())
@@ -755,7 +649,7 @@ pub fn write_cask_manifest(
 /// Starts from the given path and walks up, removing empty directories until a non-empty or root is
 /// found.
 pub fn cleanup_empty_parent_dirs_in_private_store(start_path: &Path, stop_at: &Path) {
-    let mut current = start_path.to_path_buf();
+    let mut current = start_path.parent().unwrap_or(start_path).to_path_buf(); // Start from parent
     while current != *stop_at {
         if let Ok(read_dir) = fs::read_dir(&current) {
             if read_dir.count() == 0 {

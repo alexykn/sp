@@ -31,7 +31,7 @@ pub fn link_formula_artifacts(
     let mut symlinks_created = Vec::<String>::new();
 
     // Use config methods for paths
-    let opt_link_path = config.formula_opt_link_path(formula.name());
+    let opt_link_path = config.formula_opt_path(formula.name());
     let target_keg_dir = &formula_content_root;
 
     remove_existing_link_target(&opt_link_path)?;
@@ -75,7 +75,7 @@ pub fn link_formula_artifacts(
     for dir_name in &standard_artifact_dirs {
         let source_subdir = formula_content_root.join(dir_name);
         // Use config.prefix() for target base
-        let target_prefix_subdir = config.prefix().join(dir_name);
+        let target_prefix_subdir = config.sps_root().join(dir_name);
 
         if source_subdir.is_dir() {
             fs::create_dir_all(&target_prefix_subdir)?;
@@ -503,9 +503,9 @@ pub fn unlink_formula_artifacts(
                             // Use Config to get base paths for checking ownership/safety
                             let opt_base = config.opt_dir();
                             let bin_base = config.bin_dir();
-                            let lib_base = config.prefix().join("lib");
-                            let include_base = config.prefix().join("include");
-                            let share_base = config.prefix().join("share");
+                            let lib_base = config.sps_root().join("lib");
+                            let include_base = config.sps_root().join("include");
+                            let share_base = config.sps_root().join("share");
                             // Add etc, sbin etc. if needed
 
                             for link_str in links_to_remove {

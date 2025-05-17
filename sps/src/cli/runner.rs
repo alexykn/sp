@@ -319,7 +319,7 @@ async fn plan_operations(
                         // --- CASK PRIVATE STORE REUSE LOGIC ---
                         // Try to find a private store bundle for this cask/version
                         // (This logic is similar to the Reinstall branch)
-                        let cask_token_path = config.cask_dir(name);
+                        let cask_token_path = config.cask_room_token_path(name);
                         if cask_token_path.is_dir() {
                             if let Ok(version_entries_iter) = fs::read_dir(&cask_token_path) {
                                 for version_entry in version_entries_iter.flatten() {
@@ -340,12 +340,11 @@ async fn plan_operations(
                                                 if let Some(app_name) =
                                                     manifest.primary_app_file_name
                                                 {
-                                                    let private_path = config
-                                                        .private_cask_app_path(
-                                                            name,
-                                                            &manifest.version,
-                                                            &app_name,
-                                                        );
+                                                    let private_path = config.cask_store_app_path(
+                                                        name,
+                                                        &manifest.version,
+                                                        &app_name,
+                                                    );
                                                     if std::fs::metadata(&private_path).is_ok() {
                                                         tracing::debug!("(plan_operations) [INSTALL] Found app in private store for install: {}", private_path.display());
                                                         private_store_sources
@@ -419,12 +418,11 @@ async fn plan_operations(
                                                     manifest.primary_app_file_name
                                                 {
                                                     tracing::debug!("(plan_operations) Manifest primary_app_file_name: '{}'", app_name);
-                                                    let private_path = config
-                                                        .private_cask_app_path(
-                                                            &installed_info.name,
-                                                            &installed_info.version,
-                                                            &app_name,
-                                                        );
+                                                    let private_path = config.cask_store_app_path(
+                                                        &installed_info.name,
+                                                        &installed_info.version,
+                                                        &app_name,
+                                                    );
                                                     tracing::debug!("(plan_operations) Built private store path: {}", private_path.display());
                                                     // Accept path even if it differs only by case
                                                     // or NFC/NFD.
@@ -782,7 +780,7 @@ async fn plan_operations(
         let ctx = ResolutionContext {
             formulary: &formulary,
             keg_registry: &keg,
-            sps_prefix: config.prefix(),
+            sps_prefix: config.sps_root(),
             include_optional: flags.include_optional,
             include_test: false,
             skip_recommended: flags.skip_recommended,

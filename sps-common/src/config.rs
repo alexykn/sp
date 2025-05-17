@@ -1,203 +1,156 @@
-// ===== sps-core/src/utils/config.rs =====
+// sps-common/src/config.rs
 use std::env;
 use std::path::{Path, PathBuf};
 
-use dirs;
+use directories::UserDirs; // Ensure this crate is in sps-common/Cargo.toml
 use tracing::debug;
 
-use super::cache;
-use super::error::Result; // for home directory lookup
+use super::error::Result; // Assuming SpsResult is Result from super::error
 
-/// Default installation prefixes
-const DEFAULT_LINUX_PREFIX: &str = "/home/linuxbrew/.linuxbrew";
-const DEFAULT_MACOS_INTEL_PREFIX: &str = "/usr/local";
-const DEFAULT_MACOS_ARM_PREFIX: &str = "/opt/homebrew";
-
-/// Determines the active prefix for installation.
-/// Checks sps_PREFIX/HOMEBREW_PREFIX env vars, then OS-specific defaults.
-fn determine_prefix() -> PathBuf {
-    if let Ok(prefix) = env::var("SPS_PREFIX").or_else(|_| env::var("HOMEBREW_PREFIX")) {
-        debug!("Using prefix from environment variable: {}", prefix);
-        return PathBuf::from(prefix);
-    }
-
-    let default_prefix = if cfg!(target_os = "linux") {
-        DEFAULT_LINUX_PREFIX
-    } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            DEFAULT_MACOS_ARM_PREFIX
-        } else {
-            DEFAULT_MACOS_INTEL_PREFIX
-        }
-    } else {
-        // Fallback for unsupported OS
-        "/usr/local/sps"
-    };
-    debug!("Using default prefix for OS/Arch: {}", default_prefix);
-    PathBuf::from(default_prefix)
-}
+// Make SPS_ROOT public
+pub const SPS_ROOT: &str = "/opt/sps";
+const SPS_ROOT_MARKER_FILENAME: &str = ".sps_root_v1";
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub prefix: PathBuf,
-    pub cellar: PathBuf,
-    pub taps_dir: PathBuf,
-    pub cache_dir: PathBuf,
+    pub sps_root: PathBuf, // Public for direct construction in main for init if needed
     pub api_base_url: String,
     pub artifact_domain: Option<String>,
     pub docker_registry_token: Option<String>,
     pub docker_registry_basic_auth: Option<String>,
     pub github_api_token: Option<String>,
-    pub private_cask_store_dir: PathBuf,
 }
 
 impl Config {
     pub fn load() -> Result<Self> {
-        debug!("Loadingspsconfiguration");
-        let prefix = determine_prefix();
-        let cellar = prefix.join("Cellar");
-        let taps_dir = prefix.join("Library/Taps");
-        let cache_dir = cache::get_cache_dir()?;
-        let api_base_url = "https://formulae.brew.sh/api".to_string();
+        debug!("Loading sps configuration");
+        let sps_root_path = PathBuf::from(SPS_ROOT);
 
-        // Set up private cask store in ~/.local/share/sps/cask_store
-        let mut private_cask_store_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        private_cask_store_dir.push(".local");
-        private_cask_store_dir.push("share");
-        private_cask_store_dir.push("sps");
-        private_cask_store_dir.push("cask_store");
+        let api_base_url = "https://formulae.brew.sh/api".to_string();
 
         let artifact_domain = env::var("HOMEBREW_ARTIFACT_DOMAIN").ok();
         let docker_registry_token = env::var("HOMEBREW_DOCKER_REGISTRY_TOKEN").ok();
         let docker_registry_basic_auth = env::var("HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN").ok();
         let github_api_token = env::var("HOMEBREW_GITHUB_API_TOKEN").ok();
 
-        if artifact_domain.is_some() {
-            debug!("Loaded HOMEBREW_ARTIFACT_DOMAIN");
-        }
-        if docker_registry_token.is_some() {
-            debug!("Loaded HOMEBREW_DOCKER_REGISTRY_TOKEN");
-        }
-        if docker_registry_basic_auth.is_some() {
-            debug!("Loaded HOMEBREW_DOCKER_REGISTRY_BASIC_AUTH_TOKEN");
-        }
-        if github_api_token.is_some() {
-            debug!("Loaded HOMEBREW_GITHUB_API_TOKEN");
-        }
-
         debug!("Configuration loaded successfully.");
         Ok(Self {
-            prefix,
-            cellar,
-            taps_dir,
-            cache_dir,
+            sps_root: sps_root_path,
             api_base_url,
             artifact_domain,
             docker_registry_token,
             docker_registry_basic_auth,
             github_api_token,
-            private_cask_store_dir,
         })
     }
 
-    // --- Start: New Path Methods ---
-
-    pub fn prefix(&self) -> &Path {
-        &self.prefix
-    }
-
-    pub fn cellar_path(&self) -> &Path {
-        &self.cellar
-    }
-
-    pub fn caskroom_dir(&self) -> PathBuf {
-        self.prefix.join("Caskroom")
-    }
-
-    pub fn opt_dir(&self) -> PathBuf {
-        self.prefix.join("opt")
+    pub fn sps_root(&self) -> &Path {
+        &self.sps_root
     }
 
     pub fn bin_dir(&self) -> PathBuf {
-        self.prefix.join("bin")
+        self.sps_root.join("bin")
+    }
+
+    pub fn cellar_dir(&self) -> PathBuf {
+        self.sps_root.join("cellar")
+    }
+
+    pub fn cask_room_dir(&self) -> PathBuf {
+        self.sps_root.join("cask_room")
+    }
+
+    pub fn cask_store_dir(&self) -> PathBuf {
+        self.sps_root.join("cask_store")
+    }
+
+    pub fn opt_dir(&self) -> PathBuf {
+        self.sps_root.join("opt")
+    }
+
+    pub fn taps_dir(&self) -> PathBuf {
+        self.sps_root.join("taps")
+    }
+
+    pub fn cache_dir(&self) -> PathBuf {
+        self.sps_root.join("cache")
+    }
+
+    pub fn logs_dir(&self) -> PathBuf {
+        self.sps_root.join("logs")
+    }
+
+    pub fn tmp_dir(&self) -> PathBuf {
+        self.sps_root.join("tmp")
+    }
+
+    pub fn state_dir(&self) -> PathBuf {
+        self.sps_root.join("state")
+    }
+
+    pub fn man_base_dir(&self) -> PathBuf {
+        self.sps_root.join("share").join("man")
+    }
+
+    pub fn sps_root_marker_path(&self) -> PathBuf {
+        self.sps_root.join(SPS_ROOT_MARKER_FILENAME)
     }
 
     pub fn applications_dir(&self) -> PathBuf {
         if cfg!(target_os = "macos") {
             PathBuf::from("/Applications")
         } else {
-            self.prefix.join("Applications")
+            self.home_dir().join("Applications")
         }
     }
 
     pub fn formula_cellar_dir(&self, formula_name: &str) -> PathBuf {
-        self.cellar_path().join(formula_name)
+        self.cellar_dir().join(formula_name)
     }
 
     pub fn formula_keg_path(&self, formula_name: &str, version_str: &str) -> PathBuf {
         self.formula_cellar_dir(formula_name).join(version_str)
     }
 
-    pub fn formula_opt_link_path(&self, formula_name: &str) -> PathBuf {
+    pub fn formula_opt_path(&self, formula_name: &str) -> PathBuf {
         self.opt_dir().join(formula_name)
     }
 
-    pub fn cask_dir(&self, cask_token: &str) -> PathBuf {
-        self.caskroom_dir().join(cask_token)
+    pub fn cask_room_token_path(&self, cask_token: &str) -> PathBuf {
+        self.cask_room_dir().join(cask_token)
     }
 
-    /// Returns the path to the cask's token directory in the caskroom.
-    pub fn cask_token_path(&self, cask_token: &str) -> PathBuf {
-        self.caskroom_dir().join(cask_token)
+    pub fn cask_store_token_path(&self, cask_token: &str) -> PathBuf {
+        self.cask_store_dir().join(cask_token)
     }
 
-    /// Returns the base directory for the private cask store
-    pub fn private_cask_store_base_dir(&self) -> &Path {
-        &self.private_cask_store_dir
+    pub fn cask_store_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
+        self.cask_store_token_path(cask_token).join(version_str)
     }
 
-    /// Returns the path to the cask's token directory in the private store
-    pub fn private_cask_token_path(&self, cask_token: &str) -> PathBuf {
-        self.private_cask_store_dir.join(cask_token)
-    }
-
-    /// Returns the path to the version directory in the private store
-    pub fn private_cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
-        self.private_cask_token_path(cask_token).join(version_str)
-    }
-
-    /// Returns the path to an app in the private store
-    pub fn private_cask_app_path(
+    pub fn cask_store_app_path(
         &self,
         cask_token: &str,
         version_str: &str,
         app_name: &str,
     ) -> PathBuf {
-        self.private_cask_version_path(cask_token, version_str)
+        self.cask_store_version_path(cask_token, version_str)
             .join(app_name)
     }
 
-    pub fn cask_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
-        self.cask_dir(cask_token).join(version_str)
+    pub fn cask_room_version_path(&self, cask_token: &str, version_str: &str) -> PathBuf {
+        self.cask_room_token_path(cask_token).join(version_str)
     }
 
-    /// Returns the path to the current user's home directory.
     pub fn home_dir(&self) -> PathBuf {
-        dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+        UserDirs::new().map_or_else(|| PathBuf::from("/"), |ud| ud.home_dir().to_path_buf())
     }
-
-    /// Returns the base manpage directory (e.g., /usr/local/share/man).
-    pub fn manpagedir(&self) -> PathBuf {
-        self.prefix.join("share").join("man")
-    }
-
-    // --- End: New Path Methods ---
 
     pub fn get_tap_path(&self, name: &str) -> Option<PathBuf> {
         let parts: Vec<&str> = name.split('/').collect();
         if parts.len() == 2 {
             Some(
-                self.taps_dir
+                self.taps_dir()
                     .join(parts[0])
                     .join(format!("homebrew-{}", parts[1])),
             )
@@ -229,6 +182,8 @@ impl Default for Config {
     }
 }
 
+// This function might be redundant if Config::default() is used,
+// but keeping it if it's called directly elsewhere.
 pub fn load_config() -> Result<Config> {
     Config::load()
 }

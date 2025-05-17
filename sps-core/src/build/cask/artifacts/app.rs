@@ -107,7 +107,7 @@ pub fn install_app_from_staged(
 
         if let Some(name_for_old_path) = old_primary_app_name {
             let old_private_store_app_dir_path =
-                config.private_cask_version_path(&cask.token, from_version);
+                config.cask_store_version_path(&cask.token, from_version);
             let old_private_store_app_bundle_path =
                 old_private_store_app_dir_path.join(&name_for_old_path);
 
@@ -123,7 +123,7 @@ pub fn install_app_from_staged(
 
                 // Now, rename the parent version directory (e.g., .../1.0 -> .../1.1)
                 let new_private_store_version_dir =
-                    config.private_cask_version_path(&cask.token, &new_version_str);
+                    config.cask_store_version_path(&cask.token, &new_version_str);
                 if old_private_store_app_dir_path != new_private_store_version_dir {
                     debug!(
                         "[{}] Renaming private store version dir from {} to {}",
@@ -144,17 +144,17 @@ pub fn install_app_from_staged(
                 warn!("[{}] UPGRADE: Old private store app path {} not found or not a dir. Proceeding with fresh private store placement for new version.", cask.token, old_private_store_app_bundle_path.display());
                 // Fallback to fresh placement
                 final_private_store_app_path =
-                    config.private_cask_app_path(&cask.token, &new_version_str, app_name.as_ref());
+                    config.cask_store_app_path(&cask.token, &new_version_str, app_name.as_ref());
             }
         } else {
             warn!("[{}] UPGRADE: Could not determine old app bundle name. Proceeding with fresh private store placement for new version.", cask.token);
             final_private_store_app_path =
-                config.private_cask_app_path(&cask.token, &new_version_str, app_name.as_ref());
+                config.cask_store_app_path(&cask.token, &new_version_str, app_name.as_ref());
         }
     } else {
         // Not an upgrade
         final_private_store_app_path =
-            config.private_cask_app_path(&cask.token, &new_version_str, app_name.as_ref());
+            config.cask_store_app_path(&cask.token, &new_version_str, app_name.as_ref());
     }
 
     let final_app_destination_in_applications = config.applications_dir().join(app_name.as_ref());

@@ -286,7 +286,7 @@ pub async fn build_from_source(
     config: &Config,
     all_installed_paths: &[PathBuf],
 ) -> Result<PathBuf> {
-    let install_dir = formula.install_prefix(&config.cellar)?;
+    let install_dir = formula.install_prefix(config.cellar_dir().as_path())?;
     let formula_name = formula.name();
 
     let source_extension = source_path
@@ -328,7 +328,7 @@ pub async fn build_from_source(
     let inferred_root_dir = extract::infer_archive_root_dir(source_path, source_archive_type_str)?;
     let strip_components = if inferred_root_dir.is_some() { 1 } else { 0 };
 
-    let temp_dir_base = config.cache_dir.join("build-temp");
+    let temp_dir_base = config.tmp_dir().join("build-temp");
     create_dir_all_with_context(&temp_dir_base, "build temp base")?;
     let temp_build_dir = tempfile::Builder::new()
         .prefix(&format!("{formula_name}-"))
@@ -401,9 +401,12 @@ pub async fn build_from_source(
     );
 
     debug!("Setting up build environment");
-    let sps_prefix = config.prefix();
-    let build_env =
-        BuildEnvironment::new(formula, sps_prefix, &config.cellar, all_installed_paths)?;
+    let build_env = BuildEnvironment::new(
+        formula,
+        config.sps_root(),
+        config.cellar_dir().as_path(),
+        all_installed_paths,
+    )?;
 
     if !resources.is_empty() {
         debug!("Installing {} resources into libexec", resources.len());

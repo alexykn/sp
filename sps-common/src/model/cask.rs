@@ -202,7 +202,7 @@ impl Cask {
     /// Check if this cask is installed by looking for a manifest file
     /// in any versioned directory within the Caskroom.
     pub fn is_installed(&self, config: &Config) -> bool {
-        let cask_dir = config.cask_dir(&self.token); // e.g., /opt/homebrew/Caskroom/firefox
+        let cask_dir = config.cask_room_token_path(&self.token); // e.g., /opt/sps/cask_room/firefox
         if !cask_dir.exists() || !cask_dir.is_dir() {
             return false;
         }
@@ -259,7 +259,7 @@ impl Cask {
     /// in the Caskroom. Returns the first version found (use cautiously if multiple
     /// versions could exist, though current install logic prevents this).
     pub fn installed_version(&self, config: &Config) -> Option<String> {
-        let cask_dir = config.cask_dir(&self.token); //
+        let cask_dir = config.cask_room_token_path(&self.token); //
         if !cask_dir.exists() {
             return None;
         }

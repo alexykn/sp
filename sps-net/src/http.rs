@@ -29,7 +29,7 @@ pub async fn fetch_formula_source_or_bottle(
         .next_back()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("{formula_name}-download"));
-    let cache_path = config.cache_dir.join(&filename);
+    let cache_path = config.cache_dir().join(&filename);
 
     tracing::debug!(
         "Preparing to fetch main resource for '{}' from URL: {}",
@@ -73,10 +73,10 @@ pub async fn fetch_formula_source_or_bottle(
         tracing::debug!("File not found in cache.");
     }
 
-    fs::create_dir_all(&config.cache_dir).map_err(|e| {
+    fs::create_dir_all(config.cache_dir()).map_err(|e| {
         SpsError::IoError(format!(
             "Failed to create cache directory {}: {}",
-            config.cache_dir.display(),
+            config.cache_dir().display(),
             e
         ))
     })?;
@@ -118,7 +118,7 @@ pub async fn fetch_resource(
     resource: &ResourceSpec,
     config: &Config,
 ) -> Result<PathBuf> {
-    let resource_cache_dir = config.cache_dir.join("resources");
+    let resource_cache_dir = config.cache_dir().join("resources");
     fs::create_dir_all(&resource_cache_dir).map_err(|e| {
         SpsError::IoError(format!(
             "Failed to create resource cache directory {}: {}",
