@@ -395,7 +395,7 @@ impl<'a> OperationPlanner<'a> {
             let cask_arc = match cask_deps_map.get(&cask_token) {
                 Some(c) => c.clone(),
                 None => {
-                    match fetch_target_definitions(&[cask_token.clone()], self.cache.clone())
+                    match fetch_target_definitions(std::slice::from_ref(&cask_token), self.cache.clone())
                         .await
                         .remove(&cask_token)
                     {
@@ -436,7 +436,7 @@ impl<'a> OperationPlanner<'a> {
                     {
                         continue;
                     }
-                    match fetch_target_definitions(&[formula_dep_name.clone()], self.cache.clone())
+                    match fetch_target_definitions(std::slice::from_ref(formula_dep_name), self.cache.clone())
                         .await
                         .remove(formula_dep_name)
                     {
