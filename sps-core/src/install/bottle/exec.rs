@@ -359,7 +359,7 @@ pub fn install_bottle(bottle_path: &Path, formula: &Formula, config: &Config) ->
     debug!("Performing bottle relocation in {}", install_dir.display());
     perform_bottle_relocation(formula, &install_dir, config)?;
     ensure_llvm_symlinks(&install_dir, formula, config)?;
-    crate::install::bottle::write_receipt(formula, &install_dir)?;
+    crate::install::bottle::write_receipt(formula, &install_dir, "bottle")?;
     debug!(
         "Bottle installation complete for {} at {}",
         formula.name(),

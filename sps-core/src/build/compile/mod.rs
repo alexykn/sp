@@ -298,7 +298,7 @@ pub async fn build_from_source(
         debug!("Installing single file formula: {}", formula_name);
         create_dir_all_with_context(&install_dir, "install directory")?;
         install_single_file(source_path, formula, &install_dir)?;
-        bottle::write_receipt(formula, &install_dir)?;
+        bottle::write_receipt(formula, &install_dir, "source")?;
         return Ok(install_dir);
     }
 
@@ -451,7 +451,7 @@ pub async fn build_from_source(
             install_dir.display()
         );
     }
-    crate::install::bottle::write_receipt(formula, &install_dir)?;
+    crate::install::bottle::write_receipt(formula, &install_dir, "source")?;
     debug!(
         "Build completed, temporary directory {} will be cleaned up.",
         build_dir.display()

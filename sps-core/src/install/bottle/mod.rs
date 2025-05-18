@@ -162,7 +162,11 @@ pub fn get_formula_cellar_path(formula: &Formula, config: &Config) -> PathBuf {
 }
 
 // --- write_receipt (unchanged) ---
-pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
+pub fn write_receipt(
+    formula: &Formula,
+    install_dir: &Path,
+    installation_type: &str, // "bottle" or "source"
+) -> Result<()> {
     let receipt_path = install_dir.join("INSTALL_RECEIPT.json");
     let receipt_file = File::create(&receipt_path);
     let mut receipt_file = match receipt_file {
@@ -198,6 +202,7 @@ pub fn write_receipt(formula: &Formula, install_dir: &Path) -> Result<()> {
             "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
             "platform_tag": get_current_platform(),
          },
+        "installation_type": installation_type,
         "resources_installed": resources_installed,
     });
 

@@ -1,11 +1,12 @@
-// sps/src/cli/planner.rs
+// sps/src/pipeline/planner.rs
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf}; // Added Path
 use std::sync::Arc;
 
 use colored::Colorize;
 use sps_common::cache::Cache;
-use sps_common::config::Config;
+use sps_common::config::Config; /* Needed for home_dir in get_previous_installation_type if
+                                  * it were more complex */
 use sps_common::dependency::resolver::{
     DependencyResolver, PerTargetInstallPreferences, ResolutionContext, ResolutionStatus,
     ResolvedGraph,
@@ -61,6 +62,43 @@ impl<'a> OperationPlanner<'a> {
             cache,
             flags,
             event_tx,
+        }
+    }
+
+    // Helper to read the installation type from the previous version's receipt
+    fn get_previous_installation_type(&self, old_keg_path: &Path) -> Option<String> {
+        let receipt_path = old_keg_path.join("INSTALL_RECEIPT.json");
+        if !receipt_path.is_file() {
+            tracing::debug!(
+                "No INSTALL_RECEIPT.json found at {} for previous version.",
+                receipt_path.display()
+            );
+            return None;
+        }
+
+        match std::fs::read_to_string(&receipt_path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json_value) => {
+                    let inst_type = json_value
+                        .get("installation_type")
+                        .and_then(|it| it.as_str())
+                        .map(String::from);
+                    tracing::debug!(
+                        "Previous installation type for {}: {:?}",
+                        old_keg_path.display(),
+                        inst_type
+                    );
+                    inst_type
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse INSTALL_RECEIPT.json at {}: {}. Cannot determine previous installation type.", receipt_path.display(), e);
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to read INSTALL_RECEIPT.json at {}: {}. Cannot determine previous installation type.", receipt_path.display(), e);
+                None
+            }
         }
     }
 
@@ -508,8 +546,9 @@ impl<'a> OperationPlanner<'a> {
                 include_test: false,
                 skip_recommended: self.flags.skip_recommended,
                 initial_target_preferences: &per_target_prefs,
-                build_all_from_source: self.flags.build_from_source,
-                cascade_source_preference_to_dependencies: true,
+                build_all_from_source: self.flags.build_from_source, /* This is the global flag
+                                                                      * for the op */
+                cascade_source_preference_to_dependencies: true, // Standard Homebrew behavior
                 has_bottle_for_current_platform:
                     sps_core::install::bottle::has_bottle_for_current_platform,
             };
@@ -541,21 +580,86 @@ impl<'a> OperationPlanner<'a> {
         for (name, (action, opt_def)) in &intermediate_plan.initial_ops {
             if intermediate_plan.processed_globally.contains(name.as_str()) {
                 continue;
-            } // Use as_str() for contains
+            }
             match opt_def {
                 Some(target_def) => {
-                    let is_source_build = match target_def {
-                        InstallTargetIdentifier::Formula(f) => {
-                            self.flags.build_from_source
-                                || !sps_core::install::bottle::has_bottle_for_current_platform(f)
+                    let is_source_build: bool; // Declare without initial assignment
+
+                    match target_def {
+                        InstallTargetIdentifier::Formula(new_formula_arc) => {
+                            if self.flags.build_from_source {
+                                // Global flag for the current sps command takes precedence
+                                is_source_build = true;
+                                debug!(
+                                    "User explicitly set --build-from-source for operation on '{}'. Planning source build.",
+                                    name
+                                );
+                            } else if let JobAction::Upgrade {
+                                old_install_path, ..
+                            } = action
+                            {
+                                // It's an upgrade, and user didn't force source for *this* sps
+                                // command. Check previous install
+                                // type.
+                                let previous_install_type =
+                                    self.get_previous_installation_type(old_install_path);
+                                if previous_install_type.as_deref() == Some("source") {
+                                    is_source_build = true; // Respect previous source install
+                                    debug!(
+                                        "Formula '{}' was previously installed from source. Upgrading from source.",
+                                        name
+                                    );
+                                } else {
+                                    // Previous was bottle or unknown. Decide based on new version's
+                                    // bottle availability.
+                                    is_source_build =
+                                        !sps_core::install::bottle::has_bottle_for_current_platform(
+                                            new_formula_arc,
+                                        );
+                                    if is_source_build {
+                                        debug!(
+                                            "Upgrading formula '{}': Previous was bottle/unknown, and new version has no bottle. Planning source build.",
+                                            name
+                                        );
+                                    } else {
+                                        debug!(
+                                            "Upgrading formula '{}': Previous was bottle/unknown, and new version has a bottle. Planning bottle upgrade.",
+                                            name
+                                        );
+                                    }
+                                }
+                            } else {
+                                // It's a fresh Install or Reinstall (and global --build-from-source
+                                // is false). Prefer bottle if
+                                // available.
+                                is_source_build =
+                                    !sps_core::install::bottle::has_bottle_for_current_platform(
+                                        new_formula_arc,
+                                    );
+                                if is_source_build {
+                                    // True if no bottle
+                                    debug!(
+                                        "Fresh install/reinstall of formula '{}': No bottle available (and no user --build-from-source). Planning source build.",
+                                        name
+                                    );
+                                } else {
+                                    debug!(
+                                        "Fresh install/reinstall of formula '{}': Bottle available (and no user --build-from-source). Planning bottle install.",
+                                        name
+                                    );
+                                }
+                            }
                         }
-                        InstallTargetIdentifier::Cask(_) => false,
-                    };
+                        InstallTargetIdentifier::Cask(_) => {
+                            is_source_build = false; // Casks are never built from source by sps
+                        }
+                    }
+
                     final_planned_jobs.push(PlannedJob {
                         target_id: name.clone(),
                         target_definition: target_def.clone(),
                         action: action.clone(),
-                        is_source_build, // Clone action
+                        is_source_build, // Use the determined value
                         use_private_store_source: intermediate_plan
                             .private_store_sources
                             .get(name)
@@ -588,17 +692,25 @@ impl<'a> OperationPlanner<'a> {
                     dep_detail.status,
                     ResolutionStatus::Missing | ResolutionStatus::Requested
                 ) {
-                    let is_source_build = self.flags.build_from_source
+                    // For NEW dependencies, the logic is simpler: global flag or bottle
+                    // availability. They don't have a "previous install type"
+                    // to consider.
+                    let is_source_build_for_dep = self.flags.build_from_source
                         || !sps_core::install::bottle::has_bottle_for_current_platform(
                             &dep_detail.formula,
                         );
+                    debug!(
+                        "Planning install for new dependency '{}'. Source build: {} (Global flag: {}, Bottle available: {})",
+                        dep_name, is_source_build_for_dep, self.flags.build_from_source, sps_core::install::bottle::has_bottle_for_current_platform(&dep_detail.formula)
+                    );
+
                     final_planned_jobs.push(PlannedJob {
                         target_id: dep_name.to_string(),
                         target_definition: InstallTargetIdentifier::Formula(
                             dep_detail.formula.clone(),
                         ),
-                        action: JobAction::Install,
-                        is_source_build,
+                        action: JobAction::Install, // New dependencies are always 'Install'
+                        is_source_build: is_source_build_for_dep,
                         use_private_store_source: None,
                     });
                 }
@@ -620,7 +732,7 @@ impl<'a> OperationPlanner<'a> {
                         target_id: cask_token.clone(),
                         target_definition: InstallTargetIdentifier::Cask(cask_arc.clone()),
                         action: JobAction::Install,
-                        is_source_build: false,
+                        is_source_build: false, // Casks are not source-built
                         use_private_store_source: intermediate_plan
                             .private_store_sources
                             .get(&cask_token)
@@ -669,7 +781,7 @@ fn sort_planned_jobs_by_dependency_order(jobs: &mut [PlannedJob], graph: &Resolv
         InstallTargetIdentifier::Formula(_) => formula_order
             .get(&job.target_id)
             .copied()
-            .unwrap_or(usize::MAX),
-        InstallTargetIdentifier::Cask(_) => usize::MAX,
+            .unwrap_or(usize::MAX), // Should always be found if it came from graph
+        InstallTargetIdentifier::Cask(_) => usize::MAX, // Casks after all formulas
     });
 }

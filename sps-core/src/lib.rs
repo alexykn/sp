@@ -6,6 +6,7 @@ pub mod check;
 pub mod install;
 pub mod pipeline;
 pub mod uninstall;
+pub mod upgrade; // New
 #[cfg(target_os = "macos")]
 pub mod utils; // New
                //pub mod utils;
