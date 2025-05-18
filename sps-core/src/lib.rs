@@ -2,6 +2,7 @@
 
 // Declare the top-level modules within the library crate
 pub mod build;
+pub mod install;
 pub mod installed;
 #[cfg(target_os = "macos")]
 pub mod macos;

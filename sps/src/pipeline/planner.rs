@@ -511,7 +511,7 @@ impl<'a> OperationPlanner<'a> {
                 build_all_from_source: self.flags.build_from_source,
                 cascade_source_preference_to_dependencies: true,
                 has_bottle_for_current_platform:
-                    sps_core::build::formula::has_bottle_for_current_platform,
+                    sps_core::install::bottle::has_bottle_for_current_platform,
             };
             let mut resolver = DependencyResolver::new(ctx);
             match resolver.resolve_targets(&targets_for_resolver) {
@@ -547,7 +547,7 @@ impl<'a> OperationPlanner<'a> {
                     let is_source_build = match target_def {
                         InstallTargetIdentifier::Formula(f) => {
                             self.flags.build_from_source
-                                || !sps_core::build::formula::has_bottle_for_current_platform(f)
+                                || !sps_core::install::bottle::has_bottle_for_current_platform(f)
                         }
                         InstallTargetIdentifier::Cask(_) => false,
                     };
@@ -589,7 +589,7 @@ impl<'a> OperationPlanner<'a> {
                     ResolutionStatus::Missing | ResolutionStatus::Requested
                 ) {
                     let is_source_build = self.flags.build_from_source
-                        || !sps_core::build::formula::has_bottle_for_current_platform(
+                        || !sps_core::install::bottle::has_bottle_for_current_platform(
                             &dep_detail.formula,
                         );
                     final_planned_jobs.push(PlannedJob {

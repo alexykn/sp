@@ -19,8 +19,8 @@ use sps_common::model::cask::{Cask, ZapActionDetail};
 use tracing::{debug, error, warn};
 use trash; // Removed ZapStanza
 
-use crate::build;
-use crate::build::cask::CaskInstallManifest;
+use crate::install;
+use crate::install::cask::CaskInstallManifest;
 use crate::installed::InstalledPackageInfo;
 
 lazy_static! {
@@ -46,7 +46,7 @@ pub fn uninstall_formula_artifacts(
         "Uninstalling Formula artifacts for {} version {}",
         info.name, info.version
     );
-    build::formula::link::unlink_formula_artifacts(&info.name, &info.version, config)?;
+    install::bottle::link::unlink_formula_artifacts(&info.name, &info.version, config)?;
     if info.path.exists() {
         debug!("Removing formula keg directory: {}", info.path.display());
         let use_sudo = true;
@@ -524,7 +524,7 @@ fn cleanup_private_store(
         let app_path = private_version_dir.join(app);
         if app_path.exists() || app_path.symlink_metadata().is_ok() {
             debug!("Removing app from private store: {}", app_path.display());
-            let _ = super::build::cask::helpers::remove_path_robustly(&app_path, config, false);
+            let _ = super::install::cask::helpers::remove_path_robustly(&app_path, config, false);
         }
     }
 
@@ -544,7 +544,7 @@ fn cleanup_private_store(
     }
 
     // Clean up empty parent directories
-    super::build::cask::helpers::cleanup_empty_parent_dirs_in_private_store(
+    super::install::cask::helpers::cleanup_empty_parent_dirs_in_private_store(
         &private_version_dir,
         &config.cask_store_dir(),
     );

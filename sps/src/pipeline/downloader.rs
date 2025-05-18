@@ -9,7 +9,7 @@ use sps_common::config::Config;
 use sps_common::error::{Result as SpsResult, SpsError};
 use sps_common::model::InstallTargetIdentifier;
 use sps_common::pipeline::{PipelineEvent, PlannedJob, WorkerJob};
-use sps_core::build;
+use sps_core::{build, install};
 use sps_net::UrlField;
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
@@ -92,7 +92,7 @@ impl<'a> DownloadCoordinator<'a> {
                 let display_url_for_event = match &current_planned_job.target_definition {
                     InstallTargetIdentifier::Formula(f) => {
                         if !current_planned_job.is_source_build {
-                            sps_core::build::formula::bottle::get_bottle_for_platform(f)
+                            sps_core::install::bottle::exec::get_bottle_for_platform(f)
                                 .map_or_else(|_| f.url.clone(), |(_, spec)| spec.url.clone())
                         } else {
                             f.url.clone()
@@ -135,9 +135,9 @@ impl<'a> DownloadCoordinator<'a> {
                     match &current_planned_job.target_definition {
                         InstallTargetIdentifier::Formula(f) => {
                             if current_planned_job.is_source_build {
-                                build::formula::source::download_source(f, &task_config).await
+                                build::compile::download_source(f, &task_config).await
                             } else {
-                                build::formula::bottle::download_bottle(
+                                install::bottle::exec::download_bottle(
                                     f,
                                     &task_config,
                                     &task_http_client,
@@ -146,7 +146,7 @@ impl<'a> DownloadCoordinator<'a> {
                             }
                         }
                         InstallTargetIdentifier::Cask(c) => {
-                            build::cask::download_cask(c, task_cache.as_ref()).await
+                            install::cask::download_cask(c, task_cache.as_ref()).await
                         }
                     };
 

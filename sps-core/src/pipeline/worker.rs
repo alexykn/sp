@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, instrument, warn};
 
 use crate::installed::{InstalledPackageInfo, PackageType as CorePackageType};
-use crate::{build, uninstall};
+use crate::{install, uninstall};
 
 pub(super) fn execute_sync_job(
     worker_job: WorkerJob,
@@ -112,7 +112,7 @@ fn do_execute_sync_steps(
                 });
                 let build_dep_paths: Vec<PathBuf> = vec![];
 
-                let build_future = build::formula::source::build_from_source(
+                let build_future = crate::build::compile::build_from_source(
                     &download_path,
                     formula,
                     config,
@@ -123,7 +123,7 @@ fn do_execute_sync_steps(
             } else {
                 debug!("[{}] Installing bottle...", job_request.target_id);
                 let installed_dir =
-                    build::formula::bottle::install_bottle(&download_path, formula, config)?;
+                    install::bottle::exec::install_bottle(&download_path, formula, config)?;
                 formula_installed_path = Some(installed_dir);
             }
         }
@@ -147,7 +147,7 @@ fn do_execute_sync_steps(
                             "Removing existing app at {}",
                             applications_app_path.display()
                         );
-                        let _ = build::cask::helpers::remove_path_robustly(
+                        let _ = install::cask::helpers::remove_path_robustly(
                             &applications_app_path,
                             config,
                             true,
@@ -214,7 +214,7 @@ fn do_execute_sync_steps(
                         job_request.target_id
                     );
                     // Always ensure is_installed=true when writing manifest after reinstall
-                    if let Err(e) = build::cask::write_cask_manifest(
+                    if let Err(e) = install::cask::write_cask_manifest(
                         cask,
                         &cask_version_path,
                         created_artifacts,
@@ -237,7 +237,7 @@ fn do_execute_sync_steps(
             } else {
                 debug!("[{}] Installing cask...", job_request.target_id);
                 // Always ensure is_installed=true when writing manifest after install
-                build::cask::install_cask(cask, &download_path, config, &job_request.action)?;
+                install::cask::install_cask(cask, &download_path, config, &job_request.action)?;
             }
         }
     };
@@ -261,7 +261,7 @@ fn do_execute_sync_steps(
             pkg_type: pipeline_pkg_type,
         });
 
-        build::formula::link::link_formula_artifacts(formula, installed_path, config)?;
+        install::bottle::link::link_formula_artifacts(formula, installed_path, config)?;
 
         debug!("[{}] Linking complete.", job_request.target_id);
     }

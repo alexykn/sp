@@ -9,7 +9,7 @@ use sps_common::error::{Result, SpsError};
 use sps_common::model::formula::FormulaDependencies;
 use tracing::debug;
 
-use crate::build::devtools;
+use crate::install::devtools;
 
 // Constants remain the same...
 const ENV_VARS_TO_REMOVE: &[&str] = &[
