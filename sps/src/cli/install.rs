@@ -9,7 +9,7 @@ use sps_common::error::Result;
 use tracing::instrument;
 
 // Import pipeline components from the new module
-use crate::cli::runner::{self, CommandType, PipelineFlags};
+use crate::pipeline::runner::{self, CommandType, PipelineFlags};
 
 // Keep the Args struct specific to 'install' if needed, or reuse a common one
 #[derive(Debug, Args)]

@@ -184,7 +184,7 @@ pub async fn download_bottle(
     Ok(bottle_cache_path)
 }
 
-pub(crate) fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
+pub fn get_bottle_for_platform(formula: &Formula) -> Result<(String, &BottleFileSpec)> {
     let stable_spec = formula.bottle.stable.as_ref().ok_or_else(|| {
         SpsError::Generic(format!(
             "Formula '{}' has no stable bottle specification.",

@@ -6,7 +6,7 @@ use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
 
-use crate::cli::runner::{self, CommandType, PipelineFlags};
+use crate::pipeline::runner::{self, CommandType, PipelineFlags};
 
 #[derive(Args, Debug)]
 pub struct ReinstallArgs {

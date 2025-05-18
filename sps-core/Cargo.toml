@@ -1,6 +1,6 @@
 [package]
 name = "sps-core"
-version = "0.1.41"
+version = "0.1.42"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Core library for the sps package manager"

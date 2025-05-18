@@ -16,6 +16,7 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::EnvFilter;
 
 mod cli;
+mod pipeline;
 // Correctly import InitArgs via the re-export in cli.rs or directly from its module
 use cli::{CliArgs, Command, InitArgs};
 
