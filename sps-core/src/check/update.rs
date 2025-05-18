@@ -11,7 +11,7 @@ use sps_common::model::InstallTargetIdentifier;
 use sps_net::api;
 use tracing::{debug, warn};
 
-use crate::installed::{InstalledPackageInfo, PackageType};
+use crate::check::installed::{InstalledPackageInfo, PackageType};
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {

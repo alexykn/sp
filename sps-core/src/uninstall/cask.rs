@@ -15,15 +15,15 @@ use trash; // This will be used by trash_path
 
 // Import helpers from the common module within the uninstall scope
 use super::common::{expand_tilde, is_safe_path, remove_filesystem_artifact};
+use crate::check::installed::InstalledPackageInfo;
 // Corrected import path if install::cask::helpers is where it lives now
 use crate::install::cask::helpers::{
     cleanup_empty_parent_dirs_in_private_store,
     remove_path_robustly as remove_path_robustly_from_install_helpers,
 };
 use crate::install::cask::CaskInstallManifest;
-use crate::installed::InstalledPackageInfo;
 #[cfg(target_os = "macos")]
-use crate::macos::applescript;
+use crate::utils::applescript;
 
 lazy_static! {
     static ref VALID_PKGID_RE: Regex = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();

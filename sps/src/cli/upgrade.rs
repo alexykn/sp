@@ -4,7 +4,7 @@ use clap::Args;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
-use sps_core::installed;
+use sps_core::check::installed;
 
 use crate::pipeline::runner::{self, CommandType, PipelineFlags};
 

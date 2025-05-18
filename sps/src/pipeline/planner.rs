@@ -15,8 +15,8 @@ use sps_common::formulary::Formulary;
 use sps_common::keg::KegRegistry;
 use sps_common::model::{Cask, InstallTargetIdentifier};
 use sps_common::pipeline::{JobAction, PipelineEvent, PlannedJob};
-use sps_core::installed::{self, InstalledPackageInfo, PackageType as CorePackageType};
-use sps_core::update_check::{self, UpdateInfo};
+use sps_core::check::installed::{self, InstalledPackageInfo, PackageType as CorePackageType};
+use sps_core::check::update::{self, UpdateInfo};
 use tokio::sync::broadcast;
 use tracing::debug;
 
@@ -281,7 +281,7 @@ impl<'a> OperationPlanner<'a> {
             return Ok(plan);
         }
 
-        match update_check::check_for_updates(&packages_to_check, &self.cache).await {
+        match update::check_for_updates(&packages_to_check, &self.cache).await {
             Ok(updates) => {
                 let update_map: HashMap<String, UpdateInfo> =
                     updates.into_iter().map(|u| (u.name.clone(), u)).collect();

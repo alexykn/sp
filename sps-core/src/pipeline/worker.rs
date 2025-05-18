@@ -12,7 +12,7 @@ use sps_common::pipeline::{JobAction, PipelineEvent, PipelinePackageType, Worker
 use tokio::sync::broadcast;
 use tracing::{debug, error, instrument, warn};
 
-use crate::installed::{InstalledPackageInfo, PackageType as CorePackageType};
+use crate::check::installed::{InstalledPackageInfo, PackageType as CorePackageType};
 use crate::{install, uninstall};
 
 pub(super) fn execute_sync_job(

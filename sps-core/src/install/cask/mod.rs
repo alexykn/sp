@@ -179,7 +179,7 @@ pub async fn download_cask(cask: &Cask, cache: &Cache) -> Result<PathBuf> {
     // --- Set quarantine xattr on the downloaded archive (macOS only) ---
     #[cfg(target_os = "macos")]
     {
-        if let Err(e) = crate::macos::xattr::set_quarantine_attribute(&cache_path, "sps-downloader")
+        if let Err(e) = crate::utils::xattr::set_quarantine_attribute(&cache_path, "sps-downloader")
         {
             tracing::warn!(
                 "Failed to set quarantine attribute on downloaded archive {}: {}. Extraction and installation will proceed, but Gatekeeper behavior might be affected.",

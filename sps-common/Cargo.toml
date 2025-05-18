@@ -19,3 +19,4 @@ thiserror = "2.0.12"
 reqwest = { version = "0.12.15", features = ["json", "stream", "blocking"] }
 object = { version = "0.36.7", features = ["read_core", "write_core", "macho"] }
 semver = { version = "1.0.26", features = ["serde"] }
+git2 = "0.20.2"

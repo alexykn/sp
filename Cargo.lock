@@ -4438,6 +4438,7 @@ version = "0.1.41"
 dependencies = [
  "bitflags 2.9.1",
  "directories",
+ "git2",
  "humantime",
  "object",
  "reqwest",

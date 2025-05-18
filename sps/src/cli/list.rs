@@ -8,8 +8,8 @@ use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::Result;
 use sps_common::formulary::Formulary;
-use sps_core::installed::{get_installed_packages, PackageType};
-use sps_core::InstalledPackageInfo;
+use sps_core::check::installed::{get_installed_packages, PackageType};
+use sps_core::check::InstalledPackageInfo;
 
 #[derive(Args, Debug)]
 pub struct List {
@@ -26,9 +26,9 @@ impl List {
         let installed = get_installed_packages(config).await?;
         // Only show the latest version for each name
         use std::collections::HashMap;
-        let mut formula_map: HashMap<&str, &sps_core::installed::InstalledPackageInfo> =
+        let mut formula_map: HashMap<&str, &sps_core::check::installed::InstalledPackageInfo> =
             HashMap::new();
-        let mut cask_map: HashMap<&str, &sps_core::installed::InstalledPackageInfo> =
+        let mut cask_map: HashMap<&str, &sps_core::check::installed::InstalledPackageInfo> =
             HashMap::new();
         for pkg in &installed {
             match pkg.pkg_type {
@@ -137,7 +137,7 @@ impl List {
 
     fn print_formulas_table(
         &self,
-        formulas: Vec<&sps_core::installed::InstalledPackageInfo>,
+        formulas: Vec<&sps_core::check::installed::InstalledPackageInfo>,
         config: &Config,
     ) {
         if formulas.is_empty() {
@@ -182,7 +182,7 @@ impl List {
 
     fn print_casks_table(
         &self,
-        casks: Vec<&sps_core::installed::InstalledPackageInfo>,
+        casks: Vec<&sps_core::check::installed::InstalledPackageInfo>,
         cache: Arc<Cache>,
     ) {
         if casks.is_empty() {

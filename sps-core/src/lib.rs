@@ -2,20 +2,18 @@
 
 // Declare the top-level modules within the library crate
 pub mod build;
+pub mod check;
 pub mod install;
-pub mod installed;
-#[cfg(target_os = "macos")]
-pub mod macos;
 pub mod pipeline;
-pub mod tap;
-pub mod uninstall; // New
-pub mod update_check; // New
-                      //pub mod utils;
+pub mod uninstall;
+#[cfg(target_os = "macos")]
+pub mod utils; // New
+               //pub mod utils;
 
 // Re-export key types for easier use by the CLI crate
 // Define InstallTargetIdentifier here or ensure it's public from cli/pipeline
 // For simplicity, let's define it here for now:
 
-pub use installed::{InstalledPackageInfo, PackageType}; // New
+// New
 pub use uninstall::UninstallOptions; // New
-pub use update_check::UpdateInfo; // New
+                                     // New

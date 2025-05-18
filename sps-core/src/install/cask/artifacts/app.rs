@@ -245,7 +245,7 @@ pub fn install_app_from_staged(
             "Setting/verifying quarantine on private store copy: {}",
             final_private_store_app_path.display()
         );
-        if let Err(e) = crate::macos::xattr::ensure_quarantine_attribute(
+        if let Err(e) = crate::utils::xattr::ensure_quarantine_attribute(
             &final_private_store_app_path,
             &cask.token,
         ) {

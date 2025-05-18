@@ -14,7 +14,7 @@ use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
 
 #[cfg(target_os = "macos")]
-use crate::macos::xattr;
+use crate::utils::xattr;
 
 pub(crate) fn infer_archive_root_dir(
     archive_path: &Path,

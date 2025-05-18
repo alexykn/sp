@@ -3,8 +3,8 @@ use sps_common::config::Config;
 use sps_common::error::{Result, SpsError};
 use tracing::{debug, error, warn};
 
+use crate::check::installed::InstalledPackageInfo;
 use crate::install; // For install::bottle::link
-use crate::installed::InstalledPackageInfo;
 use crate::uninstall::common::{remove_filesystem_artifact, UninstallOptions};
 
 pub fn uninstall_formula_artifacts(

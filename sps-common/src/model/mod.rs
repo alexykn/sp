@@ -5,6 +5,7 @@ use std::sync::Arc;
 pub mod artifact;
 pub mod cask;
 pub mod formula;
+pub mod tap;
 pub mod version;
 
 // Re-export
