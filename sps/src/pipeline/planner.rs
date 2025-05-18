@@ -395,9 +395,12 @@ impl<'a> OperationPlanner<'a> {
             let cask_arc = match cask_deps_map.get(&cask_token) {
                 Some(c) => c.clone(),
                 None => {
-                    match fetch_target_definitions(std::slice::from_ref(&cask_token), self.cache.clone())
-                        .await
-                        .remove(&cask_token)
+                    match fetch_target_definitions(
+                        std::slice::from_ref(&cask_token),
+                        self.cache.clone(),
+                    )
+                    .await
+                    .remove(&cask_token)
                     {
                         Some(Ok(InstallTargetIdentifier::Cask(c))) => {
                             cask_deps_map.insert(cask_token.clone(), c.clone());
@@ -436,9 +439,12 @@ impl<'a> OperationPlanner<'a> {
                     {
                         continue;
                     }
-                    match fetch_target_definitions(std::slice::from_ref(formula_dep_name), self.cache.clone())
-                        .await
-                        .remove(formula_dep_name)
+                    match fetch_target_definitions(
+                        std::slice::from_ref(formula_dep_name),
+                        self.cache.clone(),
+                    )
+                    .await
+                    .remove(formula_dep_name)
                     {
                         Some(Ok(target_def @ InstallTargetIdentifier::Formula(_))) => {
                             formulae_for_resolution.insert(formula_dep_name.clone(), target_def);
