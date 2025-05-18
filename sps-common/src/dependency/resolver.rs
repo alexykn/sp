@@ -99,7 +99,7 @@ impl<'a> DependencyResolver<'a> {
         is_initial_target: bool,
         requesting_parent_strategy: Option<NodeInstallStrategy>,
     ) -> NodeInstallStrategy {
-        // 1. Per-target user preference
+        // ── 1. Per‑target overrides ────────────────────────────────────────────────
         if is_initial_target {
             if self
                 .context
@@ -107,10 +107,6 @@ impl<'a> DependencyResolver<'a> {
                 .force_source_build_targets
                 .contains(formula_name)
             {
-                debug!(
-                    "Strategy for initial target '{}': SourceOnly (user-forced for this target)",
-                    formula_name
-                );
                 return NodeInstallStrategy::SourceOnly;
             }
             if self
@@ -119,61 +115,45 @@ impl<'a> DependencyResolver<'a> {
                 .force_bottle_only_targets
                 .contains(formula_name)
             {
-                debug!(
-                    "Strategy for initial target '{}': BottleOrFail (user-forced for this target)",
-                    formula_name
-                );
-                if !(self.context.has_bottle_for_current_platform)(formula_arc) {
-                    warn!(
-                        "User forced bottle for '{}', but no bottle is available.",
-                        formula_name
-                    );
-                }
                 return NodeInstallStrategy::BottleOrFail;
             }
         }
-        // 2. Global build-from-source
+
+        // ── 2. Global --build‑from‑source flag ─────────────────────────────────────
         if self.context.build_all_from_source {
-            debug!(
-                "Strategy for '{}': SourceOnly (global --build-from-source active)",
-                formula_name
-            );
             return NodeInstallStrategy::SourceOnly;
         }
-        // 3. Cascade from parent
-        if self.context.cascade_source_preference_to_dependencies {
-            if let Some(NodeInstallStrategy::SourceOnly) = requesting_parent_strategy {
-                debug!(
-                    "Strategy for '{}': SourceOnly (cascaded from source-built parent)",
-                    formula_name
-                );
-                return NodeInstallStrategy::SourceOnly;
-            }
+
+        // ── 3. Cascade rules from parent ───────────────────────────────────────────
+        if self.context.cascade_source_preference_to_dependencies
+            && matches!(
+                requesting_parent_strategy,
+                Some(NodeInstallStrategy::SourceOnly)
+            )
+        {
+            return NodeInstallStrategy::SourceOnly;
         }
-        // 4. Cascade BottleOrFail from parent
-        if let Some(NodeInstallStrategy::BottleOrFail) = requesting_parent_strategy {
-            debug!(
-                "Strategy for '{}' (dependency of BottleOrFail parent): BottleOrFail (cascaded)",
-                formula_name
-            );
+        if matches!(
+            requesting_parent_strategy,
+            Some(NodeInstallStrategy::BottleOrFail)
+        ) {
             return NodeInstallStrategy::BottleOrFail;
         }
-        // 5. Default: bottle if available, else source
-        let determined_strategy = if (self.context.has_bottle_for_current_platform)(formula_arc) {
+
+        // ── 4. Default heuristic: bottle if we have one, else build ───────────────
+        let strategy = if (self.context.has_bottle_for_current_platform)(formula_arc) {
             NodeInstallStrategy::BottlePreferred
         } else {
             NodeInstallStrategy::SourceOnly
         };
 
         debug!(
-            "Strategy for '{}': {:?} (InitialTarget: {}, ParentStrategy: {:?}, BottleAvailable: {})",
-            formula_name,
-            determined_strategy,
-            is_initial_target,
+            "Install strategy for '{formula_name}': {:?} (initial_target={is_initial_target}, parent={:?}, bottle_available={})",
+            strategy,
             requesting_parent_strategy,
             (self.context.has_bottle_for_current_platform)(formula_arc)
         );
-        determined_strategy
+        strategy
     }
 
     pub fn resolve_targets(&mut self, targets: &[String]) -> Result<ResolvedGraph> {
@@ -323,10 +303,23 @@ impl<'a> DependencyResolver<'a> {
 
         // -------- if we have a previous entry, maybe promote status / tags -----------------
         if let Some(existing) = self.resolution_details.get_mut(name) {
+            // ─────────────────────────────────────────────────────────────────────
+            // PROMOTION RULES
+            //
+            // A node can be reached through multiple edges in the graph.  Each time
+            // it is revisited we may need to *promote* its ResolutionStatus or merge
+            // DependencyTag bits so that the strictest requirements win:
+            //
+            //   Installed  >  Requested  >  Missing  >  SkippedOptional
+            //
+            // Tags are OR‑combined so BUILD / RUNTIME / OPTIONAL flags accumulate.
+            // Without these promotions an edge marked OPTIONAL could suppress the
+            // installation later required by a hard RUNTIME edge.
+            // ─────────────────────────────────────────────────────────────────────
+            // status promotion rules -------------------------------------------------------
             let original_status = existing.status;
             let original_tags = existing.accumulated_tags;
 
-            // status promotion rules -------------------------------------------------------
             let mut new_status = original_status;
             if is_initial_target && new_status == ResolutionStatus::Missing {
                 new_status = ResolutionStatus::Requested;
@@ -630,6 +623,42 @@ impl<'a> DependencyResolver<'a> {
                 )
             })
             .count();
+
+        #[cfg(debug_assertions)]
+        {
+            use std::collections::HashMap;
+            // map formula name → index in install_plan
+            let index_map: HashMap<&str, usize> = install_plan
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (d.formula.name(), i))
+                .collect();
+
+            for (parent_name, parent_rd) in &relevant_nodes_map {
+                if let Ok(edges) = parent_rd.formula.dependencies() {
+                    for edge in edges {
+                        let child = &edge.name;
+                        if relevant_nodes_map.contains_key(child)
+                            && self.context.should_process_dependency_edge(
+                                &parent_rd.formula,
+                                edge.tags,
+                                parent_rd.determined_install_strategy,
+                            )
+                        {
+                            if let (Some(&p_idx), Some(&c_idx)) = (
+                                index_map.get(parent_name.as_str()),
+                                index_map.get(child.as_str()),
+                            ) {
+                                debug_assert!(
+                                    p_idx > c_idx,
+                                    "Topological order violation: parent '{parent_name}' appears before child '{child}'"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if install_plan.len() != expected_installable_count && expected_installable_count > 0 {
             error!(
