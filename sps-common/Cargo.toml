@@ -1,6 +1,6 @@
 [package]
 name = "sps-common"
-version = "0.1.43"
+version = "0.1.44"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Shared utilities for the sps package manager"
