@@ -1,5 +1,4 @@
 // sps/src/main.rs
-use std::path::PathBuf;
 use std::process::{self}; // StdCommand is used
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -8,7 +7,7 @@ use std::{env, fs};
 use clap::Parser;
 use colored::Colorize;
 use sps_common::cache::Cache;
-use sps_common::config::{Config, SPS_ROOT}; // Import SPS_ROOT const
+use sps_common::config::Config;
 use sps_common::error::{Result as spResult, SpsError};
 use tracing::level_filters::LevelFilter;
 use tracing::{debug, error, warn}; // Import all necessary tracing macros
@@ -34,9 +33,16 @@ async fn run_init_command(init_args: &InitArgs, verbose_level: u8) -> spResult<(
         .without_time()
         .try_init();
 
+    let initial_config_for_path = Config::load().map_err(|e| {
+        // Handle error if even basic config loading fails for path determination
+        SpsError::Config(format!(
+            "Could not determine sps_root for init (config load failed): {e}"
+        ))
+    })?;
+
     // Create a minimal Config struct, primarily for sps_root() and derived paths.
     let temp_config_for_init = Config {
-        sps_root: PathBuf::from(SPS_ROOT), // Uses the imported pub const
+        sps_root: initial_config_for_path.sps_root().to_path_buf(),
         api_base_url: "https://formulae.brew.sh/api".to_string(),
         artifact_domain: None,
         docker_registry_token: None,
@@ -54,7 +60,6 @@ async fn main() -> spResult<()> {
     if let Command::Init(ref init_args_ref) = cli_args.command {
         match run_init_command(init_args_ref, cli_args.verbose).await {
             Ok(_) => {
-                // Message moved to InitArgs::run for better context after sudo operations
                 return Ok(());
             }
             Err(e) => {

@@ -7,8 +7,8 @@ use tracing::debug;
 
 use super::error::Result; // Assuming SpsResult is Result from super::error
 
-// Make SPS_ROOT public
-pub const SPS_ROOT: &str = "/opt/sps";
+// This constant will serve as a fallback if HOMEBREW_PREFIX is not set or is empty.
+const DEFAULT_FALLBACK_SPS_ROOT: &str = "/opt/homebrew";
 const SPS_ROOT_MARKER_FILENAME: &str = ".sps_root_v1";
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,20 @@ pub struct Config {
 impl Config {
     pub fn load() -> Result<Self> {
         debug!("Loading sps configuration");
-        let sps_root_path = PathBuf::from(SPS_ROOT);
+
+        // Try to get SPS_ROOT from HOMEBREW_PREFIX environment variable.
+        // Fallback to DEFAULT_FALLBACK_SPS_ROOT if not set or empty.
+        let sps_root_str = env::var("HOMEBREW_PREFIX").ok().filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                debug!(
+                    "HOMEBREW_PREFIX environment variable not set or empty, falling back to default: {}",
+                    DEFAULT_FALLBACK_SPS_ROOT
+                );
+                DEFAULT_FALLBACK_SPS_ROOT.to_string()
+            });
+
+        let sps_root_path = PathBuf::from(&sps_root_str);
+        debug!("Effective SPS_ROOT set to: {}", sps_root_path.display());
 
         let api_base_url = "https://formulae.brew.sh/api".to_string();
 
@@ -53,15 +66,15 @@ impl Config {
     }
 
     pub fn cellar_dir(&self) -> PathBuf {
-        self.sps_root.join("cellar")
+        self.sps_root.join("Cellar") // Changed from "cellar" to "Cellar" to match Homebrew
     }
 
     pub fn cask_room_dir(&self) -> PathBuf {
-        self.sps_root.join("cask_room")
+        self.sps_root.join("Caskroom") // Changed from "cask_room" to "Caskroom"
     }
 
     pub fn cask_store_dir(&self) -> PathBuf {
-        self.sps_root.join("cask_store")
+        self.sps_root.join("sps_cask_store")
     }
 
     pub fn opt_dir(&self) -> PathBuf {
@@ -69,15 +82,15 @@ impl Config {
     }
 
     pub fn taps_dir(&self) -> PathBuf {
-        self.sps_root.join("taps")
+        self.sps_root.join("Library/Taps") // Adjusted to match Homebrew structure
     }
 
     pub fn cache_dir(&self) -> PathBuf {
-        self.sps_root.join("cache")
+        self.sps_root.join("sps_cache")
     }
 
     pub fn logs_dir(&self) -> PathBuf {
-        self.sps_root.join("logs")
+        self.sps_root.join("sps_logs")
     }
 
     pub fn tmp_dir(&self) -> PathBuf {
@@ -151,8 +164,8 @@ impl Config {
         if parts.len() == 2 {
             Some(
                 self.taps_dir()
-                    .join(parts[0])
-                    .join(format!("homebrew-{}", parts[1])),
+                    .join(parts[0]) // user, e.g., homebrew
+                    .join(format!("homebrew-{}", parts[1])), // repo, e.g., homebrew-core
             )
         } else {
             None
@@ -162,11 +175,12 @@ impl Config {
     pub fn get_formula_path_from_tap(&self, tap_name: &str, formula_name: &str) -> Option<PathBuf> {
         self.get_tap_path(tap_name).and_then(|tap_path| {
             let json_path = tap_path
-                .join("Formula")
+                .join("Formula") // Standard Homebrew tap structure
                 .join(format!("{formula_name}.json"));
             if json_path.exists() {
                 return Some(json_path);
             }
+            // Fallback to .rb for completeness, though API primarily gives JSON
             let rb_path = tap_path.join("Formula").join(format!("{formula_name}.rb"));
             if rb_path.exists() {
                 return Some(rb_path);
@@ -182,8 +196,6 @@ impl Default for Config {
     }
 }
 
-// This function might be redundant if Config::default() is used,
-// but keeping it if it's called directly elsewhere.
 pub fn load_config() -> Result<Config> {
     Config::load()
 }

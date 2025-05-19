@@ -86,14 +86,5 @@ pub async fn upgrade_cask_package(
     })?;
     debug!("Successfully installed new version of cask {}", cask.token);
 
-    // Note: The old Caskroom version directory (e.g., /opt/sps/cask_room/foo/1.0)
-    // is typically left behind after a soft uninstall + new install.
-    // A separate `sps cleanup` command would be responsible for removing such old versions.
-    // If immediate removal of the old Caskroom dir is desired here,
-    // `uninstall::cask::zap_cask_artifacts` could be selectively used,
-    // or a direct call to `remove_filesystem_artifact` on `old_install_info.path`
-    // after ensuring all necessary data has been migrated by `install_app_from_staged`.
-    // For now, we stick to the soft-uninstall + new install pattern.
-
     Ok(())
 }
