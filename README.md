@@ -5,8 +5,8 @@
 > sps is experimental, under heavy development, and may be unstable. Use at your own risk!
 >
 > **BREAKING CHANGE:**
-> sps now installs all content into **/opt/sps** instead of Homebrew’s directories.  
-> Run `sps init` to bootstrap your environment and add `/opt/sps/bin` to your PATH.
+> Reverted back to using shared $HOMEBREW_PREFIX (/opt/homebrew/ fallback) for the root because a dedicated prefix breaks some formulae and bottle installs.
+> Run `sps init` to bootstrap your environment (unchanged).
 >
 > Uninstalling a cask with brew then reinstalling it with sps will have it installed with slightly different paths, your user settings etc. will not be migrated automatically.
 
