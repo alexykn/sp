@@ -1,3 +1,4 @@
+// sps-core/src/pipeline/worker.rs
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -5,11 +6,10 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
+use sps_common::dependency::DependencyExt;
 use sps_common::error::{Result as SpsResult, SpsError};
-// ADD THIS IMPORT:
+use sps_common::keg::KegRegistry;
 use sps_common::model::formula::FormulaDependencies;
-// REMOVED: use sps_common::model::formula::FormulaDependencies; // This was in your provided
-// code but not needed if using fully qualified paths or if already in prelude
 use sps_common::model::InstallTargetIdentifier;
 use sps_common::pipeline::{JobAction, PipelineEvent, PipelinePackageType, WorkerJob};
 use tokio::sync::broadcast;
@@ -37,13 +37,12 @@ pub(super) fn execute_sync_job(
 fn do_execute_sync_steps(
     worker_job: WorkerJob,
     config: &Config,
-    _cache: Arc<Cache>,
+    _cache: Arc<Cache>, // Marked as unused if cache is not directly used in this function body
     event_tx: broadcast::Sender<PipelineEvent>,
 ) -> SpsResult<PipelinePackageType> {
     let job_request = worker_job.request;
     let download_path = worker_job.download_path;
     let is_source_from_private_store = worker_job.is_source_from_private_store;
-    // let http_client_for_upgrade = Arc::new(reqwest::Client::new()); // Defined below when needed
 
     let (core_pkg_type, pipeline_pkg_type) = match &job_request.target_definition {
         InstallTargetIdentifier::Formula(_) => {
@@ -51,6 +50,53 @@ fn do_execute_sync_steps(
         }
         InstallTargetIdentifier::Cask(_) => (CorePackageType::Cask, PipelinePackageType::Cask),
     };
+
+    // Check dependencies before proceeding with formula install/upgrade
+    if let InstallTargetIdentifier::Formula(formula_arc) = &job_request.target_definition {
+        if matches!(job_request.action, JobAction::Install)
+            || matches!(job_request.action, JobAction::Upgrade { .. })
+        {
+            debug!(
+                "[{}] Checking installed status of formula dependencies before proceeding...",
+                job_request.target_id
+            );
+            let keg_registry = KegRegistry::new(config.clone()); // Create KegRegistry instance
+            match formula_arc.dependencies() {
+                Ok(dependencies) => {
+                    // Use the .runtime() method from DependencyExt
+                    for dep in dependencies.runtime() {
+                        // Filters for runtime dependencies
+                        if keg_registry.get_installed_keg(&dep.name)?.is_none() {
+                            let error_msg = format!(
+                                "Runtime dependency '{}' for formula '{}' is not installed. Aborting operation for '{}'.",
+                                dep.name, job_request.target_id, job_request.target_id
+                            );
+                            error!("{}", error_msg);
+                            return Err(SpsError::DependencyError(error_msg));
+                        } else {
+                            debug!(
+                                "[{}] Runtime dependency '{}' confirmed installed.",
+                                job_request.target_id, dep.name
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    // This error means the Formula struct itself couldn't provide its deps list
+                    let error_msg = format!(
+                        "Could not retrieve dependency list for formula '{}': {}. Aborting operation.",
+                        job_request.target_id, e
+                    );
+                    error!("{}", error_msg);
+                    return Err(SpsError::DependencyError(error_msg));
+                }
+            }
+            debug!(
+                "[{}] All required formula dependencies appear to be installed.",
+                job_request.target_id
+            );
+        }
+    }
 
     let mut formula_installed_path: Option<PathBuf> = None;
 
@@ -72,15 +118,14 @@ fn do_execute_sync_steps(
 
             match &job_request.target_definition {
                 InstallTargetIdentifier::Formula(formula) => {
-                    // formula is &Arc<Formula>
                     let http_client_for_bottle_upgrade = Arc::new(reqwest::Client::new());
                     let installed_path = if job_request.is_source_build {
                         let _ = event_tx.send(PipelineEvent::BuildStarted {
                             target_id: job_request.target_id.clone(),
                         });
-                        let all_dep_paths = Vec::new();
+                        let all_dep_paths = Vec::new(); // TODO: Populate this correctly if needed by upgrade_source_formula
                         block_on(upgrade::source::upgrade_source_formula(
-                            formula, // Pass &Arc<Formula>
+                            formula,
                             &download_path,
                             &old_info,
                             config,
@@ -88,7 +133,7 @@ fn do_execute_sync_steps(
                         ))?
                     } else {
                         block_on(upgrade::bottle::upgrade_bottle_formula(
-                            formula, // Pass &Arc<Formula>
+                            formula,
                             &download_path,
                             &old_info,
                             config,
@@ -98,9 +143,8 @@ fn do_execute_sync_steps(
                     formula_installed_path = Some(installed_path);
                 }
                 InstallTargetIdentifier::Cask(cask) => {
-                    // cask is &Arc<Cask>
                     block_on(upgrade::cask::upgrade_cask_package(
-                        cask, // Pass &Arc<Cask>
+                        cask,
                         &download_path,
                         &old_info,
                         config,
@@ -158,9 +202,6 @@ fn do_execute_sync_steps(
 
             match &job_request.target_definition {
                 InstallTargetIdentifier::Formula(formula) => {
-                    // formula is &Arc<Formula>
-                    // When calling install_prefix, formula is &Arc<Formula>.
-                    // The trait is on Formula, so deref the Arc.
                     let install_dir_base =
                         (**formula).install_prefix(config.cellar_dir().as_path())?;
                     if let Some(parent_dir) = install_dir_base.parent() {
@@ -172,11 +213,11 @@ fn do_execute_sync_steps(
                         let _ = event_tx.send(PipelineEvent::BuildStarted {
                             target_id: job_request.target_id.clone(),
                         });
-                        let build_dep_paths: Vec<PathBuf> = vec![];
+                        let build_dep_paths: Vec<PathBuf> = vec![]; // TODO: Populate this from ResolvedGraph
 
                         let build_future = build::compile::build_from_source(
                             &download_path,
-                            formula, // Pass &Arc<Formula>
+                            formula,
                             config,
                             &build_dep_paths,
                         );
@@ -185,12 +226,11 @@ fn do_execute_sync_steps(
                     } else {
                         debug!("[{}] Installing bottle...", job_request.target_id);
                         let installed_dir =
-                            install::bottle::exec::install_bottle(&download_path, formula, config)?; // Pass &Arc<Formula>
+                            install::bottle::exec::install_bottle(&download_path, formula, config)?;
                         formula_installed_path = Some(installed_dir);
                     }
                 }
                 InstallTargetIdentifier::Cask(cask) => {
-                    // cask is &Arc<Cask>
                     if is_source_from_private_store {
                         debug!(
                             "[{}] Reinstalling cask from private store...",
@@ -271,7 +311,7 @@ fn do_execute_sync_steps(
                                 job_request.target_id
                             );
                             if let Err(e) = install::cask::write_cask_manifest(
-                                cask, // Pass &Arc<Cask>
+                                cask,
                                 &cask_version_path,
                                 created_artifacts,
                             ) {
@@ -293,7 +333,7 @@ fn do_execute_sync_steps(
                     } else {
                         debug!("[{}] Installing cask...", job_request.target_id);
                         install::cask::install_cask(
-                            cask, // Pass &Arc<Cask>
+                            cask,
                             &download_path,
                             config,
                             &job_request.action,
@@ -315,7 +355,6 @@ fn do_execute_sync_steps(
     }
 
     if let (InstallTargetIdentifier::Formula(formula), Some(keg_path_for_linking)) =
-        // formula is &Arc<Formula>
         (&job_request.target_definition, &formula_installed_path)
     {
         debug!(
@@ -327,7 +366,6 @@ fn do_execute_sync_steps(
             target_id: job_request.target_id.clone(),
             pkg_type: pipeline_pkg_type,
         });
-        // Pass the dereferenced formula (&Formula) to link_formula_artifacts
         install::bottle::link::link_formula_artifacts(formula, keg_path_for_linking, config)?;
         debug!(
             "[{}] Linking complete for formula {}.",

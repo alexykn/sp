@@ -1,15 +1,16 @@
-// ===== sps-core/src/build/extract.rs =====
-
+// Path: sps-core/src/install/extract.rs
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek};
+#[cfg(unix)]
+use std::os::unix::fs as unix_fs;
 use std::path::{Component, Path, PathBuf};
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use sps_common::error::{Result, SpsError};
-use tar::Archive;
-use tracing::{debug, error};
+use tar::{Archive, EntryType};
+use tracing::{debug, error, warn};
 use xz2::read::XzDecoder;
 use zip::read::ZipArchive;
 
@@ -230,9 +231,6 @@ fn infer_zip_root<R: Read + Seek>(
     }
 }
 
-// --- Begin revised extraction helpers ---
-
-/// Helper: Quarantine any .app bundles in a directory (macOS only)
 #[cfg(target_os = "macos")]
 pub fn quarantine_extracted_apps_in_stage(stage_dir: &Path, agent_name: &str) -> Result<()> {
     use std::fs;
@@ -264,8 +262,6 @@ pub fn quarantine_extracted_apps_in_stage(stage_dir: &Path, agent_name: &str) ->
     Ok(())
 }
 
-/// Extract an archive file (zip/tar/tar.gz/...) to a target directory, stripping a number of
-/// leading path components.
 pub fn extract_archive(
     archive_path: &Path,
     target_dir: &Path,
@@ -319,22 +315,29 @@ pub fn extract_archive(
             archive_path.display()
         ))),
     };
-    // After extraction, quarantine any .app bundles in the stage (macOS only)
     #[cfg(target_os = "macos")]
     {
-        if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-extractor") {
-            tracing::warn!(
-                "Error during post-extraction quarantine scan for {}: {}",
-                archive_path.display(),
-                e
-            );
+        if result.is_ok() {
+            // Only quarantine if main extraction was successful
+            if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-extractor") {
+                tracing::warn!(
+                    "Error during post-extraction quarantine scan for {}: {}",
+                    archive_path.display(),
+                    e
+                );
+            }
         }
     }
     result
 }
 
-/// Extract a tar archive (possibly decompressed) to a target directory, stripping leading path
-/// components.
+/// Represents a hardlink operation that was deferred.
+#[cfg(unix)]
+struct DeferredHardLink {
+    link_path_in_archive: PathBuf,
+    target_name_in_archive: PathBuf,
+}
+
 fn extract_tar_archive<R: Read>(
     reader: R,
     target_dir: &Path,
@@ -344,12 +347,16 @@ fn extract_tar_archive<R: Read>(
     let mut archive = Archive::new(reader);
     archive.set_preserve_permissions(true);
     archive.set_unpack_xattrs(true);
-    archive.set_overwrite(false);
+    archive.set_overwrite(true);
 
     debug!(
         "Starting TAR extraction for {}",
         archive_path_for_log.display()
     );
+
+    #[cfg(unix)]
+    let mut deferred_hardlinks: Vec<DeferredHardLink> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
 
     for entry_result in archive.entries()? {
         let mut entry = entry_result.map_err(|e| {
@@ -360,7 +367,7 @@ fn extract_tar_archive<R: Read>(
             ))
         })?;
 
-        let original_path: PathBuf = entry
+        let original_path_in_archive: PathBuf = entry
             .path()
             .map_err(|e| {
                 SpsError::Generic(format!(
@@ -371,58 +378,60 @@ fn extract_tar_archive<R: Read>(
             })?
             .into_owned();
 
-        let stripped: Vec<_> = original_path.components().skip(strip_components).collect();
-        if stripped.is_empty() {
+        let stripped_components_iter: Vec<Component<'_>> = original_path_in_archive
+            .components()
+            .skip(strip_components)
+            .collect();
+
+        if stripped_components_iter.is_empty() {
             debug!(
                 "Skipping entry due to strip_components: {:?}",
-                original_path
+                original_path_in_archive
             );
             continue;
         }
 
-        let mut target_path = target_dir.to_path_buf();
-        for comp in stripped {
+        let mut final_target_path_on_disk = target_dir.to_path_buf();
+        for comp in stripped_components_iter {
             match comp {
-                Component::Normal(p) => target_path.push(p),
+                Component::Normal(p) => final_target_path_on_disk.push(p),
                 Component::CurDir => {}
                 Component::ParentDir => {
-                    error!(
+                    let msg = format!(
                         "Unsafe '..' in TAR path {} after stripping in {}",
-                        original_path.display(),
+                        original_path_in_archive.display(),
                         archive_path_for_log.display()
                     );
-                    return Err(SpsError::Generic(format!(
-                        "Unsafe '..' component in {}",
-                        original_path.display()
-                    )));
+                    error!("{}", msg);
+                    errors.push(msg);
+                    continue;
                 }
                 Component::Prefix(_) | Component::RootDir => {
-                    error!(
+                    let msg = format!(
                         "Disallowed component {:?} in TAR path {}",
                         comp,
-                        original_path.display()
+                        original_path_in_archive.display()
                     );
-                    return Err(SpsError::Generic(format!(
-                        "Disallowed component in {}",
-                        original_path.display()
-                    )));
+                    error!("{}", msg);
+                    errors.push(msg);
+                    continue;
                 }
             }
         }
-        if !target_path.starts_with(target_dir) {
-            error!(
+
+        if !final_target_path_on_disk.starts_with(target_dir) {
+            let msg = format!(
                 "Path traversal {} -> {} detected in {}",
-                original_path.display(),
-                target_path.display(),
+                original_path_in_archive.display(),
+                final_target_path_on_disk.display(),
                 archive_path_for_log.display()
             );
-            return Err(SpsError::Generic(format!(
-                "Path traversal detected in {}",
-                archive_path_for_log.display()
-            )));
+            error!("{}", msg);
+            errors.push(msg);
+            continue;
         }
 
-        if let Some(parent) = target_path.parent() {
+        if let Some(parent) = final_target_path_on_disk.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| {
                     SpsError::Io(std::sync::Arc::new(io::Error::new(
@@ -433,33 +442,160 @@ fn extract_tar_archive<R: Read>(
             }
         }
 
-        match entry.unpack(&target_path) {
-            Ok(_) => debug!("Unpacked TAR entry to: {}", target_path.display()),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+        #[cfg(unix)]
+        if entry.header().entry_type() == EntryType::Link {
+            if let Ok(Some(link_name_in_archive)) = entry.link_name() {
+                let deferred_link = DeferredHardLink {
+                    link_path_in_archive: original_path_in_archive.clone(),
+                    target_name_in_archive: link_name_in_archive.into_owned(),
+                };
                 debug!(
-                    "Entry exists, skipping unpack {}: {}",
-                    target_path.display(),
-                    e
+                    "Deferring hardlink: archive path '{}' -> archive target '{}'",
+                    original_path_in_archive.display(),
+                    deferred_link.target_name_in_archive.display()
                 );
+                deferred_hardlinks.push(deferred_link);
+                continue;
+            } else {
+                let msg = format!(
+                    "Hardlink entry '{}' in {} has no link target name.",
+                    original_path_in_archive.display(),
+                    archive_path_for_log.display()
+                );
+                warn!("{}", msg);
+                errors.push(msg);
+                continue;
             }
+        }
+
+        match entry.unpack(&final_target_path_on_disk) {
+            Ok(_) => debug!(
+                "Unpacked TAR entry to: {}",
+                final_target_path_on_disk.display()
+            ),
             Err(e) => {
-                error!(
-                    "Failed to unpack {:?} to {}: {}",
-                    original_path,
-                    target_path.display(),
-                    e
-                );
-                return Err(SpsError::Generic(format!(
-                    "Failed unpack {original_path:?}: {e}"
-                )));
+                if e.kind() != io::ErrorKind::AlreadyExists {
+                    let msg = format!(
+                        "Failed to unpack entry {:?} to {}: {}. Entry type: {:?}",
+                        original_path_in_archive,
+                        final_target_path_on_disk.display(),
+                        e,
+                        entry.header().entry_type()
+                    );
+                    error!("{}", msg);
+                    errors.push(msg);
+                } else {
+                    debug!("Entry already exists at {}, skipping unpack (tar crate overwrite=true handles this).", final_target_path_on_disk.display());
+                }
             }
         }
     }
+
+    #[cfg(unix)]
+    for deferred in deferred_hardlinks {
+        let mut disk_link_path = target_dir.to_path_buf();
+        for comp in deferred
+            .link_path_in_archive
+            .components()
+            .skip(strip_components)
+        {
+            if let Component::Normal(p) = comp {
+                disk_link_path.push(p);
+            }
+            // Other components should have been caught by safety checks above
+        }
+
+        let mut disk_target_path = target_dir.to_path_buf();
+        // The link_name_in_archive is relative to the archive root *before* stripping.
+        // We need to apply stripping to it as well to find its final disk location.
+        for comp in deferred
+            .target_name_in_archive
+            .components()
+            .skip(strip_components)
+        {
+            if let Component::Normal(p) = comp {
+                disk_target_path.push(p);
+            }
+        }
+
+        if !disk_target_path.starts_with(target_dir) || !disk_link_path.starts_with(target_dir) {
+            let msg = format!("Skipping deferred hardlink due to path traversal attempt: link '{}' -> target '{}'", disk_link_path.display(), disk_target_path.display());
+            error!("{}", msg);
+            errors.push(msg);
+            continue;
+        }
+
+        debug!(
+            "Attempting deferred hardlink: disk link path '{}' -> disk target path '{}'",
+            disk_link_path.display(),
+            disk_target_path.display()
+        );
+
+        if disk_target_path.exists() {
+            if let Some(parent) = disk_link_path.parent() {
+                if !parent.exists() {
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        let msg = format!(
+                            "Failed to create parent directory for deferred hardlink {}: {}",
+                            disk_link_path.display(),
+                            e
+                        );
+                        error!("{}", msg);
+                        errors.push(msg);
+                        continue;
+                    }
+                }
+            }
+
+            if disk_link_path.symlink_metadata().is_ok() {
+                // Check if something (file or symlink) exists at the link creation spot
+                if let Err(e) = fs::remove_file(&disk_link_path) {
+                    // Attempt to remove it
+                    warn!("Could not remove existing file/symlink at hardlink destination {}: {}. Hardlink creation may fail.", disk_link_path.display(), e);
+                }
+            }
+
+            if let Err(e) = fs::hard_link(&disk_target_path, &disk_link_path) {
+                let msg = format!(
+                    "Failed to create deferred hardlink '{}' -> '{}': {}. Target exists: {}",
+                    disk_link_path.display(),
+                    disk_target_path.display(),
+                    e,
+                    disk_target_path.exists()
+                );
+                error!("{}", msg);
+                errors.push(msg);
+            } else {
+                debug!(
+                    "Successfully created deferred hardlink: '{}' -> '{}'",
+                    disk_link_path.display(),
+                    disk_target_path.display()
+                );
+            }
+        } else {
+            let msg = format!(
+                "Target '{}' for deferred hardlink '{}' does not exist. Hardlink not created.",
+                disk_target_path.display(),
+                disk_link_path.display()
+            );
+            error!("{}", msg);
+            errors.push(msg);
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(SpsError::InstallError(format!(
+            "Failed during TAR extraction for {} with {} error(s): {}",
+            archive_path_for_log.display(),
+            errors.len(),
+            errors.join("; ")
+        )));
+    }
+
     debug!(
         "Finished TAR extraction for {}",
         archive_path_for_log.display()
     );
-    // After extraction, quarantine any .app bundles in the stage (macOS only)
     #[cfg(target_os = "macos")]
     {
         if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-tar-extractor") {
@@ -473,7 +609,6 @@ fn extract_tar_archive<R: Read>(
     Ok(())
 }
 
-/// Extract a zip archive to a target directory, stripping leading path components.
 fn extract_zip_archive<R: Read + Seek>(
     reader: R,
     target_dir: &Path,
@@ -502,53 +637,66 @@ fn extract_zip_archive<R: Read + Seek>(
             ))
         })?;
 
-        let original = match file.enclosed_name() {
+        let original_path_in_archive = match file.enclosed_name() {
             Some(p) => p.to_path_buf(),
             None => {
-                debug!("Skipping unsafe ZIP name {}", file.name());
+                debug!("Skipping unsafe ZIP entry name {}", file.name());
                 continue;
             }
         };
-        let stripped: Vec<_> = original.components().skip(strip_components).collect();
-        if stripped.is_empty() {
-            debug!("Skipping ZIP {} due to strip", original.display());
+        let stripped_components_iter: Vec<Component<'_>> = original_path_in_archive
+            .components()
+            .skip(strip_components)
+            .collect();
+        if stripped_components_iter.is_empty() {
+            debug!(
+                "Skipping ZIP entry {} due to strip_components",
+                original_path_in_archive.display()
+            );
             continue;
         }
 
-        let mut target_path = target_dir.to_path_buf();
-        for comp in stripped {
+        let mut final_target_path_on_disk = target_dir.to_path_buf();
+        for comp in stripped_components_iter {
             match comp {
-                Component::Normal(p) => target_path.push(p),
+                Component::Normal(p) => final_target_path_on_disk.push(p),
                 Component::CurDir => {}
                 Component::ParentDir => {
-                    error!("Unsafe '..' in ZIP {} after strip", original.display());
+                    error!(
+                        "Unsafe '..' in ZIP path {} after strip_components",
+                        original_path_in_archive.display()
+                    );
                     return Err(SpsError::Generic(format!(
-                        "Unsafe '..' in ZIP {}",
-                        original.display()
+                        "Unsafe '..' component in ZIP path {}",
+                        original_path_in_archive.display()
                     )));
                 }
                 Component::Prefix(_) | Component::RootDir => {
-                    error!("Disallowed comp {:?} in ZIP {}", comp, original.display());
+                    error!(
+                        "Disallowed component {:?} in ZIP path {}",
+                        comp,
+                        original_path_in_archive.display()
+                    );
                     return Err(SpsError::Generic(format!(
-                        "Disallowed comp in ZIP {}",
-                        original.display()
+                        "Disallowed component in ZIP path {}",
+                        original_path_in_archive.display()
                     )));
                 }
             }
         }
-        if !target_path.starts_with(target_dir) {
+        if !final_target_path_on_disk.starts_with(target_dir) {
             error!(
-                "ZIP traversal {} -> {}",
-                original.display(),
-                target_path.display()
+                "ZIP path traversal detected: {} -> {}",
+                original_path_in_archive.display(),
+                final_target_path_on_disk.display()
             );
             return Err(SpsError::Generic(format!(
-                "ZIP traversal in {}",
+                "ZIP path traversal detected in {}",
                 archive_path_for_log.display()
             )));
         }
 
-        if let Some(parent) = target_path.parent() {
+        if let Some(parent) = final_target_path_on_disk.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| {
                     SpsError::Io(std::sync::Arc::new(io::Error::new(
@@ -560,28 +708,38 @@ fn extract_zip_archive<R: Read + Seek>(
         }
 
         if file.is_dir() {
-            if !target_path.exists() {
-                fs::create_dir_all(&target_path).map_err(|e| {
+            if !final_target_path_on_disk.exists() {
+                // Only create if it doesn't exist
+                fs::create_dir_all(&final_target_path_on_disk).map_err(|e| {
                     SpsError::Io(std::sync::Arc::new(io::Error::new(
                         e.kind(),
-                        format!("Failed create dir {}: {}", target_path.display(), e),
+                        format!(
+                            "Failed create dir {}: {}",
+                            final_target_path_on_disk.display(),
+                            e
+                        ),
                     )))
                 })?;
             }
         } else if file.is_symlink() {
             let mut buf = Vec::new();
             file.read_to_end(&mut buf)?;
-            let link_target = PathBuf::from(String::from_utf8_lossy(&buf).to_string());
+            let link_target_str = String::from_utf8_lossy(&buf).to_string();
+            let link_target_path = PathBuf::from(link_target_str);
+
             #[cfg(unix)]
             {
-                if target_path.exists() || target_path.symlink_metadata().is_ok() {
-                    let _ = fs::remove_file(&target_path);
+                if final_target_path_on_disk.exists()
+                    || final_target_path_on_disk.symlink_metadata().is_ok()
+                {
+                    let _ = fs::remove_file(&final_target_path_on_disk); // Attempt to remove
+                                                                         // existing item
                 }
-                std::os::unix::fs::symlink(&link_target, &target_path).map_err(|e| {
+                unix_fs::symlink(&link_target_path, &final_target_path_on_disk).map_err(|e| {
                     debug!(
                         "Failed to create symlink {} -> {}: {}",
-                        target_path.display(),
-                        link_target.display(),
+                        final_target_path_on_disk.display(),
+                        link_target_path.display(),
                         e
                     );
                     SpsError::Io(std::sync::Arc::new(e))
@@ -589,20 +747,31 @@ fn extract_zip_archive<R: Read + Seek>(
             }
             #[cfg(not(unix))]
             {
-                debug!(
+                warn!(
                     "Cannot create symlink on non-unix system: {} -> {}",
-                    target_path.display(),
-                    link_target.display()
+                    final_target_path_on_disk.display(),
+                    link_target_path.display()
                 );
             }
         } else {
-            if target_path.exists() {
-                let _ = fs::remove_file(&target_path);
+            // Regular file
+            if final_target_path_on_disk.exists() {
+                // Overwrite if exists
+                match fs::remove_file(&final_target_path_on_disk) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {} // Fine if not found
+                    Err(e) => return Err(SpsError::Io(std::sync::Arc::new(e))), /* Other errors are
+                                                                          * problematic */
+                }
             }
-            let mut out_file = File::create(&target_path).map_err(|e| {
+            let mut out_file = File::create(&final_target_path_on_disk).map_err(|e| {
                 SpsError::Io(std::sync::Arc::new(io::Error::new(
                     e.kind(),
-                    format!("Failed create file {}: {}", target_path.display(), e),
+                    format!(
+                        "Failed create file {}: {}",
+                        final_target_path_on_disk.display(),
+                        e
+                    ),
                 )))
             })?;
             io::copy(&mut file, &mut out_file)?;
@@ -611,8 +780,12 @@ fn extract_zip_archive<R: Read + Seek>(
         {
             use std::os::unix::fs::PermissionsExt;
             if let Some(mode) = file.unix_mode() {
-                if !file.is_symlink() {
-                    fs::set_permissions(&target_path, fs::Permissions::from_mode(mode))?;
+                if !file.is_symlink() && final_target_path_on_disk.is_file() {
+                    // Check if it's a file before setting permissions
+                    fs::set_permissions(
+                        &final_target_path_on_disk,
+                        fs::Permissions::from_mode(mode),
+                    )?;
                 }
             }
         }
@@ -621,7 +794,6 @@ fn extract_zip_archive<R: Read + Seek>(
         "Finished ZIP extraction for {}",
         archive_path_for_log.display()
     );
-    // After extraction, quarantine any .app bundles in the stage (macOS only)
     #[cfg(target_os = "macos")]
     {
         if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-zip-extractor") {
