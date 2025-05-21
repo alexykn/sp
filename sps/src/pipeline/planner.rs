@@ -1,5 +1,4 @@
 // sps/src/pipeline/planner.rs
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,36 +7,23 @@ use colored::Colorize;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::dependency::resolver::{
-    DependencyResolver, PerTargetInstallPreferences, ResolutionContext, ResolutionStatus,
-    ResolvedGraph,
+    DependencyResolver, NodeInstallStrategy, PerTargetInstallPreferences, ResolutionContext,
+    ResolutionStatus, ResolvedGraph,
 };
 use sps_common::error::{Result as SpsResult, SpsError};
 use sps_common::formulary::Formulary;
 use sps_common::keg::KegRegistry;
-use sps_common::model::{Cask, InstallTargetIdentifier};
-use sps_common::pipeline::{JobAction, PipelineEvent, PlannedJob};
+use sps_common::model::{Cask, Formula, InstallTargetIdentifier};
+use sps_common::pipeline::{JobAction, PipelineEvent, PlannedJob, PlannedOperations};
 use sps_core::check::installed::{self, InstalledPackageInfo, PackageType as CorePackageType};
 use sps_core::check::update::{self, UpdateInfo};
 use tokio::sync::broadcast;
-use tracing::debug;
+use tokio::task::JoinSet;
+use tracing::{debug, error as trace_error, instrument, warn};
 
-use super::runner::{fetch_target_definitions, CommandType, PipelineFlags};
+use super::runner::{get_panic_message, CommandType, PipelineFlags};
 
 pub(crate) type PlanResult<T> = SpsResult<T>;
-
-#[derive(Debug, Default)]
-pub(crate) struct PlannedOperations {
-    pub jobs: Vec<PlannedJob>,
-    pub errors: Vec<(String, SpsError)>,
-    pub already_installed_or_up_to_date: HashSet<String>,
-}
-
-pub(crate) struct OperationPlanner<'a> {
-    config: &'a Config,
-    cache: Arc<Cache>,
-    flags: &'a PipelineFlags,
-    event_tx: broadcast::Sender<PipelineEvent>,
-}
 
 #[derive(Debug, Default)]
 struct IntermediatePlan {
@@ -46,6 +32,161 @@ struct IntermediatePlan {
     already_satisfied: HashSet<String>,
     processed_globally: HashSet<String>,
     private_store_sources: HashMap<String, PathBuf>,
+}
+
+#[instrument(skip(cache))]
+pub(crate) async fn fetch_target_definitions(
+    names: &[String],
+    cache: Arc<Cache>,
+) -> HashMap<String, SpsResult<InstallTargetIdentifier>> {
+    let mut results = HashMap::new();
+    if names.is_empty() {
+        return results;
+    }
+    let mut futures = JoinSet::new();
+
+    let formulae_map_handle = tokio::spawn(load_or_fetch_formulae_map(cache.clone()));
+    let casks_map_handle = tokio::spawn(load_or_fetch_casks_map(cache.clone()));
+
+    let formulae_map = match formulae_map_handle.await {
+        Ok(Ok(map)) => Some(map),
+        Ok(Err(e)) => {
+            warn!("[FetchDefs] Failed to load/fetch full formulae list: {}", e);
+            None
+        }
+        Err(e) => {
+            warn!(
+                "[FetchDefs] Formulae map loading task panicked: {}",
+                get_panic_message(e.into_panic()) // Ensure get_panic_message is accessible
+            );
+            None
+        }
+    };
+    let casks_map = match casks_map_handle.await {
+        Ok(Ok(map)) => Some(map),
+        Ok(Err(e)) => {
+            warn!("[FetchDefs] Failed to load/fetch full casks list: {}", e);
+            None
+        }
+        Err(e) => {
+            warn!(
+                "[FetchDefs] Casks map loading task panicked: {}",
+                get_panic_message(e.into_panic()) // Ensure get_panic_message is accessible
+            );
+            None
+        }
+    };
+
+    for name_str in names {
+        let name_owned = name_str.to_string();
+        let local_formulae_map = formulae_map.clone();
+        let local_casks_map = casks_map.clone();
+
+        futures.spawn(async move {
+            if let Some(ref map) = local_formulae_map {
+                if let Some(f_arc) = map.get(&name_owned) {
+                    return (name_owned, Ok(InstallTargetIdentifier::Formula(f_arc.clone())));
+                }
+            }
+            if let Some(ref map) = local_casks_map {
+                if let Some(c_arc) = map.get(&name_owned) {
+                    return (name_owned, Ok(InstallTargetIdentifier::Cask(c_arc.clone())));
+                }
+            }
+            warn!("[FetchDefs] Definition for '{}' not found in cached lists, fetching directly from API...", name_owned);
+            match sps_net::api::get_formula(&name_owned).await {
+                Ok(formula_obj) => return (name_owned, Ok(InstallTargetIdentifier::Formula(Arc::new(formula_obj)))),
+                Err(SpsError::NotFound(_)) => {}
+                Err(e) => return (name_owned, Err(e)),
+            }
+            match sps_net::api::get_cask(&name_owned).await {
+                Ok(cask_obj) => (name_owned, Ok(InstallTargetIdentifier::Cask(Arc::new(cask_obj)))),
+                Err(SpsError::NotFound(_)) => (name_owned.clone(), Err(SpsError::NotFound(format!("Formula or Cask '{name_owned}' not found")))),
+                Err(e) => (name_owned, Err(e)),
+            }
+        });
+    }
+
+    while let Some(res) = futures.join_next().await {
+        match res {
+            Ok((name, result)) => {
+                results.insert(name, result);
+            }
+            Err(e) => {
+                let panic_message = get_panic_message(e.into_panic());
+                trace_error!(
+                    "[FetchDefs] Task panicked during definition fetch: {}",
+                    panic_message
+                );
+                results.insert(
+                    format!("[unknown_target_due_to_panic_{}]", results.len()),
+                    Err(SpsError::Generic(format!(
+                        "Definition fetching task panicked: {panic_message}"
+                    ))),
+                );
+            }
+        }
+    }
+    results
+}
+
+async fn load_or_fetch_formulae_map(cache: Arc<Cache>) -> SpsResult<HashMap<String, Arc<Formula>>> {
+    match cache.load_raw("formula.json") {
+        Ok(data) => {
+            let formulas: Vec<Formula> = serde_json::from_str(&data)
+                .map_err(|e| SpsError::Cache(format!("Parse cached formula.json failed: {e}")))?;
+            Ok(formulas
+                .into_iter()
+                .map(|f| (f.name.clone(), Arc::new(f)))
+                .collect())
+        }
+        Err(_) => {
+            debug!("[FetchDefs] Cache miss for formula.json, fetching from API...");
+            let raw_data = sps_net::api::fetch_all_formulas().await?;
+            if let Err(e) = cache.store_raw("formula.json", &raw_data) {
+                warn!("Failed to store formula.json in cache: {}", e);
+            }
+            let formulas: Vec<Formula> =
+                serde_json::from_str(&raw_data).map_err(|e| SpsError::Json(Arc::new(e)))?;
+            Ok(formulas
+                .into_iter()
+                .map(|f| (f.name.clone(), Arc::new(f)))
+                .collect())
+        }
+    }
+}
+
+async fn load_or_fetch_casks_map(cache: Arc<Cache>) -> SpsResult<HashMap<String, Arc<Cask>>> {
+    match cache.load_raw("cask.json") {
+        Ok(data) => {
+            let casks: Vec<Cask> = serde_json::from_str(&data)
+                .map_err(|e| SpsError::Cache(format!("Parse cached cask.json failed: {e}")))?;
+            Ok(casks
+                .into_iter()
+                .map(|c| (c.token.clone(), Arc::new(c)))
+                .collect())
+        }
+        Err(_) => {
+            debug!("[FetchDefs] Cache miss for cask.json, fetching from API...");
+            let raw_data = sps_net::api::fetch_all_casks().await?;
+            if let Err(e) = cache.store_raw("cask.json", &raw_data) {
+                warn!("Failed to store cask.json in cache: {}", e);
+            }
+            let casks: Vec<Cask> =
+                serde_json::from_str(&raw_data).map_err(|e| SpsError::Json(Arc::new(e)))?;
+            Ok(casks
+                .into_iter()
+                .map(|c| (c.token.clone(), Arc::new(c)))
+                .collect())
+        }
+    }
+}
+
+pub(crate) struct OperationPlanner<'a> {
+    config: &'a Config,
+    cache: Arc<Cache>,
+    flags: &'a PipelineFlags,
+    event_tx: broadcast::Sender<PipelineEvent>,
 }
 
 impl<'a> OperationPlanner<'a> {
@@ -157,11 +298,18 @@ impl<'a> OperationPlanner<'a> {
                                         manifest_json.get("is_installed").and_then(|v| v.as_bool())
                                     {
                                         if !is_installed_flag {
+                                            debug!("Cask '{}' found but marked as not installed in manifest. Proceeding with install.", name);
                                             proceed_with_install = true;
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            debug!(
+                                "Cask '{}' found but manifest missing. Assuming needs install.",
+                                name
+                            );
+                            proceed_with_install = true;
                         }
                     }
                     if proceed_with_install {
@@ -175,6 +323,7 @@ impl<'a> OperationPlanner<'a> {
                         plan.initial_ops
                             .insert(name.clone(), (JobAction::Install, None));
                     } else {
+                        debug!("Target '{}' already installed and manifest indicates it. Marking as satisfied.", name);
                         plan.already_satisfied.insert(name.clone());
                         plan.processed_globally.insert(name.clone());
                     }
@@ -284,6 +433,7 @@ impl<'a> OperationPlanner<'a> {
                                             .and_then(|v| v.as_bool())
                                             .unwrap_or(true)
                                         {
+                                            debug!("Skipping upgrade for Cask '{}' as its manifest indicates it's not fully installed.", name);
                                             plan.processed_globally.insert(name.clone());
                                             continue;
                                         }
@@ -320,25 +470,26 @@ impl<'a> OperationPlanner<'a> {
             Ok(updates) => {
                 let update_map: HashMap<String, UpdateInfo> =
                     updates.into_iter().map(|u| (u.name.clone(), u)).collect();
-                for p in packages_to_check {
-                    if plan.processed_globally.contains(&p.name) {
+
+                for p_info in packages_to_check {
+                    if plan.processed_globally.contains(&p_info.name) {
                         continue;
                     }
-                    if let Some(ui) = update_map.get(&p.name) {
+                    if let Some(ui) = update_map.get(&p_info.name) {
                         plan.initial_ops.insert(
-                            p.name.clone(),
+                            p_info.name.clone(),
                             (
                                 JobAction::Upgrade {
-                                    from_version: p.version.clone(),
-                                    old_install_path: p.path.clone(),
+                                    from_version: p_info.version.clone(),
+                                    old_install_path: p_info.path.clone(),
                                 },
                                 Some(ui.target_definition.clone()),
                             ),
                         );
                     } else {
-                        plan.already_satisfied.insert(p.name.clone());
+                        plan.already_satisfied.insert(p_info.name.clone());
                     }
-                    plan.processed_globally.insert(p.name.clone());
+                    plan.processed_globally.insert(p_info.name.clone());
                 }
             }
             Err(e) => {
@@ -351,6 +502,7 @@ impl<'a> OperationPlanner<'a> {
         Ok(plan)
     }
 
+    // This now returns sps_common::pipeline::PlannedOperations
     pub async fn plan_operations(
         &self,
         initial_targets: &[String],
@@ -377,8 +529,10 @@ impl<'a> OperationPlanner<'a> {
             for (name, result) in fetched_defs {
                 match result {
                     Ok(target_def) => {
-                        if let Some((_, opt)) = intermediate_plan.initial_ops.get_mut(&name) {
-                            *opt = Some(target_def);
+                        if let Some((_action, opt_install_target)) =
+                            intermediate_plan.initial_ops.get_mut(&name)
+                        {
+                            *opt_install_target = Some(target_def);
                         }
                     }
                     Err(e) => {
@@ -398,11 +552,12 @@ impl<'a> OperationPlanner<'a> {
         self.event_tx
             .send(PipelineEvent::DependencyResolutionStarted)
             .ok();
+
         let mut formulae_for_resolution: HashMap<String, InstallTargetIdentifier> = HashMap::new();
         let mut cask_deps_map: HashMap<String, Arc<Cask>> = HashMap::new();
         let mut cask_processing_queue: VecDeque<String> = VecDeque::new();
 
-        for (name, (_, opt_def)) in &intermediate_plan.initial_ops {
+        for (name, (_action, opt_def)) in &intermediate_plan.initial_ops {
             if intermediate_plan.processed_globally.contains(name) {
                 continue;
             }
@@ -414,7 +569,21 @@ impl<'a> OperationPlanner<'a> {
                     cask_processing_queue.push_back(name.clone());
                     cask_deps_map.insert(name.clone(), c_arc.clone());
                 }
-                None => {}
+                None => {
+                    if !intermediate_plan
+                        .errors
+                        .iter()
+                        .any(|(err_name, _)| err_name == name)
+                    {
+                        intermediate_plan.errors.push((
+                            name.clone(),
+                            SpsError::Generic(format!(
+                                "Definition for '{name}' still missing after fetch attempt."
+                            )),
+                        ));
+                        intermediate_plan.processed_globally.insert(name.clone());
+                    }
+                }
             }
         }
 
@@ -471,6 +640,9 @@ impl<'a> OperationPlanner<'a> {
                             .errors
                             .iter()
                             .any(|(n, _)| n == formula_dep_name)
+                        || intermediate_plan
+                            .already_satisfied
+                            .contains(formula_dep_name)
                     {
                         continue;
                     }
@@ -529,12 +701,21 @@ impl<'a> OperationPlanner<'a> {
             }
         }
 
-        let mut resolved_formula_graph: Option<Arc<ResolvedGraph>> = None;
+        let mut resolved_formula_graph_opt: Option<Arc<ResolvedGraph>> = None;
         if !formulae_for_resolution.is_empty() {
             let targets_for_resolver: Vec<_> = formulae_for_resolution.keys().cloned().collect();
             let formulary = Formulary::new(self.config.clone());
             let keg_registry = KegRegistry::new(self.config.clone());
-            let per_target_prefs = PerTargetInstallPreferences::default();
+
+            let per_target_prefs = PerTargetInstallPreferences {
+                force_source_build_targets: if self.flags.build_from_source {
+                    targets_for_resolver.iter().cloned().collect()
+                } else {
+                    HashSet::new()
+                },
+                force_bottle_only_targets: HashSet::new(),
+            };
+
             let ctx = ResolutionContext {
                 formulary: &formulary,
                 keg_registry: &keg_registry,
@@ -548,9 +729,10 @@ impl<'a> OperationPlanner<'a> {
                 has_bottle_for_current_platform:
                     sps_core::install::bottle::has_bottle_for_current_platform,
             };
+
             let mut resolver = DependencyResolver::new(ctx);
             match resolver.resolve_targets(&targets_for_resolver) {
-                Ok(g) => resolved_formula_graph = Some(Arc::new(g)),
+                Ok(g) => resolved_formula_graph_opt = Some(Arc::new(g)),
                 Err(e) => {
                     for n in targets_for_resolver {
                         if !intermediate_plan
@@ -584,69 +766,24 @@ impl<'a> OperationPlanner<'a> {
                 intermediate_plan.processed_globally.insert(name.clone());
                 continue;
             }
+            if intermediate_plan.already_satisfied.contains(name) {
+                tracing::debug!(
+                    "[Planner] Skipping job for initial op '{}' as it's already satisfied.",
+                    name
+                );
+                intermediate_plan.processed_globally.insert(name.clone());
+                continue;
+            }
 
             match opt_def {
                 Some(target_def) => {
-                    let is_source_build: bool;
-                    match target_def {
-                        InstallTargetIdentifier::Formula(new_formula_arc) => {
-                            if self.flags.build_from_source {
-                                is_source_build = true;
-                                tracing::debug!(
-                                    "User explicitly set --build-from-source for operation on '{}'. Planning source build.",
-                                    name
-                                );
-                            } else if let JobAction::Upgrade {
-                                old_install_path, ..
-                            } = action
-                            {
-                                let previous_install_type =
-                                    self.get_previous_installation_type(old_install_path);
-                                if previous_install_type.as_deref() == Some("source") {
-                                    is_source_build = true;
-                                    tracing::debug!(
-                                        "Formula '{}' was previously installed from source. Upgrading from source.",
-                                        name
-                                    );
-                                } else {
-                                    is_source_build =
-                                        !sps_core::install::bottle::has_bottle_for_current_platform(
-                                            new_formula_arc,
-                                        );
-                                    if is_source_build {
-                                        tracing::debug!(
-                                            "Upgrading formula '{}': Previous was bottle/unknown, and new version has no bottle. Planning source build.",
-                                            name
-                                        );
-                                    } else {
-                                        tracing::debug!(
-                                            "Upgrading formula '{}': Previous was bottle/unknown, and new version has a bottle. Planning bottle upgrade.",
-                                            name
-                                        );
-                                    }
-                                }
-                            } else {
-                                is_source_build =
-                                    !sps_core::install::bottle::has_bottle_for_current_platform(
-                                        new_formula_arc,
-                                    );
-                                if is_source_build {
-                                    tracing::debug!(
-                                        "Fresh install/reinstall of formula '{}': No bottle available. Planning source build.",
-                                        name
-                                    );
-                                } else {
-                                    tracing::debug!(
-                                        "Fresh install/reinstall of formula '{}': Bottle available. Planning bottle install.",
-                                        name
-                                    );
-                                }
-                            }
-                        }
-                        InstallTargetIdentifier::Cask(_) => {
-                            is_source_build = false;
-                        }
-                    }
+                    let is_source_build = determine_build_strategy_for_job(
+                        target_def,
+                        action,
+                        self.flags,
+                        resolved_formula_graph_opt.as_deref(),
+                        self,
+                    );
 
                     final_planned_jobs.push(PlannedJob {
                         target_id: name.clone(),
@@ -662,18 +799,22 @@ impl<'a> OperationPlanner<'a> {
                 }
                 None => {
                     tracing::error!("[Planner] CRITICAL: Definition missing for planned operation on '{}' but no error was recorded in intermediate_plan.errors. This should not happen.", name);
-                    intermediate_plan.errors.push((
-                        name.clone(),
-                        SpsError::Generic(
-                            "Definition missing unexpectedly for an operation that should have had one.".into(),
-                        ),
-                    ));
+                    if !intermediate_plan
+                        .errors
+                        .iter()
+                        .any(|(err_n, _)| err_n == name)
+                    {
+                        intermediate_plan.errors.push((
+                            name.clone(),
+                            SpsError::Generic("Definition missing unexpectedly.".into()),
+                        ));
+                    }
                     intermediate_plan.processed_globally.insert(name.clone());
                 }
             }
         }
 
-        if let Some(graph) = resolved_formula_graph.as_ref() {
+        if let Some(graph) = resolved_formula_graph_opt.as_ref() {
             for dep_detail in &graph.install_plan {
                 let dep_name = dep_detail.formula.name();
 
@@ -688,13 +829,16 @@ impl<'a> OperationPlanner<'a> {
                     dep_detail.status,
                     ResolutionStatus::Missing | ResolutionStatus::Requested
                 ) {
-                    let is_source_build_for_dep = self.flags.build_from_source
-                        || !sps_core::install::bottle::has_bottle_for_current_platform(
-                            &dep_detail.formula,
-                        );
+                    let is_source_build_for_dep = determine_build_strategy_for_job(
+                        &InstallTargetIdentifier::Formula(dep_detail.formula.clone()),
+                        &JobAction::Install,
+                        self.flags,
+                        Some(graph),
+                        self,
+                    );
                     debug!(
-                        "Planning install for new dependency '{}'. Source build: {} (Global flag: {}, Bottle available: {})",
-                        dep_name, is_source_build_for_dep, self.flags.build_from_source, sps_core::install::bottle::has_bottle_for_current_platform(&dep_detail.formula)
+                        "Planning install for new formula dependency '{}'. Source build: {}",
+                        dep_name, is_source_build_for_dep
                     );
 
                     final_planned_jobs.push(PlannedJob {
@@ -706,17 +850,22 @@ impl<'a> OperationPlanner<'a> {
                         is_source_build: is_source_build_for_dep,
                         use_private_store_source: None,
                     });
+                } else if dep_detail.status == ResolutionStatus::Installed {
+                    intermediate_plan
+                        .already_satisfied
+                        .insert(dep_name.to_string());
                 }
             }
         }
 
         for (cask_token, cask_arc) in cask_deps_map {
-            if intermediate_plan.initial_ops.contains_key(&cask_token)
+            if names_processed_from_initial_ops.contains(&cask_token)
                 || intermediate_plan.processed_globally.contains(&cask_token)
                 || final_planned_jobs.iter().any(|j| j.target_id == cask_token)
             {
                 continue;
             }
+
             match self.check_installed_status(&cask_token).await {
                 Ok(None) => {
                     final_planned_jobs.push(PlannedJob {
@@ -730,7 +879,7 @@ impl<'a> OperationPlanner<'a> {
                             .cloned(),
                     });
                 }
-                Ok(Some(_)) => {
+                Ok(Some(_installed_info)) => {
                     intermediate_plan
                         .already_satisfied
                         .insert(cask_token.clone());
@@ -742,37 +891,78 @@ impl<'a> OperationPlanner<'a> {
                             "Failed check install status for cask dependency {cask_token}: {e}"
                         )),
                     ));
+                    intermediate_plan
+                        .processed_globally
+                        .insert(cask_token.clone());
                 }
             }
         }
-
-        if let Some(graph) = resolved_formula_graph.as_ref() {
+        if let Some(graph) = resolved_formula_graph_opt.as_ref() {
             if !final_planned_jobs.is_empty() {
-                sort_planned_jobs_by_dependency_order(&mut final_planned_jobs, graph);
+                sort_planned_jobs(&mut final_planned_jobs, graph);
             }
         }
-
         Ok(PlannedOperations {
             jobs: final_planned_jobs,
             errors: intermediate_plan.errors,
             already_installed_or_up_to_date: intermediate_plan.already_satisfied,
+            resolved_graph: resolved_formula_graph_opt,
         })
     }
 }
 
-fn sort_planned_jobs_by_dependency_order(jobs: &mut [PlannedJob], graph: &ResolvedGraph) {
-    let formula_order: HashMap<String, usize> = graph
+fn determine_build_strategy_for_job(
+    target_def: &InstallTargetIdentifier,
+    action: &JobAction,
+    flags: &PipelineFlags,
+    resolved_graph: Option<&ResolvedGraph>,
+    planner: &OperationPlanner,
+) -> bool {
+    match target_def {
+        InstallTargetIdentifier::Formula(formula_arc) => {
+            if flags.build_from_source {
+                return true;
+            }
+            if let Some(graph) = resolved_graph {
+                if let Some(resolved_detail) = graph.resolution_details.get(formula_arc.name()) {
+                    match resolved_detail.determined_install_strategy {
+                        NodeInstallStrategy::SourceOnly => return true,
+                        NodeInstallStrategy::BottleOrFail => return false,
+                        NodeInstallStrategy::BottlePreferred => {}
+                    }
+                }
+            }
+            if let JobAction::Upgrade {
+                old_install_path, ..
+            } = action
+            {
+                if planner
+                    .get_previous_installation_type(old_install_path)
+                    .as_deref()
+                    == Some("source")
+                {
+                    return true;
+                }
+            }
+            !sps_core::install::bottle::has_bottle_for_current_platform(formula_arc)
+        }
+        InstallTargetIdentifier::Cask(_) => false,
+    }
+}
+
+fn sort_planned_jobs(jobs: &mut [PlannedJob], formula_graph: &ResolvedGraph) {
+    let formula_order: HashMap<String, usize> = formula_graph
         .install_plan
         .iter()
         .enumerate()
-        .map(|(idx, dep)| (dep.formula.name().to_string(), idx))
+        .map(|(idx, dep_detail)| (dep_detail.formula.name().to_string(), idx))
         .collect();
 
     jobs.sort_by_key(|job| match &job.target_definition {
-        InstallTargetIdentifier::Formula(_) => formula_order
-            .get(&job.target_id)
+        InstallTargetIdentifier::Formula(f_arc) => formula_order
+            .get(f_arc.name())
             .copied()
             .unwrap_or(usize::MAX),
-        InstallTargetIdentifier::Cask(_) => usize::MAX,
+        InstallTargetIdentifier::Cask(_) => usize::MAX - 1,
     });
 }

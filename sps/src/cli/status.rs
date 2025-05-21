@@ -53,8 +53,8 @@ pub async fn handle_events(_config: Config, mut event_rx: broadcast::Receiver<Pi
                 PipelineEvent::PlanningFinished { job_count } => {
                     println!("{} {}", "Planning finished. Jobs:".bold(), job_count);
                 }
-                PipelineEvent::DownloadStarted { target_id, url } => {
-                    println!("{} {} ({})", "Downloading:".yellow(), target_id.cyan(), url);
+                PipelineEvent::DownloadStarted { target_id, url: _ } => {
+                    println!("{} {}", "Downloading:".yellow(), target_id.cyan());
                     jobs.entry(target_id.clone()).or_insert(JobInfo {
                         _name: target_id,
                         status: JobStatus::Downloading,
@@ -63,16 +63,10 @@ pub async fn handle_events(_config: Config, mut event_rx: broadcast::Receiver<Pi
                 }
                 PipelineEvent::DownloadFinished {
                     target_id,
-                    path,
-                    size_bytes,
+                    path: _,
+                    size_bytes: _,
                 } => {
-                    println!(
-                        "{} {} ({} bytes) -> {}",
-                        "Downloaded:".green(),
-                        target_id.cyan(),
-                        size_bytes,
-                        path.display()
-                    );
+                    println!("{} {}", "Downloaded:".green(), target_id.cyan(),);
                     jobs.entry(target_id.clone()).and_modify(|j| {
                         j.status = JobStatus::Downloaded;
                         j.message = "Downloaded".to_string();
@@ -106,25 +100,14 @@ pub async fn handle_events(_config: Config, mut event_rx: broadcast::Receiver<Pi
                 }
                 PipelineEvent::InstallStarted {
                     target_id,
-                    pkg_type,
+                    pkg_type: _,
                 } => {
-                    let type_str = match pkg_type {
-                        PipelinePackageType::Formula => "Formula",
-                        PipelinePackageType::Cask => "Cask",
-                    };
-                    println!(
-                        "{} {} ({})",
-                        "Installing:".yellow(),
-                        target_id.cyan(),
-                        type_str
-                    );
                     jobs.entry(target_id.clone()).and_modify(|j| {
                         j.status = JobStatus::Installing;
                         j.message = "Installing".to_string();
                     });
                 }
                 PipelineEvent::LinkStarted { target_id, .. } => {
-                    println!("{} {}", "Linking:".yellow(), target_id.cyan());
                     jobs.entry(target_id.clone()).and_modify(|j| {
                         j.status = JobStatus::Linking;
                         j.message = "Linking".to_string();
@@ -145,11 +128,10 @@ pub async fn handle_events(_config: Config, mut event_rx: broadcast::Receiver<Pi
                         sps_common::pipeline::JobAction::Reinstall { .. } => "Reinstalled",
                     };
                     println!(
-                        "{} {} ({}) {}",
-                        "✓".green().bold(),
+                        "{}: {} ({})",
+                        action_str.green(),
                         target_id.cyan(),
                         type_str,
-                        action_str.green()
                     );
                     jobs.entry(target_id.clone()).and_modify(|j| {
                         j.status = JobStatus::Success;
