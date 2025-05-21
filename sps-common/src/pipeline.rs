@@ -149,3 +149,13 @@ impl PipelineEvent {
         }
     }
 }
+
+// --- Download Outcome ---
+/// Represents the outcome of a download attempt for a planned job.
+#[derive(Debug)]
+pub struct DownloadOutcome {
+    /// The job that was planned for download.
+    pub planned_job: PlannedJob,
+    /// The result of the download: Ok(PathBuf) on success, or Err(SpsError) on failure.
+    pub result: Result<PathBuf, SpsError>,
+}

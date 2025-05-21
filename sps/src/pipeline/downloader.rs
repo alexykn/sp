@@ -8,10 +8,10 @@ use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::error::{Result as SpsResult, SpsError};
 use sps_common::model::InstallTargetIdentifier;
-use sps_common::pipeline::{PipelineEvent, PlannedJob, WorkerJob};
+use sps_common::pipeline::{DownloadOutcome, PipelineEvent, PlannedJob}; // MODIFIED: Removed WorkerJob, Added DownloadOutcome
 use sps_core::{build, install};
 use sps_net::UrlField;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc}; // MODIFIED: Added mpsc
 use tokio::task::JoinSet;
 use tracing::{debug, error, warn}; // Added info
 
@@ -41,50 +41,61 @@ impl<'a> DownloadCoordinator<'a> {
     }
 
     pub async fn coordinate_downloads(
-        self, /* Take ownership to ensure self.event_tx is dropped when this method returns if
-               * not explicitly dropped earlier */
+        self, // Takes ownership
         planned_jobs: Vec<PlannedJob>,
-        worker_job_tx: crossbeam_channel::Sender<WorkerJob>,
-    ) -> Vec<(String, SpsError)> {
+        download_outcome_tx: mpsc::Sender<DownloadOutcome>, // MODIFIED: Changed argument
+    ) -> Result<(), SpsError> { // MODIFIED: Changed return type
         let mut download_tasks = JoinSet::new();
-        let mut download_errors: Vec<(String, SpsError)> = Vec::new();
+        // download_errors removed
 
         for planned_job in planned_jobs {
-            let job_id_for_task = planned_job.target_id.clone();
+            let job_id_for_event = planned_job.target_id.clone(); // Used for events
 
             if let Some(private_path) = planned_job.use_private_store_source.clone() {
                 debug!(
-                    "[Downloader] Using app from private store for WorkerJob: {}",
+                    "[Downloader] Using app from private store for {}: {}",
+                    job_id_for_event,
                     private_path.display()
                 );
-                let size = fs::metadata(&private_path).map(|m| m.len()).unwrap_or(0);
-                let worker_job_payload = WorkerJob {
-                    request: planned_job,
-                    download_path: private_path.clone(),
-                    download_size_bytes: size,
-                    is_source_from_private_store: true,
+                // Emit events for consistency
+                self.event_tx
+                    .send(PipelineEvent::DownloadStarted {
+                        target_id: job_id_for_event.clone(),
+                        url: format!("local:{}", private_path.display()),
+                    })
+                    .ok();
+
+                let size_bytes = fs::metadata(&private_path).map(|m| m.len()).unwrap_or(0);
+                self.event_tx
+                    .send(PipelineEvent::DownloadFinished {
+                        target_id: job_id_for_event.clone(),
+                        path: private_path.clone(),
+                        size_bytes,
+                    })
+                    .ok();
+
+                let outcome = DownloadOutcome {
+                    planned_job, // Move planned_job
+                    result: Ok(private_path),
                 };
-                if let Err(e) = worker_job_tx.send(worker_job_payload) {
+                if download_outcome_tx.send(outcome).await.is_err() {
                     error!(
-                        "[Downloader] Failed to queue worker job (private store) for {}: {}",
-                        job_id_for_task, e
+                        "[Downloader] Failed to send DownloadOutcome for private store job {}: receiver dropped.",
+                        job_id_for_event
                     );
-                    download_errors.push((
-                        job_id_for_task,
-                        SpsError::Generic(format!(
-                            "Failed to queue worker job (private store): {e}"
-                        )),
-                    ));
+                    // This specific job's outcome failed to send.
+                    // The coordinator continues to spawn other tasks.
                 }
                 continue;
             }
 
+            // Regular download path
             let task_config = self.config.clone();
             let task_cache = Arc::clone(&self.cache);
             let task_http_client = Arc::clone(&self.http_client);
-            // Each task gets its own clone of the DownloadCoordinator's event_tx
-            let task_event_tx = self.event_tx.clone();
-            let current_planned_job = planned_job.clone();
+            let task_event_tx = self.event_tx.clone(); // For PipelineEvents
+            let task_outcome_tx = download_outcome_tx.clone(); // For DownloadOutcome
+            let current_planned_job = planned_job.clone(); // Clone for the task
 
             download_tasks.spawn(async move {
                 let job_id_in_task = current_planned_job.target_id.clone();
@@ -98,116 +109,121 @@ impl<'a> DownloadCoordinator<'a> {
                             f.url.clone()
                         }
                     }
-                    InstallTargetIdentifier::Cask(c) => match &c.url {
+                    InstallTargetIdentifier::Cask(c) => match c.url.as_ref() {
                         Some(UrlField::Simple(s)) => s.clone(),
                         Some(UrlField::WithSpec { url, .. }) => url.clone(),
                         None => "N/A (No Cask URL)".to_string(),
                     },
                 };
 
+                let outcome: DownloadOutcome; // Declare outcome to be sent
+
                 if display_url_for_event == "N/A (No Cask URL)"
                     || (display_url_for_event.is_empty() && current_planned_job.is_source_build)
                 {
                     let err_msg = "Download URL is missing or invalid".to_string();
-                    // Use task_event_tx for sending events from within the task
-                    task_event_tx
+                    let sps_error = SpsError::Generic(format!(
+                        "Download URL is missing or invalid for job {job_id_in_task}: {err_msg}"
+                    ));
+                    task_event_tx // Still send the event
                         .send(PipelineEvent::download_failed(
                             job_id_in_task.clone(),
-                            display_url_for_event,
-                            SpsError::Generic(err_msg.clone()),
+                            display_url_for_event.clone(), // or a placeholder
+                            sps_error.clone(),
                         ))
                         .ok();
-                    return Err((
-                        job_id_in_task.clone(),
-                        SpsError::Generic(format!(
-                            "Download URL is missing or invalid for job {job_id_in_task}"
-                        )),
-                    ));
-                }
-                task_event_tx
-                    .send(PipelineEvent::DownloadStarted {
-                        target_id: job_id_in_task.clone(),
-                        url: display_url_for_event.clone(),
-                    })
-                    .ok();
-
-                let download_result: SpsResult<PathBuf> =
-                    match &current_planned_job.target_definition {
-                        InstallTargetIdentifier::Formula(f) => {
-                            if current_planned_job.is_source_build {
-                                build::compile::download_source(f, &task_config).await
-                            } else {
-                                install::bottle::exec::download_bottle(
-                                    f,
-                                    &task_config,
-                                    &task_http_client,
-                                )
-                                .await
-                            }
-                        }
-                        InstallTargetIdentifier::Cask(c) => {
-                            install::cask::download_cask(c, task_cache.as_ref()).await
-                        }
+                    outcome = DownloadOutcome {
+                        planned_job: current_planned_job,
+                        result: Err(sps_error),
                     };
-
-                match download_result {
-                    Ok(download_path) => {
-                        let size_bytes = fs::metadata(&download_path).map(|m| m.len()).unwrap_or(0);
-                        task_event_tx
-                            .send(PipelineEvent::DownloadFinished {
-                                target_id: job_id_in_task.clone(),
-                                path: download_path.clone(),
-                                size_bytes,
-                            })
-                            .ok();
-                        Ok(WorkerJob {
-                            request: current_planned_job,
-                            download_path,
-                            download_size_bytes: size_bytes,
-                            is_source_from_private_store: false,
+                } else {
+                    task_event_tx
+                        .send(PipelineEvent::DownloadStarted {
+                            target_id: job_id_in_task.clone(),
+                            url: display_url_for_event.clone(),
                         })
-                    }
-                    Err(e) => {
-                        warn!(
-                            "[Downloader:{}] Download failed from {}: {}",
-                            job_id_in_task, display_url_for_event, e
-                        );
-                        task_event_tx
-                            .send(PipelineEvent::download_failed(
-                                job_id_in_task.clone(),
+                        .ok();
+
+                    let download_result: SpsResult<PathBuf> =
+                        match &current_planned_job.target_definition {
+                            InstallTargetIdentifier::Formula(f) => {
+                                if current_planned_job.is_source_build {
+                                    build::compile::download_source(f, &task_config).await
+                                } else {
+                                    install::bottle::exec::download_bottle(
+                                        f,
+                                        &task_config,
+                                        &task_http_client,
+                                    )
+                                    .await
+                                }
+                            }
+                            InstallTargetIdentifier::Cask(c) => {
+                                install::cask::download_cask(c, task_cache.as_ref()).await
+                            }
+                        };
+
+                    match download_result {
+                        Ok(download_path) => {
+                            let size_bytes =
+                                fs::metadata(&download_path).map(|m| m.len()).unwrap_or(0);
+                            task_event_tx
+                                .send(PipelineEvent::DownloadFinished {
+                                    target_id: job_id_in_task.clone(),
+                                    path: download_path.clone(),
+                                    size_bytes,
+                                })
+                                .ok();
+                            outcome = DownloadOutcome {
+                                planned_job: current_planned_job,
+                                result: Ok(download_path),
+                            };
+                        }
+                        Err(e) => {
+                            warn!(
+                                "[Downloader:{}] Download failed for {} from {}: {}",
+                                job_id_in_task, // Context
+                                job_id_in_task, // Subject of the log
                                 display_url_for_event,
-                                e.clone(),
-                            ))
-                            .ok();
-                        Err((job_id_in_task.clone(), e))
+                                e
+                            );
+                            task_event_tx
+                                .send(PipelineEvent::download_failed(
+                                    job_id_in_task.clone(),
+                                    display_url_for_event,
+                                    e.clone(),
+                                ))
+                                .ok();
+                            outcome = DownloadOutcome {
+                                planned_job: current_planned_job,
+                                result: Err(e),
+                            };
+                        }
                     }
                 }
-                // task_event_tx is dropped when this async block ends
+                // Send the outcome
+                if task_outcome_tx.send(outcome).await.is_err() {
+                    error!(
+                        "[Downloader] Failed to send DownloadOutcome for job {}: receiver dropped.",
+                        job_id_in_task
+                    );
+                }
+                // Task returns nothing. Errors/results are sent via channel.
             });
         }
 
+        // Wait for all download tasks to complete.
+        // Panics are logged; individual errors/successes are sent via download_outcome_tx by each task.
         while let Some(result) = download_tasks.join_next().await {
-            match result {
-                Ok(Ok(worker_job)) => {
-                    if worker_job_tx.send(worker_job).is_err() {
-                        error!("[Downloader] Worker job channel closed. Core likely shut down.");
-                        break;
-                    }
-                }
-                Ok(Err((id, e))) => {
-                    download_errors.push((id, e));
-                }
-                Err(join_error) => {
-                    let panic_message = get_panic_message(join_error.into_panic());
-                    error!("[Downloader] Download task panicked: {}", panic_message);
-                    download_errors.push((
-                        "[DownloadTaskPanic]".to_string(),
-                        SpsError::Generic(format!("Download task panicked: {panic_message}")),
-                    ));
-                }
+            if let Err(join_error) = result {
+                let panic_message = get_panic_message(join_error.into_panic());
+                error!("[Downloader] Download task panicked: {}", panic_message);
+                // The coordinator itself doesn't fail due to a task panic, it just logs it.
+                // The absence of a DownloadOutcome for a panicked task would be the indicator upstream.
             }
         }
-        // Explicitly drop the DownloadCoordinator's clone of event_tx
-        download_errors
+        // self.event_tx (the coordinator's original or cloned sender) is dropped when 'self'
+        // (DownloadCoordinator) goes out of scope at the end of this method because it's taken by value.
+        Ok(()) // Coordinator successfully spawned and managed tasks.
     }
 }
