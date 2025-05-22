@@ -1,6 +1,6 @@
 [package]
 name = "sps"
-version = "0.1.46"
+version = "0.1.47"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Package Manager for macOS"
@@ -15,9 +15,9 @@ name = "sps"
 path = "src/main.rs"
 
 [dependencies]
-sps-common = "0.1.46"
-sps-net = "0.1.46"
-sps-core = "0.1.46"
+sps-common = "0.1.47"
+sps-net = "0.1.47"
+sps-core = "0.1.47"
 
 # Direct dependencies (previously workspace inherited)
 serde = { version = "1.0.219", features = ["derive"] }

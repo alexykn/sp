@@ -57,32 +57,42 @@ fn do_execute_sync_steps(
             || matches!(job_request.action, JobAction::Upgrade { .. })
         {
             debug!(
-                "[{}] Checking installed status of formula dependencies before proceeding...",
-                job_request.target_id
+                "[WORKER:{}] Pre-install check for dependencies. Formula: {}, Action: {:?}",
+                job_request.target_id,
+                formula_arc.name(),
+                job_request.action
             );
-            let keg_registry = KegRegistry::new(config.clone()); // Create KegRegistry instance
+
+            let keg_registry = KegRegistry::new(config.clone());
             match formula_arc.dependencies() {
                 Ok(dependencies) => {
-                    // Use the .runtime() method from DependencyExt
                     for dep in dependencies.runtime() {
-                        // Filters for runtime dependencies
-                        if keg_registry.get_installed_keg(&dep.name)?.is_none() {
-                            let error_msg = format!(
-                                "Runtime dependency '{}' for formula '{}' is not installed. Aborting operation for '{}'.",
-                                dep.name, job_request.target_id, job_request.target_id
-                            );
-                            error!("{}", error_msg);
-                            return Err(SpsError::DependencyError(error_msg));
-                        } else {
-                            debug!(
-                                "[{}] Runtime dependency '{}' confirmed installed.",
-                                job_request.target_id, dep.name
-                            );
+                        debug!("[WORKER:{}] Checking runtime dependency: '{}'. Required by: '{}'. Configured cellar: {}", job_request.target_id, dep.name, formula_arc.name(), config.cellar_dir().display());
+
+                        match keg_registry.get_installed_keg(&dep.name) {
+                            Ok(Some(keg_info)) => {
+                                debug!("[WORKER:{}] Dependency '{}' FOUND by KegRegistry. Path: {}, Version: {}", job_request.target_id, dep.name, keg_info.path.display(), keg_info.version_str);
+                            }
+                            Ok(None) => {
+                                debug!("[WORKER:{}] Dependency '{}' was NOT FOUND by KegRegistry for formula '{}'. THIS IS THE ERROR POINT.", dep.name, job_request.target_id, formula_arc.name());
+                                let error_msg = format!(
+                                    "Runtime dependency '{}' for formula '{}' is not installed. Aborting operation for '{}'.",
+                                    dep.name, job_request.target_id, job_request.target_id
+                                );
+                                error!("{}", error_msg);
+                                return Err(SpsError::DependencyError(error_msg));
+                            }
+                            Err(e) => {
+                                debug!("[WORKER:{}] Error during KegRegistry check for dependency '{}': {}. Aborting for formula '{}'.", job_request.target_id, dep.name, e, job_request.target_id);
+                                return Err(SpsError::Generic(format!(
+                                    "Failed to check KegRegistry for {}: {}",
+                                    dep.name, e
+                                )));
+                            }
                         }
                     }
                 }
                 Err(e) => {
-                    // This error means the Formula struct itself couldn't provide its deps list
                     let error_msg = format!(
                         "Could not retrieve dependency list for formula '{}': {}. Aborting operation.",
                         job_request.target_id, e
@@ -92,8 +102,9 @@ fn do_execute_sync_steps(
                 }
             }
             debug!(
-                "[{}] All required formula dependencies appear to be installed.",
-                job_request.target_id
+                "[WORKER:{}] All required formula dependencies appear to be installed for '{}'.",
+                job_request.target_id,
+                formula_arc.name()
             );
         }
     }

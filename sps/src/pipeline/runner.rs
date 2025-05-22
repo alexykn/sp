@@ -71,56 +71,87 @@ pub async fn run_pipeline(
     cache: Arc<Cache>,
     flags: &PipelineFlags,
 ) -> SpsResult<()> {
+    debug!(
+        "RUNNER: Pipeline run initiated for targets: {:?}, command: {:?}",
+        initial_targets, command_type
+    );
     let start_time = Instant::now();
     let final_success_count = Arc::new(AtomicUsize::new(0));
     let final_fail_count = Arc::new(AtomicUsize::new(0));
 
+    debug!(
+        "RUNNER: Creating broadcast channel for pipeline events (EVENT_CHANNEL_SIZE={})",
+        EVENT_CHANNEL_SIZE
+    );
     let (event_tx, mut event_rx_for_runner) =
         broadcast::channel::<PipelineEvent>(EVENT_CHANNEL_SIZE);
 
+    debug!("RUNNER: Cloning event_tx for runner_event_tx_clone");
     let runner_event_tx_clone = event_tx.clone();
 
+    debug!(
+        "RUNNER: Creating crossbeam worker job channel (WORKER_JOB_CHANNEL_SIZE={})",
+        WORKER_JOB_CHANNEL_SIZE
+    );
     let (worker_job_tx, worker_job_rx_for_core) =
         crossbeam_bounded::<WorkerJob>(WORKER_JOB_CHANNEL_SIZE);
 
+    debug!("RUNNER: Cloning event_tx for core_event_tx_for_worker_manager");
     let core_config = config.clone();
     let core_cache_clone = cache.clone();
     let core_event_tx_for_worker_manager = event_tx.clone();
     let core_success_count_clone = Arc::clone(&final_success_count);
     let core_fail_count_clone = Arc::clone(&final_fail_count);
+    debug!("RUNNER: Spawning core worker pool manager thread.");
     let core_handle = std::thread::spawn(move || {
-        sps_core::pipeline::engine::start_worker_pool_manager(
+        debug!("CORE_THREAD: Core worker pool manager thread started.");
+        let result = sps_core::pipeline::engine::start_worker_pool_manager(
             core_config,
             core_cache_clone,
             worker_job_rx_for_core,
             core_event_tx_for_worker_manager,
             core_success_count_clone,
             core_fail_count_clone,
-        )
+        );
+        debug!(
+            "CORE_THREAD: Core worker pool manager thread finished. Result: {:?}",
+            result.is_ok()
+        );
+        result
     });
 
+    debug!("RUNNER: Subscribing to event_tx for status_event_rx");
     let status_config = config.clone();
     let status_event_rx = event_tx.subscribe();
+    debug!("RUNNER: Spawning status handler task.");
     let status_handle = tokio::spawn(crate::cli::status::handle_events(
         status_config,
         status_event_rx,
     ));
 
+    debug!(
+        "RUNNER: Creating mpsc download_outcome channel (DOWNLOAD_OUTCOME_CHANNEL_SIZE={})",
+        DOWNLOAD_OUTCOME_CHANNEL_SIZE
+    );
     let (download_outcome_tx, mut download_outcome_rx) =
         mpsc::channel::<DownloadOutcome>(DOWNLOAD_OUTCOME_CHANNEL_SIZE);
 
+    debug!("RUNNER: Initializing pipeline planning phase...");
     let planner_output: PlannerOutputCommon;
     {
+        debug!("RUNNER: Cloning runner_event_tx_clone for planner_event_tx_clone");
         let planner_event_tx_clone = runner_event_tx_clone.clone();
-
+        debug!("RUNNER: Creating OperationPlanner.");
         let operation_planner =
             OperationPlanner::new(config, cache.clone(), flags, planner_event_tx_clone);
 
+        debug!("RUNNER: Calling plan_operations...");
         match operation_planner
             .plan_operations(initial_targets, command_type.clone())
             .await
         {
             Ok(ops) => {
+                debug!("RUNNER: plan_operations returned Ok.");
                 planner_output = ops;
             }
             Err(e) => {
@@ -146,10 +177,12 @@ pub async fn run_pipeline(
                     })
                     .ok();
 
+                debug!("RUNNER: Dropping runner_event_tx_clone due to planning error.");
                 drop(runner_event_tx_clone);
-
+                debug!("RUNNER: Dropping main event_tx due to planning error.");
                 drop(event_tx);
 
+                debug!("RUNNER: Awaiting status_handle after planning error.");
                 if let Err(join_err) = status_handle.await {
                     error!(
                         "RUNNER: Status task join error after planning failure: {}",
@@ -159,6 +192,7 @@ pub async fn run_pipeline(
                 return Err(e);
             }
         }
+        debug!("RUNNER: OperationPlanner scope ended, planner_event_tx_clone dropped.");
     }
 
     let planned_jobs = Arc::new(planner_output.jobs);
@@ -166,6 +200,10 @@ pub async fn run_pipeline(
         SpsError::Generic("ResolvedGraph missing from planner output".to_string())
     })?;
 
+    debug!(
+        "RUNNER: Planning finished. Total jobs in plan: {}.",
+        planned_jobs.len()
+    );
     runner_event_tx_clone
         .send(PipelineEvent::PlanningFinished {
             job_count: planned_jobs.len(),
@@ -174,13 +212,14 @@ pub async fn run_pipeline(
 
     for name in &planner_output.already_installed_or_up_to_date {
         let msg = format!("{} is already installed or up-to-date.", name.cyan());
+        debug!("RUNNER: {}", msg);
         runner_event_tx_clone
             .send(PipelineEvent::LogInfo { message: msg })
             .ok();
     }
     for (name, err) in &planner_output.errors {
         let msg = format!("Error during planning for '{}': {}", name.cyan(), err);
-
+        error!("RUNNER: {}", msg);
         runner_event_tx_clone
             .send(PipelineEvent::LogError { message: msg })
             .ok();
@@ -198,6 +237,10 @@ pub async fn run_pipeline(
             {
                 states_guard.insert(job.target_id.clone(), JobProcessingState::Succeeded);
                 final_success_count.fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "[{}] Marked as Succeeded (pre-existing/up-to-date).",
+                    job.target_id
+                );
             } else if let Some((_, err)) = planner_output
                 .errors
                 .iter()
@@ -208,6 +251,10 @@ pub async fn run_pipeline(
                     JobProcessingState::Failed(Arc::new(err.clone())),
                 );
                 final_fail_count.fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "[{}] Marked as Failed (planning error: {}).",
+                    job.target_id, err
+                );
             } else if job.use_private_store_source.is_some() {
                 let path = job.use_private_store_source.clone().unwrap();
                 states_guard.insert(
@@ -215,12 +262,26 @@ pub async fn run_pipeline(
                     JobProcessingState::Downloaded(path.clone()),
                 );
                 jobs_pending_or_active += 1;
+                debug!(
+                    "[{}] Initial state: Downloaded (private store: {}). Active jobs: {}",
+                    job.target_id,
+                    path.display(),
+                    jobs_pending_or_active
+                );
             } else {
                 states_guard.insert(job.target_id.clone(), JobProcessingState::PendingDownload);
                 jobs_pending_or_active += 1;
+                debug!(
+                    "[{}] Initial state: PendingDownload. Active jobs: {}",
+                    job.target_id, jobs_pending_or_active
+                );
             }
         }
     }
+    debug!(
+        "RUNNER: Initial job states populated. Jobs pending/active: {}",
+        jobs_pending_or_active
+    );
 
     let mut downloads_to_initiate = Vec::new();
     {
@@ -238,6 +299,7 @@ pub async fn run_pipeline(
     let mut download_coordinator_task_handle: Option<JoinHandle<Vec<(String, SpsError)>>> = None;
 
     if !downloads_to_initiate.is_empty() {
+        debug!("RUNNER: Cloning runner_event_tx_clone for download_coordinator_event_tx_clone");
         let download_coordinator_event_tx_clone = runner_event_tx_clone.clone();
         let http_client = Arc::new(HttpClient::new());
         let config_for_downloader_owned = config.clone();
@@ -248,15 +310,24 @@ pub async fn run_pipeline(
             http_client,
             download_coordinator_event_tx_clone,
         );
+        debug!(
+            "RUNNER: Starting download coordination for {} jobs...",
+            downloads_to_initiate.len()
+        );
+        debug!("RUNNER: Cloning download_outcome_tx for tx_for_download_task");
         let tx_for_download_task = download_outcome_tx.clone();
 
+        debug!("RUNNER: Spawning DownloadCoordinator task.");
         download_coordinator_task_handle = Some(tokio::spawn(async move {
+            debug!("DOWNLOAD_COORD_TASK: DownloadCoordinator task started.");
             let result = download_coordinator
                 .coordinate_downloads(downloads_to_initiate, tx_for_download_task)
                 .await;
+            debug!("DOWNLOAD_COORD_TASK: DownloadCoordinator task finished. coordinate_downloads returned.");
             result
         }));
     } else if jobs_pending_or_active > 0 {
+        debug!("RUNNER: No downloads to initiate, but {} jobs are pending. Triggering check_and_dispatch.", jobs_pending_or_active);
         check_and_dispatch(
             planned_jobs.clone(),
             job_processing_states.clone(),
@@ -266,9 +337,12 @@ pub async fn run_pipeline(
             config,
             flags,
         );
+    } else {
+        debug!("RUNNER: No downloads to initiate and no jobs pending/active. Pipeline might be empty or all pre-satisfied/failed.");
     }
 
     drop(download_outcome_tx);
+    debug!("RUNNER: Dropped main MPSC download_outcome_tx (runner's original clone).");
 
     if !planned_jobs.is_empty() {
         runner_event_tx_clone
@@ -381,8 +455,10 @@ pub async fn run_pipeline(
     );
 
     drop(download_outcome_rx);
+    debug!("RUNNER: Dropped MPSC download_outcome_rx (runner's receiver).");
 
     if let Some(handle) = download_coordinator_task_handle {
+        debug!("RUNNER: Waiting for DownloadCoordinator task to complete...");
         match handle.await {
             Ok(critical_download_errors) => {
                 if !critical_download_errors.is_empty() {
@@ -392,6 +468,7 @@ pub async fn run_pipeline(
                     );
                     final_fail_count.fetch_add(critical_download_errors.len(), Ordering::Relaxed);
                 }
+                debug!("RUNNER: DownloadCoordinator task completed.");
             }
             Err(e) => {
                 let panic_msg = get_panic_message(Box::new(e));
@@ -402,10 +479,16 @@ pub async fn run_pipeline(
                 final_fail_count.fetch_add(1, Ordering::Relaxed);
             }
         }
+    } else {
+        debug!("RUNNER: No DownloadCoordinator task was spawned or it was already handled.");
     }
+    debug!("RUNNER: DownloadCoordinator task processing finished (awaited or none).");
+
+    debug!("RUNNER: Closing worker job channel (signal to core workers).");
     drop(worker_job_tx);
+    debug!("RUNNER: Waiting for core worker pool to join...");
     match core_handle.join() {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => debug!("RUNNER: Core worker pool manager thread completed successfully."),
         Ok(Err(e)) => {
             error!("RUNNER: Core worker pool manager thread failed: {}", e);
             final_fail_count.fetch_add(1, Ordering::Relaxed);
@@ -418,11 +501,16 @@ pub async fn run_pipeline(
             final_fail_count.fetch_add(1, Ordering::Relaxed);
         }
     }
+    debug!("RUNNER: Core worker pool joined. core_event_tx_for_worker_manager (broadcast sender) dropped.");
 
     let duration = start_time.elapsed();
     let success_total = final_success_count.load(Ordering::Relaxed);
     let fail_total = final_fail_count.load(Ordering::Relaxed);
 
+    debug!(
+        "RUNNER: Pipeline processing finished. Success: {}, Fail: {}. Duration: {:.2}s. Sending PipelineFinished event.",
+        success_total, fail_total, duration.as_secs_f64()
+    );
     if let Err(e) = runner_event_tx_clone.send(PipelineEvent::PipelineFinished {
         duration_secs: duration.as_secs_f64(),
         success_count: success_total,
@@ -431,15 +519,23 @@ pub async fn run_pipeline(
         warn!("RUNNER: Failed to send PipelineFinished event: {:?}. Status handler might not receive it.", e);
     }
 
+    // Explicitly drop the event_tx inside propagation_ctx before dropping the last senders.
     propagation_ctx.event_tx = None;
 
+    debug!("RUNNER: Dropping runner_event_tx_clone (broadcast sender).");
     drop(runner_event_tx_clone);
+    // event_rx_for_runner (broadcast receiver) goes out of scope here and is dropped.
 
+    debug!("RUNNER: Dropping main event_tx (final broadcast sender).");
     drop(event_tx);
 
+    debug!("RUNNER: All known broadcast senders dropped. About to await status_handle.");
     if let Err(e) = status_handle.await {
         warn!("RUNNER: Status handler task failed or panicked: {}", e);
+    } else {
+        debug!("RUNNER: Status handler task completed successfully.");
     }
+    debug!("RUNNER: run_pipeline function is ending.");
 
     if fail_total == 0 {
         Ok(())
@@ -731,6 +827,7 @@ fn check_and_dispatch(
             dispatched_this_round
         );
     }
+    debug!("RUNNER: --- Exit check_and_dispatch ---");
 }
 
 fn are_dependencies_succeeded(
@@ -775,6 +872,10 @@ fn are_dependencies_succeeded(
                     })
                     .map(|dep_edge| dep_edge.name.clone())
                     .collect();
+                debug!(
+                    "[{}] AreDepsSucceeded: Formula dependencies to check: {:?}",
+                    target_id, deps
+                );
                 deps
             } else {
                 warn!("[{}] AreDepsSucceeded: Formula not found in ResolvedGraph. Assuming no dependencies.", target_id);
@@ -782,22 +883,36 @@ fn are_dependencies_succeeded(
             }
         }
         InstallTargetIdentifier::Cask(cask_arc) => {
-            if let Some(deps_on) = &cask_arc.depends_on {
+            let deps = if let Some(deps_on) = &cask_arc.depends_on {
                 deps_on.formula.clone()
             } else {
                 Vec::new()
-            }
+            };
+            debug!(
+                "[{}] AreDepsSucceeded: Cask formula dependencies to check: {:?}",
+                target_id, deps
+            );
+            deps
         }
     };
 
     if dependencies_to_check.is_empty() {
+        debug!(
+            "[{}] AreDepsSucceeded: No dependencies to check. Returning true.",
+            target_id
+        );
         return true;
     }
 
     let states_guard = job_states_arc.lock().unwrap();
     for dep_name in &dependencies_to_check {
         match states_guard.get(dep_name) {
-            Some(JobProcessingState::Succeeded) => {}
+            Some(JobProcessingState::Succeeded) => {
+                debug!(
+                    "[{}] AreDepsSucceeded: Dependency '{}' is Succeeded.",
+                    target_id, dep_name
+                );
+            }
             Some(JobProcessingState::Failed(err)) => {
                 debug!(
                     "[{}] AreDepsSucceeded: Dependency '{}' is FAILED ({}). Returning false.",
@@ -810,7 +925,9 @@ fn are_dependencies_succeeded(
             None => {
                 if let Some(resolved_dep_detail) = resolved_graph.resolution_details.get(dep_name) {
                     if resolved_dep_detail.status == ResolutionStatus::Installed {
+                        debug!("[{}] AreDepsSucceeded: Dependency '{}' is already installed (from ResolvedGraph).", target_id, dep_name);
                     } else {
+                        debug!("[{}] AreDepsSucceeded: Dependency '{}' has no active state and not ResolvedGraph::Installed (is {:?}). Returning false.", target_id, dep_name, resolved_dep_detail.status);
                         return false;
                     }
                 } else {
@@ -818,11 +935,16 @@ fn are_dependencies_succeeded(
                     return false;
                 }
             }
-            _other_state => {
+            other_state => {
+                debug!("[{}] AreDepsSucceeded: Dependency '{}' is not yet Succeeded. Current state: {:?}. Returning false.", target_id, dep_name, other_state.map(|s| format!("{s:?}")));
                 return false;
             }
         }
     }
+    debug!(
+        "[{}] AreDepsSucceeded: All dependencies Succeeded or were pre-installed. Returning true.",
+        target_id
+    );
     true
 }
 
@@ -922,10 +1044,23 @@ fn propagate_failure(
                             ))
                             .ok();
                         }
+                        debug!("[{}] PropagateFailure: Marked as FAILED due to propagated failure from '{}'.", job_to_check.target_id, current_source_of_failure);
                     }
                 }
                 drop(states_guard);
             }
         }
+    }
+
+    if !newly_failed_dependents.is_empty() {
+        debug!(
+            "[{}] PropagateFailure: Finished. Newly failed dependents: {:?}",
+            failed_job_id, newly_failed_dependents
+        );
+    } else {
+        debug!(
+            "[{}] PropagateFailure: Finished. No new dependents marked as failed.",
+            failed_job_id
+        );
     }
 }

@@ -1,5 +1,4 @@
-// FILE: sps-core/src/dependency/resolver.rs
-
+// sps-common/src/dependency/resolver.rs
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +11,6 @@ use crate::formulary::Formulary;
 use crate::keg::KegRegistry;
 use crate::model::formula::Formula;
 
-// --- NodeInstallStrategy ---
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeInstallStrategy {
     BottlePreferred,
@@ -20,14 +18,12 @@ pub enum NodeInstallStrategy {
     BottleOrFail,
 }
 
-// --- PerTargetInstallPreferences (local, minimal) ---
 #[derive(Debug, Clone, Default)]
 pub struct PerTargetInstallPreferences {
     pub force_source_build_targets: HashSet<String>,
     pub force_bottle_only_targets: HashSet<String>,
 }
 
-// --- ResolutionContext ---
 pub struct ResolutionContext<'a> {
     pub formulary: &'a Formulary,
     pub keg_registry: &'a KegRegistry,
@@ -38,11 +34,9 @@ pub struct ResolutionContext<'a> {
     pub initial_target_preferences: &'a PerTargetInstallPreferences,
     pub build_all_from_source: bool,
     pub cascade_source_preference_to_dependencies: bool,
-    /// Function pointer to check if a bottle is available for a formula.
     pub has_bottle_for_current_platform: fn(&Formula) -> bool,
 }
 
-// --- ResolvedDependency ---
 #[derive(Debug, Clone)]
 pub struct ResolvedDependency {
     pub formula: Arc<Formula>,
@@ -64,7 +58,7 @@ pub enum ResolutionStatus {
     Failed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)] // Added Default
 pub struct ResolvedGraph {
     pub install_plan: Vec<ResolvedDependency>,
     pub build_dependency_opt_paths: Vec<PathBuf>,
@@ -72,12 +66,18 @@ pub struct ResolvedGraph {
     pub resolution_details: HashMap<String, ResolvedDependency>,
 }
 
+// Added empty constructor
+impl ResolvedGraph {
+    pub fn empty() -> Self {
+        Default::default()
+    }
+}
+
 pub struct DependencyResolver<'a> {
     context: ResolutionContext<'a>,
     formula_cache: HashMap<String, Arc<Formula>>,
     visiting: HashSet<String>,
     resolution_details: HashMap<String, ResolvedDependency>,
-    // Store Arc<SpsError> instead of SpsError
     errors: HashMap<String, Arc<SpsError>>,
 }
 
@@ -99,7 +99,6 @@ impl<'a> DependencyResolver<'a> {
         is_initial_target: bool,
         requesting_parent_strategy: Option<NodeInstallStrategy>,
     ) -> NodeInstallStrategy {
-        // ── 1. Per‑target overrides ────────────────────────────────────────────────
         if is_initial_target {
             if self
                 .context
@@ -119,12 +118,10 @@ impl<'a> DependencyResolver<'a> {
             }
         }
 
-        // ── 2. Global --build‑from‑source flag ─────────────────────────────────────
         if self.context.build_all_from_source {
             return NodeInstallStrategy::SourceOnly;
         }
 
-        // ── 3. Cascade rules from parent ───────────────────────────────────────────
         if self.context.cascade_source_preference_to_dependencies
             && matches!(
                 requesting_parent_strategy,
@@ -140,7 +137,6 @@ impl<'a> DependencyResolver<'a> {
             return NodeInstallStrategy::BottleOrFail;
         }
 
-        // ── 4. Default heuristic: bottle if we have one, else build ───────────────
         let strategy = if (self.context.has_bottle_for_current_platform)(formula_arc) {
             NodeInstallStrategy::BottlePreferred
         } else {
@@ -280,7 +276,6 @@ impl<'a> DependencyResolver<'a> {
         })
     }
 
-    /// Walk a dependency node, collecting status and propagating errors
     fn resolve_recursive(
         &mut self,
         name: &str,
@@ -293,7 +288,6 @@ impl<'a> DependencyResolver<'a> {
             name, tags_from_parent_edge, is_initial_target
         );
 
-        // -------- cycle guard -------------------------------------------------------------
         if self.visiting.contains(name) {
             error!("Dependency cycle detected involving: {}", name);
             return Err(SpsError::DependencyError(format!(
@@ -301,22 +295,7 @@ impl<'a> DependencyResolver<'a> {
             )));
         }
 
-        // -------- if we have a previous entry, maybe promote status / tags -----------------
         if let Some(existing) = self.resolution_details.get_mut(name) {
-            // ─────────────────────────────────────────────────────────────────────
-            // PROMOTION RULES
-            //
-            // A node can be reached through multiple edges in the graph.  Each time
-            // it is revisited we may need to *promote* its ResolutionStatus or merge
-            // DependencyTag bits so that the strictest requirements win:
-            //
-            //   Installed  >  Requested  >  Missing  >  SkippedOptional
-            //
-            // Tags are OR‑combined so BUILD / RUNTIME / OPTIONAL flags accumulate.
-            // Without these promotions an edge marked OPTIONAL could suppress the
-            // installation later required by a hard RUNTIME edge.
-            // ─────────────────────────────────────────────────────────────────────
-            // status promotion rules -------------------------------------------------------
             let original_status = existing.status;
             let original_tags = existing.accumulated_tags;
 
@@ -340,7 +319,6 @@ impl<'a> DependencyResolver<'a> {
                 };
             }
 
-            // apply any changes ------------------------------------------------------------
             let mut needs_revisit = false;
             if new_status != original_status {
                 debug!(
@@ -361,7 +339,6 @@ impl<'a> DependencyResolver<'a> {
                 needs_revisit = true;
             }
 
-            // nothing else to do
             if !needs_revisit {
                 debug!("'{}' already resolved with compatible status/tags.", name);
                 return Ok(());
@@ -371,12 +348,9 @@ impl<'a> DependencyResolver<'a> {
                 "Re-evaluating dependencies for '{}' due to status/tag update",
                 name
             );
-        }
-        // -------- first time we see this node ---------------------------------------------
-        else {
+        } else {
             self.visiting.insert(name.to_string());
 
-            // load / cache the formula -----------------------------------------------------
             let formula_arc = match self.formula_cache.get(name) {
                 Some(f) => f.clone(),
                 None => {
@@ -406,7 +380,7 @@ impl<'a> DependencyResolver<'a> {
                             self.visiting.remove(name);
                             self.errors
                                 .insert(name.to_string(), Arc::new(SpsError::NotFound(msg)));
-                            return Ok(()); // treat “not found” as a soft failure
+                            return Ok(());
                         }
                     }
                 }
@@ -466,14 +440,12 @@ impl<'a> DependencyResolver<'a> {
             );
         }
 
-        // --------------------------------------------------------------------- recurse ----
         let dep_snapshot = self
             .resolution_details
             .get(name)
             .expect("just inserted")
             .clone();
 
-        // if this node is already irrecoverably broken, stop here
         if matches!(
             dep_snapshot.status,
             ResolutionStatus::Failed | ResolutionStatus::NotFound
@@ -482,7 +454,6 @@ impl<'a> DependencyResolver<'a> {
             return Ok(());
         }
 
-        // iterate its declared dependencies -----------------------------------------------
         for dep in dep_snapshot.formula.dependencies()? {
             let dep_name = &dep.name;
             let dep_tags = dep.tags;
@@ -494,16 +465,13 @@ impl<'a> DependencyResolver<'a> {
                 parent_name, parent_strategy, dep_name, dep_tags
             );
 
-            // optional / test filtering
             if !self.should_consider_dependency(&dep) {
                 if !self.resolution_details.contains_key(dep_name.as_str()) {
                     debug!("RESOLVER: Child '{}' of '{}' globally SKIPPED (e.g. optional/test not included). Tags: {:?}", dep_name, parent_name, dep_tags);
-                    // ...existing code for SkippedOptional...
                 }
                 continue;
             }
 
-            // Specific edge processing based on parent strategy
             let should_process = self.context.should_process_dependency_edge(
                 &dep_snapshot.formula,
                 dep_tags,
@@ -515,7 +483,6 @@ impl<'a> DependencyResolver<'a> {
                     "RESOLVER: Edge from '{}' (Strategy: {:?}) to child '{}' (Tags: {:?}) was SKIPPED by should_process_dependency_edge.",
                     parent_name, parent_strategy, dep_name, dep_tags
                 );
-                // ...existing code for skipping...
                 continue;
             }
 
@@ -524,11 +491,16 @@ impl<'a> DependencyResolver<'a> {
                 parent_name, parent_strategy, dep_name, dep_tags
             );
 
-            // --- real recursion -----------------------------------------------------------
-            if let Err(_e) =
-                self.resolve_recursive(dep_name, dep_tags, false, Some(parent_strategy))
+            if let Err(e) = self.resolve_recursive(dep_name, dep_tags, false, Some(parent_strategy))
             {
-                // ...existing code...
+                // Log the error but don't necessarily stop all resolution for this branch yet
+                warn!(
+                    "Error resolving child dependency '{}' for parent '{}': {}",
+                    dep_name, name, e
+                );
+                // Optionally, mark parent as failed if child error is critical
+                // self.errors.insert(name.to_string(), Arc::new(e)); // Storing error for parent if
+                // needed
             }
         }
 
@@ -588,11 +560,13 @@ impl<'a> DependencyResolver<'a> {
 
         while let Some(u_name) = queue.pop_front() {
             if let Some(resolved_dep) = relevant_nodes_map.get(&u_name) {
-                sorted_list.push((**resolved_dep).clone());
+                sorted_list.push((**resolved_dep).clone()); // Deref Arc then clone
+                                                            // ResolvedDependency
             }
             if let Some(neighbors) = adj.get(&u_name) {
                 for v_name in neighbors {
                     if relevant_nodes_map.contains_key(v_name) {
+                        // Check if neighbor is relevant
                         if let Some(degree) = in_degree.get_mut(v_name) {
                             *degree = degree.saturating_sub(1);
                             if *degree == 0 {
@@ -604,73 +578,34 @@ impl<'a> DependencyResolver<'a> {
             }
         }
 
-        let install_plan: Vec<ResolvedDependency> = sorted_list
-            .into_iter()
-            .filter(|dep| {
-                matches!(
-                    dep.status,
-                    ResolutionStatus::Missing | ResolutionStatus::Requested
-                )
-            })
-            .collect();
-
-        let expected_installable_count = relevant_nodes_map
-            .values()
-            .filter(|dep| {
-                matches!(
-                    dep.status,
-                    ResolutionStatus::Missing | ResolutionStatus::Requested
-                )
-            })
-            .count();
-
-        #[cfg(debug_assertions)]
-        {
-            use std::collections::HashMap;
-            // map formula name → index in install_plan
-            let index_map: HashMap<&str, usize> = install_plan
-                .iter()
-                .enumerate()
-                .map(|(i, d)| (d.formula.name(), i))
-                .collect();
-
-            for (parent_name, parent_rd) in &relevant_nodes_map {
-                if let Ok(edges) = parent_rd.formula.dependencies() {
-                    for edge in edges {
-                        let child = &edge.name;
-                        if relevant_nodes_map.contains_key(child)
-                            && self.context.should_process_dependency_edge(
-                                &parent_rd.formula,
-                                edge.tags,
-                                parent_rd.determined_install_strategy,
-                            )
-                        {
-                            if let (Some(&p_idx), Some(&c_idx)) = (
-                                index_map.get(parent_name.as_str()),
-                                index_map.get(child.as_str()),
-                            ) {
-                                debug_assert!(
-                                    p_idx > c_idx,
-                                    "Topological order violation: parent '{parent_name}' appears before child '{child}'"
-                                );
-                            }
-                        }
+        // Check for cycles: if sorted_list's length doesn't match relevant_nodes_map's length
+        // (excluding already installed, skipped optional if not included, etc.)
+        // A more direct check is if in_degree still contains non-zero values for relevant nodes.
+        let mut cycle_detected = false;
+        for (name, &degree) in &in_degree {
+            if degree > 0 && relevant_nodes_map.contains_key(name) {
+                // Further check if this node should have been processed (not skipped globally)
+                if let Some(detail) = self.resolution_details.get(name) {
+                    if self
+                        .context
+                        .should_consider_edge_globally(detail.accumulated_tags)
+                    {
+                        error!("Cycle detected or unresolved dependency: Node '{}' still has in-degree {}. Tags: {:?}", name, degree, detail.accumulated_tags);
+                        cycle_detected = true;
+                    } else {
+                        debug!("Node '{}' has in-degree {} but was globally skipped. Tags: {:?}. Not a cycle error.", name, degree, detail.accumulated_tags);
                     }
                 }
             }
         }
 
-        if install_plan.len() != expected_installable_count && expected_installable_count > 0 {
-            error!(
-                "Cycle detected! Sorted count ({}) != Relevant node count ({}).",
-                install_plan.len(),
-                expected_installable_count
-            );
+        if cycle_detected {
             return Err(SpsError::DependencyError(
-                "Circular dependency detected".to_string(),
+                "Circular dependency detected or graph resolution incomplete".to_string(),
             ));
         }
-        Ok(install_plan)
+
+        Ok(sorted_list) // Return the full sorted list of relevant nodes
     }
 
     fn should_consider_dependency(&self, dep: &Dependency) -> bool {
@@ -693,7 +628,7 @@ impl Formula {
         Self {
             name: name.to_string(),
             stable_version_str: "0.0.0".to_string(),
-            version_semver: semver::Version::new(0, 0, 0),
+            version_semver: semver::Version::new(0, 0, 0), // Direct use
             revision: 0,
             desc: Some("Placeholder for unresolved formula".to_string()),
             homepage: None,
@@ -709,7 +644,6 @@ impl Formula {
     }
 }
 
-// --- ResolutionContext methods ---
 impl<'a> ResolutionContext<'a> {
     pub fn should_process_dependency_edge(
         &self,
@@ -717,34 +651,14 @@ impl<'a> ResolutionContext<'a> {
         edge_tags: DependencyTag,
         parent_node_determined_strategy: NodeInstallStrategy,
     ) -> bool {
-        debug!(
-            "should_process_dependency_edge: Parent='{}', EdgeTags={:?}, ParentStrategy={:?}",
-            parent_formula_for_logging.name(),
-            edge_tags,
-            parent_node_determined_strategy
-        );
+        if !self.should_consider_edge_globally(edge_tags) {
+            debug!(
+                "Edge with tags {:?} for child of '{}' globally SKIPPED (e.g. optional/test not included).",
+                edge_tags, parent_formula_for_logging.name()
+            );
+            return false;
+        }
 
-        if edge_tags.contains(DependencyTag::TEST) && !self.include_test {
-            debug!(
-                "Edge with tags {:?} skipped: TEST dependencies excluded by context.",
-                edge_tags
-            );
-            return false;
-        }
-        if edge_tags.contains(DependencyTag::OPTIONAL) && !self.include_optional {
-            debug!(
-                "Edge with tags {:?} skipped: OPTIONAL dependencies excluded by context.",
-                edge_tags
-            );
-            return false;
-        }
-        if edge_tags.contains(DependencyTag::RECOMMENDED) && self.skip_recommended {
-            debug!(
-                "Edge with tags {:?} skipped: RECOMMENDED dependencies excluded by context.",
-                edge_tags
-            );
-            return false;
-        }
         match parent_node_determined_strategy {
             NodeInstallStrategy::BottlePreferred | NodeInstallStrategy::BottleOrFail => {
                 let is_purely_build_dependency = edge_tags.contains(DependencyTag::BUILD)
@@ -753,21 +667,17 @@ impl<'a> ResolutionContext<'a> {
                             | DependencyTag::RECOMMENDED
                             | DependencyTag::OPTIONAL,
                     );
-                debug!(
-                    "Parent is bottled. For edge with tags {:?}, is_purely_build_dependency: {}",
-                    edge_tags, is_purely_build_dependency
-                );
                 if is_purely_build_dependency {
                     debug!("Edge with tags {:?} SKIPPED: Pure BUILD dependency of a bottle-installed parent '{}'.", edge_tags, parent_formula_for_logging.name());
                     return false;
                 }
             }
             NodeInstallStrategy::SourceOnly => {
-                debug!("Parent is SourceOnly. Edge with tags {:?} will be processed (unless globally skipped).", edge_tags);
+                // Process all relevant (non-globally-skipped) dependencies for source builds
             }
         }
         debug!(
-            "Edge with tags {:?} WILL BE PROCESSED for parent '{}' with strategy {:?}.",
+            "Edge with tags {:?} WILL BE PROCESSED for parent '{}' (strategy {:?}).",
             edge_tags,
             parent_formula_for_logging.name(),
             parent_node_determined_strategy
