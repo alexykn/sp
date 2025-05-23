@@ -3,16 +3,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Represents a requirement beyond a simple formula dependency.
-/// Placeholder - This needs significant expansion based on Homebrew's Requirement system.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Requirement {
-    /// Minimum macOS version required.
-    MacOS(String), // e.g., "12.0"
-    /// Minimum Xcode version required.
-    Xcode(String), // e.g., "14.1"
-    // Add others: Arch, specific libraries, environment variables, etc.
-    /// Placeholder for unparsed or complex requirements.
+    MacOS(String),
+    Xcode(String),
     Other(String),
 }
 

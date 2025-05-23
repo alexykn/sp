@@ -77,7 +77,7 @@ fn do_execute_sync_steps(
                                 debug!("[WORKER:{}] Dependency '{}' was NOT FOUND by KegRegistry for formula '{}'. THIS IS THE ERROR POINT.", dep.name, job_request.target_id, formula_arc.name());
                                 let error_msg = format!(
                                     "Runtime dependency '{}' for formula '{}' is not installed. Aborting operation for '{}'.",
-                                    dep.name, job_request.target_id, job_request.target_id
+                                    dep.name, formula_arc.name(), job_request.target_id
                                 );
                                 error!("{}", error_msg);
                                 return Err(SpsError::DependencyError(error_msg));

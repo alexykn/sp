@@ -1,87 +1,58 @@
-use std::collections::HashMap; // For caching parsed formulas
+use std::collections::HashMap;
 use std::sync::Arc;
 
-// Removed: use std::fs;
-// Removed: use std::path::PathBuf;
-// Removed: const DEFAULT_CORE_TAP: &str = "homebrew/core";
 use tracing::debug;
 
 use super::cache::Cache;
 use super::config::Config;
 use super::error::{Result, SpsError};
-use super::model::formula::Formula; // Import the Cache struct // Import Arc for thread-safe shared ownership
+use super::model::formula::Formula;
 
-/// Responsible for finding and loading Formula definitions from the API cache.
 #[derive()]
 pub struct Formulary {
-    // config: Config, // Keep config if needed for cache path, etc.
     cache: Cache,
-    // Optional: Add a cache for *parsed* formulas to avoid repeated parsing of the large JSON
-    parsed_cache: std::sync::Mutex<HashMap<String, std::sync::Arc<Formula>>>, /* Using Arc for thread-safety */
+    parsed_cache: std::sync::Mutex<HashMap<String, std::sync::Arc<Formula>>>,
 }
 
 impl Formulary {
     pub fn new(config: Config) -> Self {
-        // Initialize the cache helper using the directory from config
         let cache = Cache::new(&config).unwrap_or_else(|e| {
-            // Handle error appropriately - maybe panic or return Result?
-            // Using expect here for simplicity, but Result is better.
             panic!("Failed to initialize cache in Formulary: {e}");
         });
         Self {
-            // config,
             cache,
             parsed_cache: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    // Removed: resolve_formula_path
-    // Removed: parse_qualified_name
-
-    /// Loads a formula definition by name from the API cache.
     pub fn load_formula(&self, name: &str) -> Result<Formula> {
-        // 1. Check parsed cache first
         let mut parsed_cache_guard = self.parsed_cache.lock().unwrap();
         if let Some(formula_arc) = parsed_cache_guard.get(name) {
             debug!("Loaded formula '{}' from parsed cache.", name);
             return Ok(Arc::clone(formula_arc).as_ref().clone());
         }
-        // Release lock early if not found
         drop(parsed_cache_guard);
 
-        // 2. Load the raw formula list from the main cache file
-        debug!("Loading raw formula data from cache file 'formula.json'...");
-        let raw_data = self.cache.load_raw("formula.json")?; // Assumes update stored it here
-
-        // 3. Parse the entire JSON array
-        // This could be expensive, hence the parsed_cache above.
-        debug!("Parsing full formula list");
+        let raw_data = self.cache.load_raw("formula.json")?;
         let all_formulas: Vec<Formula> = serde_json::from_str(&raw_data)
             .map_err(|e| SpsError::Cache(format!("Failed to parse cached formula data: {e}")))?;
         debug!("Parsed {} formulas.", all_formulas.len());
 
-        // 4. Find the requested formula and populate the parsed cache
         let mut found_formula: Option<Formula> = None;
-        // Lock again to update the parsed cache
         parsed_cache_guard = self.parsed_cache.lock().unwrap();
-        // Use entry API to avoid redundant lookups if another thread populated it
         for formula in all_formulas {
-            let formula_name = formula.name.clone(); // Clone name for insertion
-            let formula_arc = std::sync::Arc::new(formula); // Create Arc once
+            let formula_name = formula.name.clone();
+            let formula_arc = std::sync::Arc::new(formula);
 
-            // If this is the formula we're looking for, store it for return value
             if formula_name == name {
                 found_formula = Some(Arc::clone(&formula_arc).as_ref().clone());
-                // Clone Formula out
             }
 
-            // Insert into parsed cache using entry API
             parsed_cache_guard
                 .entry(formula_name)
                 .or_insert(formula_arc);
         }
 
-        // 5. Return the found formula or an error
         match found_formula {
             Some(f) => {
                 debug!(
