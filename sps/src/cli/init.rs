@@ -10,7 +10,7 @@ use colored::Colorize;
 use sps_common::config::Config; // Assuming Config is correctly in sps_common
 use sps_common::error::{Result as SpsResult, SpsError};
 use tempfile;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -21,7 +21,7 @@ pub struct InitArgs {
 
 impl InitArgs {
     pub async fn run(&self, config: &Config) -> SpsResult<()> {
-        info!(
+        debug!(
             "Initializing sps environment at {}",
             config.sps_root().display()
         );
@@ -37,7 +37,7 @@ impl InitArgs {
             };
 
             if marker_path.exists() && !self.force {
-                info!(
+                debug!(
                     "{} already exists. sps appears to be initialized. Use --force to re-initialize.",
                     marker_path.display()
                 );
@@ -58,12 +58,12 @@ impl InitArgs {
                 )));
             }
             if self.force {
-                info!(
+                debug!(
                     "--force specified. Proceeding with initialization in {}.",
                     sps_root.display()
                 );
             } else if is_empty {
-                info!(
+                debug!(
                     "Directory {} exists but is empty. Proceeding with initialization.",
                     sps_root.display()
                 );
@@ -92,7 +92,7 @@ impl InitArgs {
             &current_user_name
         };
 
-        info!(
+        debug!(
             "Will attempt to set ownership of sps-managed directories under {} to {}:{}",
             sps_root.display(),
             current_user_name,
@@ -173,7 +173,7 @@ impl InitArgs {
         #[cfg(unix)]
         {
             // More targeted chown and chmod
-            info!(
+            debug!(
                 "Setting ownership and permissions for sps-managed directories under {}...",
                 sps_root.display()
             );
@@ -293,7 +293,7 @@ impl InitArgs {
             print_manual_path_instructions(&config.bin_dir().to_string_lossy());
         }
 
-        info!(
+        debug!(
             "{} {}",
             "Successfully initialized sps environment at".green(),
             config.sps_root().display().to_string().green()
@@ -335,7 +335,7 @@ fn run_sudo_command(command: &str, args: &[&str]) -> SpsResult<()> {
 
 // configure_shell_path helper (no change from your existing logic)
 fn configure_shell_path(config: &Config, current_user_name_for_log: &str) -> SpsResult<()> {
-    info!("Attempting to configure your shell for sps PATH...");
+    debug!("Attempting to configure your shell for sps PATH...");
 
     let sps_bin_path_str = config.bin_dir().to_string_lossy().into_owned();
     let home_dir = config.home_dir();
@@ -388,7 +388,7 @@ fn configure_shell_path(config: &Config, current_user_name_for_log: &str) -> Sps
             } else if profile_path.exists() {
                 ensure_profile_sources_rc(&profile_path, &bashrc_path, "Bash (.profile)");
             } else {
-                info!("Neither .bash_profile nor .profile found. Creating .bash_profile to source .bashrc.");
+                debug!("Neither .bash_profile nor .profile found. Creating .bash_profile to source .bashrc.");
                 ensure_profile_sources_rc(&bash_profile_path, &bashrc_path, "Bash (.bash_profile)");
             }
         } else if update_shell_config(
@@ -482,7 +482,7 @@ fn configure_shell_path(config: &Config, current_user_name_for_log: &str) -> Sps
             );
         }
     } else if path_seems_configured {
-        info!("sps path ({}) is likely already configured for your shell ({}). No configuration files were modified.", sps_bin_path_str.cyan(), shell_path_env.yellow());
+        debug!("sps path ({}) is likely already configured for your shell ({}). No configuration files were modified.", sps_bin_path_str.cyan(), shell_path_env.yellow());
     } else if !shell_path_env.is_empty() && shell_path_env != "unknown" {
         warn!("Could not automatically update PATH for your shell: {}. Please add {} to your PATH manually.", shell_path_env.yellow(), sps_bin_path_str.cyan());
         print_manual_path_instructions(&sps_bin_path_str);
@@ -630,7 +630,7 @@ fn update_shell_config(
         );
         Ok(false) // Indicate that update was not successful
     } else {
-        info!(
+        debug!(
             "Successfully updated {} ({}) with sps PATH.",
             config_path.display(),
             shell_name_for_log
@@ -691,7 +691,7 @@ fn ensure_profile_sources_rc(profile_path: &PathBuf, rc_path: &Path, shell_name_
         rc_path_str = rc_path_str
     );
 
-    info!(
+    debug!(
         "Attempting to ensure {} ({}) sources {}",
         profile_path.display(),
         shell_name_for_log,
@@ -725,7 +725,7 @@ fn ensure_profile_sources_rc(profile_path: &PathBuf, rc_path: &Path, shell_name_
                     e
                 );
             } else {
-                info!(
+                debug!(
                     "Updated {} ({}) to source {}.",
                     profile_path.display(),
                     shell_name_for_log,

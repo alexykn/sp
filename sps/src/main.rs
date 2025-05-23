@@ -81,9 +81,6 @@ async fn main() -> spResult<()> {
         _ => LevelFilter::TRACE,
     };
     let max_log_level = level_filter.into_level().unwrap_or(tracing::Level::INFO);
-    let info_level = LevelFilter::INFO
-        .into_level()
-        .unwrap_or(tracing::Level::INFO);
 
     let env_filter = EnvFilter::builder()
         .with_default_directive(level_filter.into())
@@ -108,7 +105,8 @@ async fn main() -> spResult<()> {
         let file_appender = tracing_appender::rolling::daily(&log_dir, "sps.log");
         let (non_blocking_appender, guard) = tracing_appender::non_blocking(file_appender);
 
-        let stderr_writer = std::io::stderr.with_max_level(info_level);
+        // For verbose mode, show debug/trace logs on stderr too
+        let stderr_writer = std::io::stderr.with_max_level(max_log_level);
         let file_writer = non_blocking_appender.with_max_level(max_log_level);
 
         let _ = tracing_subscriber::fmt() // Use `let _ =`

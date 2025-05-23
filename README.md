@@ -12,7 +12,7 @@
 
 sps is a next‑generation, Rust‑powered package manager inspired by Homebrew. It installs and manages:
 
-- **Formulae:** command‑line tools, libraries, and languages  
+- **Formulae:** command‑line tools, libraries, and languages
 - **Casks:** desktop applications and related artifacts on macOS
 
 > _ARM only for now, might add x86 support eventually_
@@ -29,11 +29,11 @@ sps is a next‑generation, Rust‑powered package manager inspired by Homebrew.
 
 ## 🚧 Current Status
 
-- Bottle installation and uninstallation  
+- Bottle installation and uninstallation
 - Cask installation and uninstallation
 - Reinstall command for reinstalls
-- Upgrade command for updates (very careful. I ran into no system breakers, my Perl install got nuked though)
-- Parallel downloads and installs for speed  
+- Upgrade command for updates (Casks deactivated at the moment)
+- Parallel downloads and installs for speed
 - Automatic dependency resolution and installation
 - Building Formulae from source (very early impl)
 
@@ -41,8 +41,8 @@ sps is a next‑generation, Rust‑powered package manager inspired by Homebrew.
 
 ## 🚀 Roadmap
 
-- **Cleanup** old downloads, versions, caches  
-- **Prefix isolation:** support `/opt/sps` as standalone layout  
+- **Cleanup** old downloads, versions, caches
+- **Prefix isolation:** support `/opt/sps` as standalone layout
 - **`sps init`** helper to bootstrap your environment
 - **Ongoing** Bug fixes and stability improvements
 

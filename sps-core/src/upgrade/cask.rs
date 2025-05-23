@@ -3,13 +3,13 @@
 use std::path::Path;
 
 use sps_common::config::Config;
-use sps_common::error::{Result as SpsResult, SpsError};
+use sps_common::error::{Result as SpsResult /* SpsError */};
 use sps_common::model::cask::Cask;
-use sps_common::pipeline::JobAction; // Required for install_cask
-use tracing::{debug, error};
 
+// use sps_common::pipeline::JobAction; // Required for install_cask
+// use tracing::{debug, error};
 use crate::check::installed::InstalledPackageInfo;
-use crate::{install, uninstall};
+//use crate::{install, uninstall};
 
 /// Upgrades a cask package.
 ///
@@ -18,11 +18,13 @@ use crate::{install, uninstall};
 ///    uninstalled).
 /// 2. Installing the new version of the cask, which handles syncing for app bundles if applicable.
 pub async fn upgrade_cask_package(
-    cask: &Cask,
-    new_cask_download_path: &Path,
-    old_install_info: &InstalledPackageInfo,
-    config: &Config,
+    _cask: &Cask,
+    _new_cask_download_path: &Path,
+    _old_install_info: &InstalledPackageInfo,
+    _config: &Config,
 ) -> SpsResult<()> {
+    // Cask upgrades temporarily deactivated
+    /*
     debug!(
         "Upgrading cask {} from {} to {}",
         cask.token,
@@ -85,6 +87,7 @@ pub async fn upgrade_cask_package(
         ))
     })?;
     debug!("Successfully installed new version of cask {}", cask.token);
+    */
 
     Ok(())
 }

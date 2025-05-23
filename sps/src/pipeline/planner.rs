@@ -471,11 +471,25 @@ impl<'a> OperationPlanner<'a> {
                 let update_map: HashMap<String, UpdateInfo> =
                     updates.into_iter().map(|u| (u.name.clone(), u)).collect();
 
+                debug!(
+                    "[Planner] Found {} available updates out of {} packages checked",
+                    update_map.len(),
+                    packages_to_check.len()
+                );
+                debug!(
+                    "[Planner] Available updates: {:?}",
+                    update_map.keys().collect::<Vec<_>>()
+                );
+
                 for p_info in packages_to_check {
                     if plan.processed_globally.contains(&p_info.name) {
                         continue;
                     }
                     if let Some(ui) = update_map.get(&p_info.name) {
+                        debug!(
+                            "[Planner] Adding upgrade job for '{}': {} -> {}",
+                            p_info.name, p_info.version, ui.available_version
+                        );
                         plan.initial_ops.insert(
                             p_info.name.clone(),
                             (
@@ -486,10 +500,17 @@ impl<'a> OperationPlanner<'a> {
                                 Some(ui.target_definition.clone()),
                             ),
                         );
+                        // Don't mark packages with updates as processed_globally
+                        // so they can be included in the final job list
                     } else {
+                        debug!(
+                            "[Planner] No update available for '{}', marking as already satisfied",
+                            p_info.name
+                        );
                         plan.already_satisfied.insert(p_info.name.clone());
+                        // Only mark packages without updates as processed_globally
+                        plan.processed_globally.insert(p_info.name.clone());
                     }
-                    plan.processed_globally.insert(p_info.name.clone());
                 }
             }
             Err(e) => {
@@ -508,10 +529,26 @@ impl<'a> OperationPlanner<'a> {
         initial_targets: &[String],
         command_type: CommandType,
     ) -> PlanResult<PlannedOperations> {
+        debug!(
+            "[Planner] Starting plan_operations with command_type: {:?}, targets: {:?}",
+            command_type, initial_targets
+        );
+
         let mut intermediate_plan = match command_type {
             CommandType::Install => self.plan_for_install(initial_targets).await?,
             CommandType::Reinstall => self.plan_for_reinstall(initial_targets).await?,
-            CommandType::Upgrade { all } => self.plan_for_upgrade(initial_targets, all).await?,
+            CommandType::Upgrade { all } => {
+                debug!("[Planner] Calling plan_for_upgrade with all={}", all);
+                let plan = self.plan_for_upgrade(initial_targets, all).await?;
+                debug!("[Planner] plan_for_upgrade returned with {} initial_ops, {} errors, {} already_satisfied", 
+                    plan.initial_ops.len(), plan.errors.len(), plan.already_satisfied.len());
+                debug!(
+                    "[Planner] Initial ops: {:?}",
+                    plan.initial_ops.keys().collect::<Vec<_>>()
+                );
+                debug!("[Planner] Already satisfied: {:?}", plan.already_satisfied);
+                plan
+            }
         };
 
         let definitions_to_fetch: Vec<String> = intermediate_plan
@@ -557,15 +594,22 @@ impl<'a> OperationPlanner<'a> {
         let mut cask_deps_map: HashMap<String, Arc<Cask>> = HashMap::new();
         let mut cask_processing_queue: VecDeque<String> = VecDeque::new();
 
-        for (name, (_action, opt_def)) in &intermediate_plan.initial_ops {
+        for (name, (action, opt_def)) in &intermediate_plan.initial_ops {
             if intermediate_plan.processed_globally.contains(name) {
                 continue;
             }
+
+            // Handle both normal formula targets and upgrade targets
             match opt_def {
                 Some(target @ InstallTargetIdentifier::Formula(_)) => {
+                    debug!(
+                        "[Planner] Adding formula '{}' to resolution list with action {:?}",
+                        name, action
+                    );
                     formulae_for_resolution.insert(name.clone(), target.clone());
                 }
                 Some(InstallTargetIdentifier::Cask(c_arc)) => {
+                    debug!("[Planner] Adding cask '{}' to processing queue", name);
                     cask_processing_queue.push_back(name.clone());
                     cask_deps_map.insert(name.clone(), c_arc.clone());
                 }
@@ -716,6 +760,27 @@ impl<'a> OperationPlanner<'a> {
                 force_bottle_only_targets: HashSet::new(),
             };
 
+            // Create map of initial target actions for the resolver
+            let initial_target_actions: HashMap<String, JobAction> = intermediate_plan
+                .initial_ops
+                .iter()
+                .filter_map(|(name, (action, _))| {
+                    if targets_for_resolver.contains(name) {
+                        Some((name.clone(), action.clone()))
+                    } else {
+                        debug!("[Planner] WARNING: Target '{}' with action {:?} is not in targets_for_resolver!", name, action);
+                        None
+                    }
+                })
+                .collect();
+
+            debug!(
+                "[Planner] Created initial_target_actions map with {} entries: {:?}",
+                initial_target_actions.len(),
+                initial_target_actions
+            );
+            debug!("[Planner] Targets for resolver: {:?}", targets_for_resolver);
+
             let ctx = ResolutionContext {
                 formulary: &formulary,
                 keg_registry: &keg_registry,
@@ -728,21 +793,32 @@ impl<'a> OperationPlanner<'a> {
                 cascade_source_preference_to_dependencies: true,
                 has_bottle_for_current_platform:
                     sps_core::install::bottle::has_bottle_for_current_platform,
+                initial_target_actions: &initial_target_actions,
             };
 
             let mut resolver = DependencyResolver::new(ctx);
+            debug!("[Planner] Created DependencyResolver, calling resolve_targets...");
             match resolver.resolve_targets(&targets_for_resolver) {
-                Ok(g) => resolved_formula_graph_opt = Some(Arc::new(g)),
+                Ok(g) => {
+                    debug!(
+                        "[Planner] Dependency resolution succeeded! Install plan has {} items",
+                        g.install_plan.len()
+                    );
+                    resolved_formula_graph_opt = Some(Arc::new(g));
+                }
                 Err(e) => {
+                    debug!("[Planner] Dependency resolution failed: {}", e);
+                    let resolver_error_msg = e.to_string(); // Capture full error
                     for n in targets_for_resolver {
                         if !intermediate_plan
                             .errors
                             .iter()
                             .any(|(err_n, _)| err_n == &n)
                         {
-                            intermediate_plan
-                                .errors
-                                .push((n.clone(), SpsError::DependencyError(e.to_string())));
+                            intermediate_plan.errors.push((
+                                n.clone(),
+                                SpsError::DependencyError(resolver_error_msg.clone()),
+                            ));
                         }
                         intermediate_plan.processed_globally.insert(n);
                     }
@@ -756,18 +832,36 @@ impl<'a> OperationPlanner<'a> {
         let mut final_planned_jobs: Vec<PlannedJob> = Vec::new();
         let mut names_processed_from_initial_ops = HashSet::new();
 
+        debug!(
+            "[Planner] Processing {} initial_ops into final jobs",
+            intermediate_plan.initial_ops.len()
+        );
         for (name, (action, opt_def)) in &intermediate_plan.initial_ops {
+            debug!(
+                "[Planner] Processing initial op '{}': action={:?}, has_def={}",
+                name,
+                action,
+                opt_def.is_some()
+            );
+
+            if intermediate_plan.processed_globally.contains(name) {
+                debug!("[Planner] Skipping '{}' - already processed globally", name);
+                continue;
+            }
+            // If an error was recorded for this specific initial target (e.g. resolver failed for
+            // it, or def missing) ensure it's marked as globally processed and not
+            // added to final_planned_jobs.
             if intermediate_plan
                 .errors
                 .iter()
                 .any(|(err_name, _)| err_name == name)
             {
-                tracing::debug!("[Planner] Skipping job for initial op '{}' due to an existing error recorded for it.", name);
+                debug!("[Planner] Skipping job for initial op '{}' as an error was recorded for it during planning.", name);
                 intermediate_plan.processed_globally.insert(name.clone());
                 continue;
             }
             if intermediate_plan.already_satisfied.contains(name) {
-                tracing::debug!(
+                debug!(
                     "[Planner] Skipping job for initial op '{}' as it's already satisfied.",
                     name
                 );
@@ -822,6 +916,38 @@ impl<'a> OperationPlanner<'a> {
                     || intermediate_plan.processed_globally.contains(dep_name)
                     || final_planned_jobs.iter().any(|j| j.target_id == dep_name)
                 {
+                    continue;
+                }
+
+                if intermediate_plan
+                    .errors
+                    .iter()
+                    .any(|(err_name, _)| err_name == dep_name)
+                {
+                    tracing::debug!("[Planner] Skipping job for dependency '{}' due to a pre-existing error recorded for it.", dep_name);
+                    intermediate_plan
+                        .processed_globally
+                        .insert(dep_name.to_string());
+                    continue;
+                }
+                if dep_detail.status == ResolutionStatus::Failed {
+                    tracing::debug!("[Planner] Skipping job for dependency '{}' as its resolution status is Failed. Adding to planner errors.", dep_name);
+                    // Ensure this error is also captured if not already.
+                    if !intermediate_plan
+                        .errors
+                        .iter()
+                        .any(|(err_name, _)| err_name == dep_name)
+                    {
+                        intermediate_plan.errors.push((
+                            dep_name.to_string(),
+                            SpsError::DependencyError(format!(
+                                "Resolution failed for dependency {dep_name}"
+                            )),
+                        ));
+                    }
+                    intermediate_plan
+                        .processed_globally
+                        .insert(dep_name.to_string());
                     continue;
                 }
 
@@ -902,6 +1028,21 @@ impl<'a> OperationPlanner<'a> {
                 sort_planned_jobs(&mut final_planned_jobs, graph);
             }
         }
+
+        debug!(
+            "[Planner] Finishing plan_operations with {} jobs, {} errors, {} already_satisfied",
+            final_planned_jobs.len(),
+            intermediate_plan.errors.len(),
+            intermediate_plan.already_satisfied.len()
+        );
+        debug!(
+            "[Planner] Final jobs: {:?}",
+            final_planned_jobs
+                .iter()
+                .map(|j| &j.target_id)
+                .collect::<Vec<_>>()
+        );
+
         Ok(PlannedOperations {
             jobs: final_planned_jobs,
             errors: intermediate_plan.errors,

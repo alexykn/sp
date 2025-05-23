@@ -50,7 +50,7 @@ async fn ensure_api_data_cached(cache: &Cache) -> Result<()> {
     // Perform fetches concurrently if needed
     match (fetch_formulas, fetch_casks) {
         (true, true) => {
-            tracing::info!("Populating missing formula.json and cask.json from API...");
+            tracing::debug!("Populating missing formula.json and cask.json from API...");
             let (formula_res, cask_res) = tokio::join!(
                 async {
                     let data = api::fetch_all_formulas().await?;
@@ -65,19 +65,19 @@ async fn ensure_api_data_cached(cache: &Cache) -> Result<()> {
             );
             formula_res?;
             cask_res?;
-            tracing::info!("Formula.json and cask.json populated from API.");
+            tracing::debug!("Formula.json and cask.json populated from API.");
         }
         (true, false) => {
-            tracing::info!("Populating missing formula.json from API...");
+            tracing::debug!("Populating missing formula.json from API...");
             let data = api::fetch_all_formulas().await?;
             cache.store_raw("formula.json", &data)?;
-            tracing::info!("Formula.json populated from API.");
+            tracing::debug!("Formula.json populated from API.");
         }
         (false, true) => {
-            tracing::info!("Populating missing cask.json from API...");
+            tracing::debug!("Populating missing cask.json from API...");
             let data = api::fetch_all_casks().await?;
             cache.store_raw("cask.json", &data)?;
-            tracing::info!("Cask.json populated from API.");
+            tracing::debug!("Cask.json populated from API.");
         }
         (false, false) => {
             tracing::debug!("Local formula.json and cask.json caches are present.");
@@ -139,9 +139,18 @@ pub async fn check_for_updates(
         }
     };
 
+    tracing::debug!(
+        "[UpdateCheck] Starting update check for {} packages",
+        installed_packages.len()
+    );
     let mut updates_available = Vec::new();
 
     for installed in installed_packages {
+        tracing::debug!(
+            "[UpdateCheck] Checking package '{}' version '{}'",
+            installed.name,
+            installed.version
+        );
         match installed.pkg_type {
             PackageType::Formula => {
                 match formulary.load_formula(&installed.name) {
@@ -151,6 +160,13 @@ pub async fn check_for_updates(
                         let latest_formula_arc = Arc::new(latest_formula_obj);
 
                         let latest_version_str = latest_formula_arc.version_str_full();
+                        tracing::debug!(
+                            "[UpdateCheck] Formula '{}': installed='{}', latest='{}'",
+                            installed.name,
+                            installed.version,
+                            latest_version_str
+                        );
+
                         let installed_v_res = PkgVersion::parse(&installed.version);
                         let latest_v_res = PkgVersion::parse(&latest_version_str);
                         let installed_revision = installed
@@ -162,13 +178,26 @@ pub async fn check_for_updates(
 
                         let needs_update = match (installed_v_res, latest_v_res) {
                             (Ok(iv), Ok(lv)) => {
-                                lv > iv
-                                    || (lv == iv
-                                        && latest_formula_arc.revision > installed_revision)
+                                let version_newer = lv > iv;
+                                let revision_newer =
+                                    lv == iv && latest_formula_arc.revision > installed_revision;
+                                tracing::debug!("[UpdateCheck] Formula '{}': version_newer={}, revision_newer={} (installed_rev={}, latest_rev={})", 
+                                    installed.name, version_newer, revision_newer, installed_revision, latest_formula_arc.revision);
+                                version_newer || revision_newer
                             }
-                            _ => installed.version != latest_version_str,
+                            _ => {
+                                let different = installed.version != latest_version_str;
+                                tracing::debug!("[UpdateCheck] Formula '{}': fallback string comparison, different={}", 
+                                    installed.name, different);
+                                different
+                            }
                         };
 
+                        tracing::debug!(
+                            "[UpdateCheck] Formula '{}': needs_update={}",
+                            installed.name,
+                            needs_update
+                        );
                         if needs_update {
                             updates_available.push(UpdateInfo {
                                 name: installed.name.clone(),
@@ -221,5 +250,19 @@ pub async fn check_for_updates(
             }
         }
     }
+
+    tracing::debug!(
+        "[UpdateCheck] Update check complete: {} updates available out of {} packages checked",
+        updates_available.len(),
+        installed_packages.len()
+    );
+    tracing::debug!(
+        "[UpdateCheck] Updates available for: {:?}",
+        updates_available
+            .iter()
+            .map(|u| &u.name)
+            .collect::<Vec<_>>()
+    );
+
     Ok(updates_available)
 }

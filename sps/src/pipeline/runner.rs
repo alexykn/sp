@@ -196,9 +196,11 @@ pub async fn run_pipeline(
     }
 
     let planned_jobs = Arc::new(planner_output.jobs);
-    let resolved_graph = planner_output.resolved_graph.clone().ok_or_else(|| {
-        SpsError::Generic("ResolvedGraph missing from planner output".to_string())
-    })?;
+    let resolved_graph = planner_output.resolved_graph.clone()
+        .unwrap_or_else(|| {
+            tracing::debug!("ResolvedGraph was None in planner output. Using a default empty graph. This is expected if no formulae required resolution or if planner reported errors for all formulae.");
+            Arc::new(sps_common::dependency::resolver::ResolvedGraph::default())
+        });
 
     debug!(
         "RUNNER: Planning finished. Total jobs in plan: {}.",
@@ -210,27 +212,48 @@ pub async fn run_pipeline(
         })
         .ok();
 
-    for name in &planner_output.already_installed_or_up_to_date {
-        let msg = format!("{} is already installed or up-to-date.", name.cyan());
-        debug!("RUNNER: {}", msg);
-        runner_event_tx_clone
-            .send(PipelineEvent::LogInfo { message: msg })
-            .ok();
-    }
-    for (name, err) in &planner_output.errors {
-        let msg = format!("Error during planning for '{}': {}", name.cyan(), err);
-        error!("RUNNER: {}", msg);
-        runner_event_tx_clone
-            .send(PipelineEvent::LogError { message: msg })
-            .ok();
-    }
-
+    // Mark jobs with planner errors as failed and emit error events
     let job_processing_states = Arc::new(Mutex::new(HashMap::<String, JobProcessingState>::new()));
     let mut jobs_pending_or_active = 0;
-
+    let mut initial_fail_count_from_planner = 0;
     {
         let mut states_guard = job_processing_states.lock().unwrap();
+        if !planner_output.errors.is_empty() {
+            tracing::debug!(
+                "[Runner] Planner reported {} error(s). These targets will be marked as failed.",
+                planner_output.errors.len()
+            );
+            for (target_name, error) in &planner_output.errors {
+                let msg = format!(
+                    "Error during planning for '{}': {}",
+                    target_name.cyan(),
+                    error
+                );
+                runner_event_tx_clone
+                    .send(PipelineEvent::LogError {
+                        message: msg.clone(),
+                    })
+                    .ok();
+                states_guard.insert(
+                    target_name.clone(),
+                    JobProcessingState::Failed(Arc::new(error.clone())),
+                );
+                initial_fail_count_from_planner += 1;
+                let msg = format!(
+                    "Error during planning for '{}': {}",
+                    target_name.cyan(),
+                    error
+                );
+                error!("RUNNER: {}", msg);
+                runner_event_tx_clone
+                    .send(PipelineEvent::LogError { message: msg })
+                    .ok();
+            }
+        }
         for job in planned_jobs.iter() {
+            if states_guard.contains_key(&job.target_id) {
+                continue;
+            }
             if planner_output
                 .already_installed_or_up_to_date
                 .contains(&job.target_id)
@@ -250,7 +273,7 @@ pub async fn run_pipeline(
                     job.target_id.clone(),
                     JobProcessingState::Failed(Arc::new(err.clone())),
                 );
-                final_fail_count.fetch_add(1, Ordering::Relaxed);
+                // Counted in initial_fail_count_from_planner
                 debug!(
                     "[{}] Marked as Failed (planning error: {}).",
                     job.target_id, err
@@ -364,7 +387,23 @@ pub async fn run_pipeline(
         "RUNNER: Entering main event loop. Jobs pending/active: {}",
         jobs_pending_or_active
     );
-    while jobs_pending_or_active > 0 {
+
+    // Robust main loop: continue while there are jobs pending/active, or downloads, or jobs in
+    // states that could be dispatched
+    fn has_pending_dispatchable_jobs(
+        states_guard: &std::sync::MutexGuard<HashMap<String, JobProcessingState>>,
+    ) -> bool {
+        states_guard.values().any(|state| {
+            matches!(
+                state,
+                JobProcessingState::Downloaded(_) | JobProcessingState::WaitingForDependencies(_)
+            )
+        })
+    }
+
+    while jobs_pending_or_active > 0
+        || has_pending_dispatchable_jobs(&job_processing_states.lock().unwrap())
+    {
         tokio::select! {
             biased;
             Some(download_outcome) = download_outcome_rx.recv() => {
@@ -438,8 +477,8 @@ pub async fn run_pipeline(
             }
             else => {
                 debug!("RUNNER: Main select loop 'else' branch. jobs_pending_or_active = {}. download_outcome_rx or event_rx_for_runner might be closed.", jobs_pending_or_active);
-                if jobs_pending_or_active > 0 {
-                    warn!("RUNNER: Exiting main loop prematurely but still have {} jobs pending/active. This might indicate a stall or logic error.", jobs_pending_or_active);
+                if jobs_pending_or_active > 0 || has_pending_dispatchable_jobs(&job_processing_states.lock().unwrap()) {
+                    warn!("RUNNER: Exiting main loop prematurely but still have {} jobs pending/active or dispatchable. This might indicate a stall or logic error.", jobs_pending_or_active);
                 }
                 break;
             }
@@ -505,7 +544,7 @@ pub async fn run_pipeline(
 
     let duration = start_time.elapsed();
     let success_total = final_success_count.load(Ordering::Relaxed);
-    let fail_total = final_fail_count.load(Ordering::Relaxed);
+    let fail_total = final_fail_count.load(Ordering::Relaxed) + initial_fail_count_from_planner;
 
     debug!(
         "RUNNER: Pipeline processing finished. Success: {}, Fail: {}. Duration: {:.2}s. Sending PipelineFinished event.",
@@ -845,6 +884,7 @@ fn are_dependencies_succeeded(
                 resolved_graph.resolution_details.get(formula_arc.name())
             {
                 let parent_strategy = resolved_dep_info.determined_install_strategy;
+                let empty_actions = std::collections::HashMap::new();
                 let context = sps_common::dependency::ResolutionContext {
                     formulary: &sps_common::formulary::Formulary::new(config.clone()),
                     keg_registry: &sps_common::keg::KegRegistry::new(config.clone()),
@@ -857,6 +897,7 @@ fn are_dependencies_succeeded(
                     cascade_source_preference_to_dependencies: true,
                     has_bottle_for_current_platform:
                         sps_core::install::bottle::has_bottle_for_current_platform,
+                    initial_target_actions: &empty_actions,
                 };
 
                 let deps: Vec<String> = formula_arc

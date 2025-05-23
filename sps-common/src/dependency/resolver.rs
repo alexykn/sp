@@ -35,6 +35,7 @@ pub struct ResolutionContext<'a> {
     pub build_all_from_source: bool,
     pub cascade_source_preference_to_dependencies: bool,
     pub has_bottle_for_current_platform: fn(&Formula) -> bool,
+    pub initial_target_actions: &'a HashMap<String, crate::pipeline::JobAction>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +59,7 @@ pub enum ResolutionStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Default)] // Added Default
+#[derive(Debug, Clone, Default)]
 pub struct ResolvedGraph {
     pub install_plan: Vec<ResolvedDependency>,
     pub build_dependency_opt_paths: Vec<PathBuf>,
@@ -404,8 +405,39 @@ impl<'a> DependencyResolver<'a> {
                 ),
                 NodeInstallStrategy::BottlePreferred | NodeInstallStrategy::BottleOrFail => {
                     if let Some(keg) = self.context.keg_registry.get_installed_keg(name)? {
-                        (ResolutionStatus::Installed, Some(keg.path))
+                        // Check if this is an upgrade target - if so, mark as Requested even if
+                        // installed
+                        let should_request_upgrade = is_initial_target
+                            && self
+                                .context
+                                .initial_target_actions
+                                .get(name)
+                                .map(|action| {
+                                    matches!(action, crate::pipeline::JobAction::Upgrade { .. })
+                                })
+                                .unwrap_or(false);
+
+                        debug!("[Resolver] Package '{}': is_initial_target={}, should_request_upgrade={}, action={:?}",
+                            name, is_initial_target, should_request_upgrade,
+                            self.context.initial_target_actions.get(name));
+
+                        if should_request_upgrade {
+                            debug!("[Resolver] Marking upgrade target '{}' as Requested (was installed)", name);
+                            (ResolutionStatus::Requested, Some(keg.path))
+                        } else {
+                            debug!("[Resolver] Marking '{}' as Installed (normal case)", name);
+                            (ResolutionStatus::Installed, Some(keg.path))
+                        }
                     } else {
+                        debug!(
+                            "[Resolver] Package '{}' not installed, marking as {}",
+                            name,
+                            if is_initial_target {
+                                "Requested"
+                            } else {
+                                "Missing"
+                            }
+                        );
                         (
                             if is_initial_target {
                                 ResolutionStatus::Requested
