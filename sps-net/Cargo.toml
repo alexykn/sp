@@ -1,6 +1,6 @@
 [package]
 name = "sps-net"
-version = "0.1.49"
+version = "0.1.50"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Networking library for the sps package manager"
@@ -8,7 +8,7 @@ repository = "https://github.com/alexykn/sps"
 license = "BSD-3-Clause"
 
 [dependencies]
-sps-common = "0.1.49"
+sps-common = "0.1.50"
 
 tokio = { version = "1.45.0", features = ["full"] }
 futures = "0.3.31"
