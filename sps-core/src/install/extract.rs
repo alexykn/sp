@@ -2,8 +2,6 @@
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek};
-#[cfg(unix)]
-use std::os::unix::fs as unix_fs;
 use std::path::{Component, Path, PathBuf};
 
 use bzip2::read::BzDecoder;
@@ -12,7 +10,7 @@ use sps_common::error::{Result, SpsError};
 use tar::{Archive, EntryType};
 use tracing::{debug, error, warn};
 use xz2::read::XzDecoder;
-use zip::read::ZipArchive;
+use zip_rs::ZipArchive;
 
 #[cfg(target_os = "macos")]
 use crate::utils::xattr;
@@ -142,10 +140,16 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
 }
 
 fn infer_zip_root<R: Read + Seek>(
-    reader: R,
+    mut reader: R,
     archive_path_for_log: &Path,
 ) -> Result<Option<PathBuf>> {
-    let mut archive = ZipArchive::new(reader).map_err(|e| {
+    // Read the entire file into memory since zip-rs requires a buffer
+    let mut buffer = Vec::new();
+    reader
+        .read_to_end(&mut buffer)
+        .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+    let archive = ZipArchive::from_buffer(buffer).map_err(|e| {
         SpsError::Generic(format!(
             "Failed to open ZIP {}: {}",
             archive_path_for_log.display(),
@@ -156,18 +160,9 @@ fn infer_zip_root<R: Read + Seek>(
     let mut non_empty_entry_found = false;
     let mut first_component_name: Option<PathBuf> = None;
 
-    for i in 0..archive.len() {
-        let file = archive.by_index_raw(i).map_err(|e| {
-            SpsError::Generic(format!(
-                "Error reading ZIP index {} in {}: {}",
-                i,
-                archive_path_for_log.display(),
-                e
-            ))
-        })?;
-
-        let path_str = file.name();
-        let path = PathBuf::from(path_str);
+    for file in &archive.central_directory.files {
+        let path_str = String::from_utf8_lossy(file.metadata.name);
+        let path = PathBuf::from(path_str.as_ref());
 
         if path.components().next().is_none() {
             continue;
@@ -610,12 +605,18 @@ fn extract_tar_archive<R: Read>(
 }
 
 fn extract_zip_archive<R: Read + Seek>(
-    reader: R,
+    mut reader: R,
     target_dir: &Path,
     strip_components: usize,
     archive_path_for_log: &Path,
 ) -> Result<()> {
-    let mut archive = ZipArchive::new(reader).map_err(|e| {
+    // Read the entire file into memory since zip-rs requires a buffer
+    let mut buffer = Vec::new();
+    reader
+        .read_to_end(&mut buffer)
+        .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+    let archive = ZipArchive::from_buffer(buffer.clone()).map_err(|e| {
         SpsError::Generic(format!(
             "Failed to open ZIP {}: {}",
             archive_path_for_log.display(),
@@ -627,23 +628,20 @@ fn extract_zip_archive<R: Read + Seek>(
         archive_path_for_log.display()
     );
 
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| {
-            SpsError::Generic(format!(
-                "Error reading ZIP index {} in {}: {}",
-                i,
-                archive_path_for_log.display(),
-                e
-            ))
-        })?;
+    for file_info in archive.central_directory.files.iter() {
+        let filename_str = String::from_utf8_lossy(file_info.metadata.name);
+        let original_path_in_archive = PathBuf::from(filename_str.as_ref());
 
-        let original_path_in_archive = match file.enclosed_name() {
-            Some(p) => p.to_path_buf(),
-            None => {
-                debug!("Skipping unsafe ZIP entry name {}", file.name());
-                continue;
-            }
-        };
+        // Check if path is safe (enclosed_name equivalent)
+        if original_path_in_archive.is_absolute()
+            || original_path_in_archive
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+        {
+            debug!("Skipping unsafe ZIP entry name {}", filename_str);
+            continue;
+        }
+
         let stripped_components_iter: Vec<Component<'_>> = original_path_in_archive
             .components()
             .skip(strip_components)
@@ -707,9 +705,9 @@ fn extract_zip_archive<R: Read + Seek>(
             }
         }
 
-        if file.is_dir() {
+        let is_dir = filename_str.ends_with('/');
+        if is_dir {
             if !final_target_path_on_disk.exists() {
-                // Only create if it doesn't exist
                 fs::create_dir_all(&final_target_path_on_disk).map_err(|e| {
                     SpsError::Io(std::sync::Arc::new(io::Error::new(
                         e.kind(),
@@ -721,67 +719,63 @@ fn extract_zip_archive<R: Read + Seek>(
                     )))
                 })?;
             }
-        } else if file.is_symlink() {
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)?;
-            let link_target_str = String::from_utf8_lossy(&buf).to_string();
-            let link_target_path = PathBuf::from(link_target_str);
-
-            #[cfg(unix)]
-            {
-                if final_target_path_on_disk.exists()
-                    || final_target_path_on_disk.symlink_metadata().is_ok()
-                {
-                    let _ = fs::remove_file(&final_target_path_on_disk); // Attempt to remove
-                                                                         // existing item
-                }
-                unix_fs::symlink(&link_target_path, &final_target_path_on_disk).map_err(|e| {
-                    debug!(
-                        "Failed to create symlink {} -> {}: {}",
-                        final_target_path_on_disk.display(),
-                        link_target_path.display(),
-                        e
-                    );
-                    SpsError::Io(std::sync::Arc::new(e))
-                })?;
-            }
-            #[cfg(not(unix))]
-            {
-                warn!(
-                    "Cannot create symlink on non-unix system: {} -> {}",
-                    final_target_path_on_disk.display(),
-                    link_target_path.display()
-                );
-            }
         } else {
+            // Use the original buffer to extract file data
+            let file_start = file_info.local_header_offset as usize
+                + 30
+                + file_info.metadata.name.len()
+                + file_info.metadata.extra_field.len();
+            let file_end = file_start + file_info.metadata.compressed_size as usize;
+
+            if file_end > buffer.len() {
+                return Err(SpsError::Generic(format!(
+                    "Invalid file data range for {}: {}..{} (archive size: {})",
+                    original_path_in_archive.display(),
+                    file_start,
+                    file_end,
+                    buffer.len()
+                )));
+            }
+
+            let compressed_data = &buffer[file_start..file_end];
+            let file_data = if file_info.metadata.compression_method.0 == 0 {
+                // No compression
+                compressed_data.to_vec()
+            } else {
+                // For now, only support uncompressed files
+                return Err(SpsError::Generic(format!(
+                    "Compressed ZIP entries not yet supported for file: {} (compression method: {})",
+                    original_path_in_archive.display(),
+                    file_info.metadata.compression_method.0
+                )));
+            };
+
             // Regular file
             if final_target_path_on_disk.exists() {
                 // Overwrite if exists
                 match fs::remove_file(&final_target_path_on_disk) {
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {} // Fine if not found
-                    Err(e) => return Err(SpsError::Io(std::sync::Arc::new(e))), /* Other errors are
-                                                                          * problematic */
+                    Err(e) => return Err(SpsError::Io(std::sync::Arc::new(e))),
                 }
             }
-            let mut out_file = File::create(&final_target_path_on_disk).map_err(|e| {
+
+            fs::write(&final_target_path_on_disk, file_data).map_err(|e| {
                 SpsError::Io(std::sync::Arc::new(io::Error::new(
                     e.kind(),
                     format!(
-                        "Failed create file {}: {}",
+                        "Failed to write file {}: {}",
                         final_target_path_on_disk.display(),
                         e
                     ),
                 )))
             })?;
-            io::copy(&mut file, &mut out_file)?;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = file.unix_mode() {
-                if !file.is_symlink() && final_target_path_on_disk.is_file() {
-                    // Check if it's a file before setting permissions
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = file_info.external_attributes.0 >> 16;
+                if mode != 0 && final_target_path_on_disk.is_file() {
                     fs::set_permissions(
                         &final_target_path_on_disk,
                         fs::Permissions::from_mode(mode),
