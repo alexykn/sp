@@ -110,16 +110,66 @@ pub fn install_app_from_staged(
                 config.cask_store_version_path(&cask.token, from_version);
             let old_private_store_app_bundle_path =
                 old_private_store_app_dir_path.join(&name_for_old_path);
-
             if old_private_store_app_bundle_path.exists()
                 && old_private_store_app_bundle_path.is_dir()
             {
-                debug!("[{}] UPGRADE: Old private store app bundle found at {}. Syncing new content into it.", cask.token, old_private_store_app_bundle_path.display());
-                crate::install::cask::helpers::sync_app_bundle_contents(
-                    staged_app_path,
-                    &old_private_store_app_bundle_path,
-                    config,
-                )?;
+                debug!("[{}] UPGRADE: Old private store app bundle found at {}. Using Homebrew-style overwrite strategy.", cask.token, old_private_store_app_bundle_path.display());
+
+                // ========================================================================
+                // CRITICAL: Homebrew-Style App Bundle Replacement Strategy
+                // ========================================================================
+                // We use Homebrew's exact strategy: rm + cp -pR to preserve app bundle
+                // identity and Gatekeeper state. This mirrors Homebrew's move() function
+                // in cask/artifact/app.rb.
+                //
+                // WHY THIS APPROACH:
+                // 1. Preserves extended attributes (quarantine, code signing, etc.)
+                // 2. Maintains app bundle identity → prevents Gatekeeper reset
+                // 3. Avoids breaking symlinks and file system references
+                // 4. Ensures user data in ~/Library remains accessible to the app
+                //
+                // DO NOT CHANGE TO fs::rename() or similar - it breaks Gatekeeper!
+                // ========================================================================
+
+                // Step 1: Remove the old app bundle from private store
+                // (This is safe because we're about to replace it with the new version)
+                let rm_status = Command::new("rm")
+                    .arg("-rf")
+                    .arg(&old_private_store_app_bundle_path)
+                    .status()
+                    .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+                if !rm_status.success() {
+                    return Err(SpsError::InstallError(format!(
+                        "Failed to remove old app bundle during upgrade: {}",
+                        old_private_store_app_bundle_path.display()
+                    )));
+                }
+
+                // Step 2: Copy the new app bundle with ALL attributes preserved
+                // The -pR flags are critical:
+                // -p: Preserve file attributes, ownership, timestamps
+                // -R: Recursive copy for directories
+                // This ensures Gatekeeper approval and code signing are maintained
+                let cp_status = Command::new("cp")
+                    .arg("-pR") // CRITICAL: Preserve all attributes, links, and metadata
+                    .arg(staged_app_path)
+                    .arg(&old_private_store_app_bundle_path)
+                    .status()
+                    .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+                if !cp_status.success() {
+                    return Err(SpsError::InstallError(format!(
+                        "Failed to copy new app bundle during upgrade: {} -> {}",
+                        staged_app_path.display(),
+                        old_private_store_app_bundle_path.display()
+                    )));
+                }
+
+                debug!(
+                    "[{}] UPGRADE: Successfully overwrote old app bundle with new version using cp -pR",
+                    cask.token
+                );
 
                 // Now, rename the parent version directory (e.g., .../1.0 -> .../1.1)
                 let new_private_store_version_dir =
@@ -262,46 +312,144 @@ pub fn install_app_from_staged(
         }
     }
 
-    // 6. Clean existing final app destination in /Applications
-    if final_app_destination_in_applications.exists()
-        || final_app_destination_in_applications
-            .symlink_metadata()
-            .is_ok()
-    {
+    // ============================================================================
+    // STEP 6: Handle /Applications Destination - THE MOST CRITICAL PART
+    // ============================================================================
+    // This is where we apply Homebrew's breakthrough strategy that preserves
+    // user data and prevents Gatekeeper resets during upgrades.
+    //
+    // UPGRADE vs FRESH INSTALL Strategy:
+    // - UPGRADE: Overwrite app in /Applications directly (preserves identity)
+    // - FRESH INSTALL: Use symlink approach (normal installation)
+    //
+    // WHY THIS SPLIT MATTERS:
+    // During upgrades, the app in /Applications already has:
+    // 1. Gatekeeper approval and quarantine exemptions
+    // 2. Extended attributes that macOS recognizes
+    // 3. User trust and security context
+    // 4. Associated user data in ~/Library that the app can access
+    //
+    // By overwriting IN PLACE with cp -pR, we maintain all of this state.
+    // ============================================================================
+
+    if let JobAction::Upgrade { .. } = job_action {
+        // =======================================================================
+        // UPGRADE PATH: Direct Overwrite Strategy (Homebrew's Approach)
+        // =======================================================================
+        // This is the breakthrough that prevents Gatekeeper resets and data loss.
+        // We overwrite the existing app directly rather than removing and
+        // re-symlinking, which would break the app's established identity.
+        // =======================================================================
+
+        if final_app_destination_in_applications.exists() {
+            debug!(
+                "UPGRADE: Overwriting existing app at /Applications using Homebrew strategy: {}",
+                final_app_destination_in_applications.display()
+            );
+
+            // Step 1: Remove the old app in /Applications
+            // We need sudo because /Applications requires elevated permissions
+            let rm_status = Command::new("sudo")
+                .arg("rm")
+                .arg("-rf")
+                .arg(&final_app_destination_in_applications)
+                .status()
+                .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+            if !rm_status.success() {
+                return Err(SpsError::InstallError(format!(
+                    "Failed to remove existing app during upgrade: {}",
+                    final_app_destination_in_applications.display()
+                )));
+            }
+
+            // Copy the new app directly to /Applications, preserving all attributes
+            let cp_status = Command::new("sudo")
+                .arg("cp")
+                .arg("-pR") // Preserve all attributes, links, and metadata
+                .arg(&final_private_store_app_path)
+                .arg(&final_app_destination_in_applications)
+                .status()
+                .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+            if !cp_status.success() {
+                return Err(SpsError::InstallError(format!(
+                    "Failed to copy new app to /Applications during upgrade: {}",
+                    final_app_destination_in_applications.display()
+                )));
+            }
+
+            debug!(
+                "UPGRADE: Successfully overwrote app in /Applications, preserving identity: {}",
+                final_app_destination_in_applications.display()
+            );
+        } else {
+            // App doesn't exist in /Applications during upgrade - fall back to symlink approach
+            debug!(
+                "UPGRADE: App not found in /Applications, creating fresh symlink: {}",
+                final_app_destination_in_applications.display()
+            );
+            if let Err(e) = std::os::unix::fs::symlink(
+                &final_private_store_app_path,
+                &final_app_destination_in_applications,
+            ) {
+                error!(
+                    "Failed to symlink app from private store to /Applications: {} -> {}: {}",
+                    final_private_store_app_path.display(),
+                    final_app_destination_in_applications.display(),
+                    e
+                );
+                return Err(SpsError::InstallError(format!(
+                    "Failed to symlink app from private store to {}: {}",
+                    final_app_destination_in_applications.display(),
+                    e
+                )));
+            }
+        }
+    } else {
+        // Fresh install: Clean existing app destination and create symlink
+        if final_app_destination_in_applications.exists()
+            || final_app_destination_in_applications
+                .symlink_metadata()
+                .is_ok()
+        {
+            debug!(
+                "Removing existing app at /Applications: {}",
+                final_app_destination_in_applications.display()
+            );
+            if !remove_path_robustly(&final_app_destination_in_applications, config, true) {
+                return Err(SpsError::InstallError(format!(
+                    "Failed to remove existing app at {}",
+                    final_app_destination_in_applications.display()
+                )));
+            }
+        }
+
+        // 7. Symlink from /Applications to private store app bundle
         debug!(
-            "Removing existing app at /Applications: {}",
+            "INFO: About to symlink app from private store {} to /Applications {}",
+            final_private_store_app_path.display(),
             final_app_destination_in_applications.display()
         );
-        if !remove_path_robustly(&final_app_destination_in_applications, config, true) {
+        if let Err(e) = std::os::unix::fs::symlink(
+            &final_private_store_app_path,
+            &final_app_destination_in_applications,
+        ) {
+            error!(
+                "Failed to symlink app from private store to /Applications: {} -> {}: {}",
+                final_private_store_app_path.display(),
+                final_app_destination_in_applications.display(),
+                e
+            );
             return Err(SpsError::InstallError(format!(
-                "Failed to remove existing app at {}",
-                final_app_destination_in_applications.display()
+                "Failed to symlink app from private store to {}: {}",
+                final_app_destination_in_applications.display(),
+                e
             )));
         }
     }
 
-    // 7. Symlink from /Applications to private store app bundle
-    debug!(
-        "INFO: About to symlink app from private store {} to /Applications {}",
-        final_private_store_app_path.display(),
-        final_app_destination_in_applications.display()
-    );
-    if let Err(e) = std::os::unix::fs::symlink(
-        &final_private_store_app_path,
-        &final_app_destination_in_applications,
-    ) {
-        error!(
-            "Failed to symlink app from private store to /Applications: {} -> {}: {}",
-            final_private_store_app_path.display(),
-            final_app_destination_in_applications.display(),
-            e
-        );
-        return Err(SpsError::InstallError(format!(
-            "Failed to symlink app from private store to {}: {}",
-            final_app_destination_in_applications.display(),
-            e
-        )));
-    }
+    // Remove quarantine attributes from the app in /Applications (whether copied or symlinked)
     #[cfg(target_os = "macos")]
     {
         use xattr;
@@ -315,11 +463,22 @@ pub fn install_app_from_staged(
         );
         let _ = xattr::remove(&final_app_destination_in_applications, "com.apple.macl");
     }
-    debug!(
-        "INFO: Successfully symlinked app from private store {} to /Applications {}",
-        final_private_store_app_path.display(),
-        final_app_destination_in_applications.display()
-    );
+
+    match job_action {
+        JobAction::Upgrade { .. } => {
+            debug!(
+                "INFO: Successfully updated app in /Applications during upgrade: {}",
+                final_app_destination_in_applications.display()
+            );
+        }
+        _ => {
+            debug!(
+                "INFO: Successfully symlinked app from private store {} to /Applications {}",
+                final_private_store_app_path.display(),
+                final_app_destination_in_applications.display()
+            );
+        }
+    }
 
     // 7. No quarantine set on the symlink in /Applications; attribute remains on private store
     //    copy.
