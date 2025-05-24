@@ -22,114 +22,120 @@ use object::{
         MachOFatFile64, // Core Mach-O types + FAT types
         MachOFile,
     },
-    read::ReadRef, // Import ReadRef trait
-    Endianness,    // Import the Endianness enum
-    FileKind,      // For checking FAT/single arch
+    Endianness,
+    FileKind,
+    ReadRef,
 };
-use sps_common::error::Result; // Keep top-level Result
-#[cfg(target_os = "macos")]
-use sps_common::error::SpsError;
-use tempfile::NamedTempFile; // Keep for write_patched_buffer
+use sps_common::error::{Result, SpsError};
+use tempfile::NamedTempFile;
 use tracing::{debug, error};
 
-// Constants for Mach-O header sizes
+// --- Platform‑specific constants for Mach‑O magic detection ---
+#[cfg(target_os = "macos")]
+const MH_MAGIC: u32 = 0xfeedface;
+#[cfg(target_os = "macos")]
+const MH_MAGIC_64: u32 = 0xfeedfacf;
 #[cfg(target_os = "macos")]
 const MACHO_HEADER32_SIZE: usize = 28;
 #[cfg(target_os = "macos")]
 const MACHO_HEADER64_SIZE: usize = 32;
 
-// Magic numbers for Mach-O files (little-endian)
+/// Core patch data for **one** string replacement location inside a Mach‑O file.
 #[cfg(target_os = "macos")]
-const MH_MAGIC: u32 = 0xfeedface; // 32-bit
-#[cfg(target_os = "macos")]
-const MH_MAGIC_64: u32 = 0xfeedfacf; // 64-bit
-
-/// Represents a patch to be applied to the buffer.
-#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
 struct PatchInfo {
-    absolute_offset: usize, // Offset from the start of the *original* buffer
-    allocated_len: usize,
-    new_path: String,
+    absolute_offset: usize, // Offset in the entire file buffer
+    allocated_len: usize,   // How much space was allocated for this string
+    new_path: String,       // The new string to write
 }
 
-/// Main entry point for patching Mach-O files.
-pub fn patch_macho_file(path: &Path, replacements: &HashMap<String, String>) -> Result<bool> {
-    #[cfg(target_os = "macos")]
-    {
-        patch_macho_file_macos(path, replacements)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // No-op on non-macOS platforms
-        let _ = path;
-        let _ = replacements;
-        Ok(false)
-    }
-}
-
+/// Container for paths that couldn't be patched due to length constraints
 #[cfg(target_os = "macos")]
-fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -> Result<bool> {
+#[derive(Debug, Clone)]
+pub struct SkippedPath {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+/// Main entry point for Mach‑O path patching (macOS only).
+/// Returns `Ok(true)` if patches were applied, `Ok(false)` if no patches needed.
+/// Returns a tuple: (patched: bool, skipped_paths: Vec<SkippedPath>)
+#[cfg(target_os = "macos")]
+pub fn patch_macho_file(
+    path: &Path,
+    replacements: &HashMap<String, String>,
+) -> Result<(bool, Vec<SkippedPath>)> {
+    patch_macho_file_macos(path, replacements)
+}
+
+/// Container for paths that couldn't be patched due to length constraints
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone)]
+pub struct SkippedPath {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+/// No‑op stub for non‑macOS platforms.
+#[cfg(not(target_os = "macos"))]
+pub fn patch_macho_file(
+    _path: &Path,
+    _replacements: &HashMap<String, String>,
+) -> Result<(bool, Vec<SkippedPath>)> {
+    Ok((false, Vec::new()))
+}
+
+/// **macOS implementation**: Tries to patch Mach‑O files by replacing placeholders.
+#[cfg(target_os = "macos")]
+fn patch_macho_file_macos(
+    path: &Path,
+    replacements: &HashMap<String, String>,
+) -> Result<(bool, Vec<SkippedPath>)> {
     debug!("Processing potential Mach-O file: {}", path.display());
 
-    // 1) Read the entire file into memory
-    let mut buffer = match fs::read(path) {
-        Ok(b) => b,
+    // 1) Load the entire file into memory
+    let buffer = match fs::read(path) {
+        Ok(data) => data,
         Err(e) => {
-            debug!("Failed to read {}: {}. Skipping.", path.display(), e);
-            return Ok(false);
+            debug!("Failed to read {}: {}", path.display(), e);
+            return Ok((false, Vec::new()));
         }
     };
-
-    // 2) Quick size check: skip anything too small
-    if buffer.len() < MACHO_HEADER32_SIZE {
-        debug!("Skipping too‑small file: {}", path.display());
-        return Ok(false);
+    if buffer.is_empty() {
+        debug!("Empty file: {}", path.display());
+        return Ok((false, Vec::new()));
     }
 
-    // 3) Classify via magic‑number (no extensions needed)
-    let file_kind = match FileKind::parse(buffer.as_slice()) {
-        Ok(kind) => kind,
-        Err(_) => {
+    // 2) Identify the file type
+    let kind = match object::FileKind::parse(&*buffer) {
+        Ok(k) => k,
+        Err(_e) => {
             debug!("Not an object file: {}", path.display());
-            return Ok(false);
+            return Ok((false, Vec::new()));
         }
     };
 
-    // 4) Only handle real Mach‑O variants here; bail on archives & others
-    match file_kind {
-        FileKind::MachO32 | FileKind::MachO64 | FileKind::MachOFat32 | FileKind::MachOFat64 => {
-            debug!(
-                "  Recognized Mach-O kind {:?}: {}",
-                file_kind,
-                path.display()
-            );
-        }
-        FileKind::Archive => {
-            debug!("Skipping static archive (not Mach‑O): {}", path.display());
-            return Ok(false);
-        }
-        other => {
-            debug!(
-                "  Not a Mach‑O binary (kind: {:?}), skipping: {}",
-                other,
-                path.display()
-            );
-            return Ok(false);
-        }
-    }
+    // 3) **Analysis phase**: collect patches + skipped paths
+    let (patches, skipped_paths) = collect_macho_patches(&buffer, kind, replacements, path)?;
 
-    // 5) Phase 1/2: collect all needed patches (immutable)
-    let patches = collect_macho_patches(&buffer, file_kind, replacements, path)?;
     if patches.is_empty() {
-        debug!("No patches needed for {}", path.display());
-        return Ok(false);
+        if skipped_paths.is_empty() {
+            debug!("No patches needed for {}", path.display());
+        } else {
+            debug!(
+                "No patches applied for {} ({} paths skipped due to length)",
+                path.display(),
+                skipped_paths.len()
+            );
+        }
+        return Ok((false, skipped_paths));
     }
 
-    // 6) Phase 3: apply each patch to the buffer (mutable)
-    debug!("Applying {} patches to {}", patches.len(), path.display());
-    for patch in patches {
+    // 4) Clone buffer and apply all patches atomically
+    let mut patched_buffer = buffer;
+    for patch in &patches {
         patch_path_in_buffer(
-            &mut buffer,
+            &mut patched_buffer,
             patch.absolute_offset,
             patch.allocated_len,
             &patch.new_path,
@@ -137,56 +143,51 @@ fn patch_macho_file_macos(path: &Path, replacements: &HashMap<String, String>) -
         )?;
     }
 
-    // 7) Write the modified buffer back to disk atomically
-    write_patched_buffer(path, &buffer)?;
+    // 5) Write atomically
+    write_patched_buffer(path, &patched_buffer)?;
     debug!("Wrote patched Mach-O: {}", path.display());
 
-    // 8) Re‑sign on Apple Silicon
+    // 6) Re‑sign on Apple Silicon
     #[cfg(target_arch = "aarch64")]
     {
         resign_binary(path)?;
         debug!("Re‑signed patched binary: {}", path.display());
     }
 
-    Ok(true)
+    Ok((true, skipped_paths))
 }
 
 /// ASCII magic for the start of a static `ar` archive  (`!<arch>\n`)
 #[cfg(target_os = "macos")]
 const AR_MAGIC: &[u8; 8] = b"!<arch>\n";
 
-/// Examine a buffer (Mach‑O or FAT) and return every patch we must apply.
+/// Examine a buffer (Mach‑O or FAT) and return every patch we must apply + skipped paths.
 #[cfg(target_os = "macos")]
 fn collect_macho_patches(
     buffer: &[u8],
     kind: FileKind,
     replacements: &HashMap<String, String>,
     path_for_log: &Path,
-) -> Result<Vec<PatchInfo>> {
+) -> Result<(Vec<PatchInfo>, Vec<SkippedPath>)> {
     let mut patches = Vec::<PatchInfo>::new();
+    let mut skipped_paths = Vec::<SkippedPath>::new();
 
     match kind {
         /* ---------------------------------------------------------- */
         FileKind::MachO32 => {
             let m = MachOFile::<MachHeader32<Endianness>, _>::parse(buffer)?;
-            patches.extend(find_patches_in_commands(
-                &m,
-                0,
-                MACHO_HEADER32_SIZE,
-                replacements,
-                path_for_log,
-            )?);
+            let (mut p, mut s) =
+                find_patches_in_commands(&m, 0, MACHO_HEADER32_SIZE, replacements, path_for_log)?;
+            patches.append(&mut p);
+            skipped_paths.append(&mut s);
         }
         /* ---------------------------------------------------------- */
         FileKind::MachO64 => {
             let m = MachOFile::<MachHeader64<Endianness>, _>::parse(buffer)?;
-            patches.extend(find_patches_in_commands(
-                &m,
-                0,
-                MACHO_HEADER64_SIZE,
-                replacements,
-                path_for_log,
-            )?);
+            let (mut p, mut s) =
+                find_patches_in_commands(&m, 0, MACHO_HEADER64_SIZE, replacements, path_for_log)?;
+            patches.append(&mut p);
+            skipped_paths.append(&mut s);
         }
         /* ---------------------------------------------------------- */
         FileKind::MachOFat32 => {
@@ -201,28 +202,32 @@ fn collect_macho_patches(
                     continue;
                 }
 
-                /* decide 32 / 64 by magic ------------------------------ */
+                /* decide 32 / 64 by magic ------------------------------ */
                 if slice.len() >= 4 {
                     let magic = u32::from_le_bytes(slice[0..4].try_into().unwrap());
                     if magic == MH_MAGIC_64 {
                         if let Ok(m) = MachOFile::<MachHeader64<Endianness>, _>::parse(slice) {
-                            patches.extend(find_patches_in_commands(
+                            let (mut p, mut s) = find_patches_in_commands(
                                 &m,
                                 off as usize,
                                 MACHO_HEADER64_SIZE,
                                 replacements,
                                 path_for_log,
-                            )?);
+                            )?;
+                            patches.append(&mut p);
+                            skipped_paths.append(&mut s);
                         }
                     } else if magic == MH_MAGIC {
                         if let Ok(m) = MachOFile::<MachHeader32<Endianness>, _>::parse(slice) {
-                            patches.extend(find_patches_in_commands(
+                            let (mut p, mut s) = find_patches_in_commands(
                                 &m,
                                 off as usize,
                                 MACHO_HEADER32_SIZE,
                                 replacements,
                                 path_for_log,
-                            )?);
+                            )?;
+                            patches.append(&mut p);
+                            skipped_paths.append(&mut s);
                         }
                     }
                 }
@@ -244,23 +249,27 @@ fn collect_macho_patches(
                     let magic = u32::from_le_bytes(slice[0..4].try_into().unwrap());
                     if magic == MH_MAGIC_64 {
                         if let Ok(m) = MachOFile::<MachHeader64<Endianness>, _>::parse(slice) {
-                            patches.extend(find_patches_in_commands(
+                            let (mut p, mut s) = find_patches_in_commands(
                                 &m,
                                 off as usize,
                                 MACHO_HEADER64_SIZE,
                                 replacements,
                                 path_for_log,
-                            )?);
+                            )?;
+                            patches.append(&mut p);
+                            skipped_paths.append(&mut s);
                         }
                     } else if magic == MH_MAGIC {
                         if let Ok(m) = MachOFile::<MachHeader32<Endianness>, _>::parse(slice) {
-                            patches.extend(find_patches_in_commands(
+                            let (mut p, mut s) = find_patches_in_commands(
                                 &m,
                                 off as usize,
                                 MACHO_HEADER32_SIZE,
                                 replacements,
                                 path_for_log,
-                            )?);
+                            )?;
+                            patches.append(&mut p);
+                            skipped_paths.append(&mut s);
                         }
                     }
                 }
@@ -270,11 +279,11 @@ fn collect_macho_patches(
         _ => { /* archives & unknown kinds are ignored */ }
     }
 
-    Ok(patches)
+    Ok((patches, skipped_paths))
 }
 
 /// Iterates through load commands of a parsed MachOFile (slice) and returns
-/// patch details.  (SKIPS paths that are too long instead of erroring.)
+/// patch details + skipped paths.
 #[cfg(target_os = "macos")]
 fn find_patches_in_commands<'data, Mach, R>(
     macho_file: &MachOFile<'data, Mach, R>,
@@ -282,13 +291,14 @@ fn find_patches_in_commands<'data, Mach, R>(
     header_size: usize,
     replacements: &HashMap<String, String>,
     file_path_for_log: &Path,
-) -> Result<Vec<PatchInfo>>
+) -> Result<(Vec<PatchInfo>, Vec<SkippedPath>)>
 where
     Mach: MachHeader,
     R: ReadRef<'data>,
 {
     let endian = macho_file.endian();
     let mut patches = Vec::new();
+    let mut skipped_paths = Vec::new();
     let mut cur_off = header_size;
 
     let mut it = macho_file.macho_load_commands()?;
@@ -328,7 +338,7 @@ where
                     let allocated = cmd_size.saturating_sub(offset_in_cmd as usize);
 
                     if new_path.len() + 1 > allocated {
-                        // would overflow – log & **skip** instead of throwing
+                        // would overflow – add to skipped paths instead of throwing
                         tracing::debug!(
                             "Skip patch (too long): '{}' → '{}' (alloc {} B) in {}",
                             old_path,
@@ -336,6 +346,10 @@ where
                             allocated,
                             file_path_for_log.display()
                         );
+                        skipped_paths.push(SkippedPath {
+                            old_path: old_path.to_string(),
+                            new_path: new_path.clone(),
+                        });
                         continue;
                     }
 
@@ -348,7 +362,7 @@ where
             }
         }
     }
-    Ok(patches)
+    Ok((patches, skipped_paths))
 }
 
 /// Helper to replace placeholders in a string based on the replacements map.

@@ -775,6 +775,7 @@ fn original_relocation_scan_and_patch(
             }
         }
         let mut was_modified = false;
+        let mut skipped_paths_for_file = Vec::new();
         if cfg!(target_os = "macos")
             && (initially_executable
                 || is_in_exec_dir
@@ -783,11 +784,15 @@ fn original_relocation_scan_and_patch(
                     .is_some_and(|e| e == "dylib" || e == "so" || e == "bundle"))
         {
             match macho::patch_macho_file(path, &replacements) {
-                Ok(patched) if patched => {
+                Ok((true, skipped_paths)) => {
                     macho_patched_count += 1;
                     was_modified = true;
+                    skipped_paths_for_file = skipped_paths;
                 }
-                Ok(_) => {} // Not Mach-O or no patches needed
+                Ok((false, skipped_paths)) => {
+                    // Not Mach-O or no patches needed, but might have skipped paths
+                    skipped_paths_for_file = skipped_paths;
+                }
                 Err(SpsError::PathTooLongError(e)) => { // Specifically catch path too long
                     error!(
                         "Mach-O patch failed (path too long) for {}: {}",
@@ -830,6 +835,42 @@ fn original_relocation_scan_and_patch(
                       );
                       io_errors += 1;
                  }
+            }
+
+            // Handle paths that were too long for Mach-O patching with install_name_tool fallback
+            if !skipped_paths_for_file.is_empty() {
+                debug!(
+                    "Applying install_name_tool fallback for {} skipped paths in {}",
+                    skipped_paths_for_file.len(),
+                    path.display()
+                );
+                debug!(
+                    "Applying install_name_tool fallback for {} skipped paths in {}",
+                    skipped_paths_for_file.len(),
+                    path.display()
+                );
+                for skipped in &skipped_paths_for_file {
+                    match apply_install_name_tool_change(&skipped.old_path, &skipped.new_path, path)
+                    {
+                        Ok(()) => {
+                            debug!(
+                                "Successfully applied install_name_tool fallback: '{}' -> '{}' in {}",
+                                skipped.old_path, skipped.new_path, path.display()
+                            );
+                            was_modified = true;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "install_name_tool fallback failed for '{}' -> '{}' in {}: {}",
+                                skipped.old_path,
+                                skipped.new_path,
+                                path.display(),
+                                e
+                            );
+                            macho_errors += 1;
+                        }
+                    }
+                }
             }
         }
         // Fallback to text replacement if not modified by Mach-O patching
@@ -1221,5 +1262,77 @@ fn ensure_llvm_symlinks(install_dir: &Path, formula: &Formula, config: &Config) 
             }
         }
     }
+    Ok(())
+}
+
+/// Applies a path change using install_name_tool as a fallback for Mach-O files
+/// where the path replacement is too long for direct binary patching.
+fn apply_install_name_tool_change(old_path: &str, new_path: &str, target: &Path) -> Result<()> {
+    if !target.exists() {
+        debug!(
+            "Target {} does not exist, skipping install_name_tool fallback.",
+            target.display()
+        );
+        return Ok(());
+    }
+
+    debug!(
+        "Running install_name_tool -change {} {} {}",
+        old_path,
+        new_path,
+        target.display()
+    );
+
+    let output = StdCommand::new("install_name_tool")
+        .args(["-change", old_path, new_path, target.to_str().unwrap()])
+        .output()
+        .map_err(|e| SpsError::Io(Arc::new(e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.contains("file not found")
+            && !stderr.contains("no LC_LOAD_DYLIB command specifying file")
+            && !stderr.contains("is not a Mach-O file")
+            && !stderr.contains("object file format invalid")
+            && !stderr.trim().is_empty()
+        {
+            error!(
+                "install_name_tool -change failed unexpectedly for target {}: {}",
+                target.display(),
+                stderr.trim()
+            );
+            return Err(SpsError::InstallError(format!(
+                "install_name_tool failed for {}: {}",
+                target.display(),
+                stderr.trim()
+            )));
+        } else {
+            debug!(
+                "install_name_tool -change: old path '{}' likely not found or target '{}' not relevant (stderr: {}).",
+                old_path,
+                target.display(),
+                stderr.trim()
+            );
+            return Ok(()); // No changes made, skip re-signing
+        }
+    }
+
+    // Re-sign the binary after making changes (required on Apple Silicon)
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        debug!(
+            "Re-signing binary after install_name_tool change: {}",
+            target.display()
+        );
+        codesign_path(target)?;
+    }
+
+    debug!(
+        "Successfully applied install_name_tool fallback for {} -> {} in {}",
+        old_path,
+        new_path,
+        target.display()
+    );
+
     Ok(())
 }
