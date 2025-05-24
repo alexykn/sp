@@ -40,7 +40,7 @@ pub async fn fetch_raw_formulae_json(endpoint: &str) -> Result<String> {
         .user_agent(USER_AGENT_STRING)
         .build()?;
     let response = client.get(&url).send().await.map_err(|e| {
-        error!("HTTP request failed for {}: {}", url, e);
+        debug!("HTTP request failed for {}: {}", url, e);
         SpsError::Http(Arc::new(e))
     })?;
     if !response.status().is_success() {
@@ -170,13 +170,13 @@ pub async fn get_formula(name: &str) -> Result<Formula> {
     );
     let client = reqwest::Client::new();
     let response = client.get(&url).send().await.map_err(|e| {
-        error!("HTTP request failed when fetching formula {}: {}", name, e);
+        debug!("HTTP request failed when fetching formula {}: {}", name, e);
         SpsError::Http(Arc::new(e))
     })?;
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
-        error!("Failed to fetch formula {} (Status {})", name, status);
+        debug!("Failed to fetch formula {} (Status {})", name, status);
         debug!("Response body for failed formula fetch {}: {}", name, text);
         return Err(SpsError::Api(format!(
             "Failed to fetch formula {name}: Status {status}"

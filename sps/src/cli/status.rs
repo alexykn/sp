@@ -193,14 +193,24 @@ impl StatusDisplay {
         self.update_speed();
 
         if !self.header_printed {
+            // First render - print header and jobs
+            self.print_header();
+            let job_output = self.build_job_rows();
+            print!("{job_output}");
             self.header_printed = true;
+            // Count lines: header + jobs + separator + summary
+            let job_lines = job_output.lines().count();
+            self.last_line_count = 1 + job_lines + 1 + 1;
         } else {
+            // Subsequent renders - only clear and reprint job rows and summary
             self.clear_previous_output();
+            self.print_header();
+            let job_output = self.build_job_rows();
+            print!("{job_output}");
+            // Update line count
+            let job_lines = job_output.lines().count();
+            self.last_line_count = 1 + job_lines + 1 + 1;
         }
-
-        // Capture table output to count lines properly
-        let table_output = self.build_table_string();
-        print!("{table_output}");
 
         // Print separator
         println!("{}", "─".repeat(49).dimmed());
@@ -221,24 +231,22 @@ impl StatusDisplay {
 
         println!("{} net {}", progress_chars, speed_str.blue());
 
-        // Count actual lines in output (header + jobs + separator + summary)
-        let table_lines = table_output.lines().count();
-        self.last_line_count = table_lines + 1 + 1; // table lines + separator + summary
         io::stdout().flush().unwrap();
     }
 
-    fn build_table_string(&self) -> String {
-        let mut output = String::new();
-
-        // Header
-        output.push_str(&format!(
-            "{:<6} {:<12} {:<15} {:>8} {}\n",
+    fn print_header(&self) {
+        println!(
+            "{:<6} {:<12} {:<15} {:>8} {}",
             "IID".bold().dimmed(),
             "STATE".bold().dimmed(),
             "PKG".bold().dimmed(),
             "SIZE".bold().dimmed(),
             "SLOT".bold().dimmed()
-        ));
+        );
+    }
+
+    fn build_job_rows(&self) -> String {
+        let mut output = String::new();
 
         // Job rows
         for target_id in &self.job_order {

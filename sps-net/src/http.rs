@@ -229,11 +229,10 @@ async fn download_and_verify(
         }
     }
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| SpsError::HttpError(format!("HTTP request failed for {url}: {e}")))?;
+    let response = client.get(url).send().await.map_err(|e| {
+        debug!("HTTP request failed for {url}: {e}");
+        SpsError::HttpError(format!("HTTP request failed for {url}: {e}"))
+    })?;
     let status = response.status();
     tracing::debug!("Received HTTP status: {} for {}", status, url);
 

@@ -8,7 +8,7 @@ use sps_common::error::Result as SpsResult;
 use sps_common::pipeline::{PipelineEvent, WorkerJob};
 use threadpool::ThreadPool;
 use tokio::sync::broadcast;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, instrument};
 
 use super::worker;
 
@@ -77,7 +77,7 @@ pub fn start_worker_pool_manager(
                 Err(boxed) => {
                     let (final_action, err) = *boxed;
                     fail_count_clone.fetch_add(1, Ordering::Relaxed);
-                    error!("[{}] Worker failed: {}", job_id, err);
+                    // Error is sent via JobFailed event and displayed in status.rs
                     let _ = event_tx_clone.send(PipelineEvent::JobFailed {
                         target_id: job_id,
                         action: final_action,
@@ -89,13 +89,6 @@ pub fn start_worker_pool_manager(
             debug!("[{}] Worker closure scope ending.", job_id_for_log);
         });
     }
-
-    debug!("Worker job channel closed. Waiting for active workers to finish...");
-    debug!("Calling pool.join() to wait for all worker threads to finish...");
     pool.join();
-    debug!("pool.join() returned, all worker threads should be finished.");
-    debug!("Core worker pool joined. Engine thread finishing.");
-    debug!("Core worker pool manager finished.");
-
     Ok(())
 }

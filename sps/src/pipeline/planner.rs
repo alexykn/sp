@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use colored::Colorize;
 use sps_common::cache::Cache;
 use sps_common::config::Config;
 use sps_common::dependency::resolver::{
@@ -51,7 +50,7 @@ pub(crate) async fn fetch_target_definitions(
     let formulae_map = match formulae_map_handle.await {
         Ok(Ok(map)) => Some(map),
         Ok(Err(e)) => {
-            warn!("[FetchDefs] Failed to load/fetch full formulae list: {}", e);
+            debug!("[FetchDefs] Failed to load/fetch full formulae list: {}", e);
             None
         }
         Err(e) => {
@@ -65,7 +64,7 @@ pub(crate) async fn fetch_target_definitions(
     let casks_map = match casks_map_handle.await {
         Ok(Ok(map)) => Some(map),
         Ok(Err(e)) => {
-            warn!("[FetchDefs] Failed to load/fetch full casks list: {}", e);
+            debug!("[FetchDefs] Failed to load/fetch full casks list: {}", e);
             None
         }
         Err(e) => {
@@ -93,7 +92,7 @@ pub(crate) async fn fetch_target_definitions(
                     return (name_owned, Ok(InstallTargetIdentifier::Cask(c_arc.clone())));
                 }
             }
-            warn!("[FetchDefs] Definition for '{}' not found in cached lists, fetching directly from API...", name_owned);
+            debug!("[FetchDefs] Definition for '{}' not found in cached lists, fetching directly from API...", name_owned);
             match sps_net::api::get_formula(&name_owned).await {
                 Ok(formula_obj) => return (name_owned, Ok(InstallTargetIdentifier::Formula(Arc::new(formula_obj)))),
                 Err(SpsError::NotFound(_)) => {}
@@ -540,7 +539,7 @@ impl<'a> OperationPlanner<'a> {
             CommandType::Upgrade { all } => {
                 debug!("[Planner] Calling plan_for_upgrade with all={}", all);
                 let plan = self.plan_for_upgrade(initial_targets, all).await?;
-                debug!("[Planner] plan_for_upgrade returned with {} initial_ops, {} errors, {} already_satisfied", 
+                debug!("[Planner] plan_for_upgrade returned with {} initial_ops, {} errors, {} already_satisfied",
                     plan.initial_ops.len(), plan.errors.len(), plan.already_satisfied.len());
                 debug!(
                     "[Planner] Initial ops: {:?}",
@@ -575,11 +574,7 @@ impl<'a> OperationPlanner<'a> {
                     Err(e) => {
                         intermediate_plan.errors.push((
                             name.clone(),
-                            SpsError::Generic(format!(
-                                "Failed to get definition for target '{}': {}",
-                                name.cyan(),
-                                e
-                            )),
+                            SpsError::Generic(format!("Failed to get definition for target: {e}")),
                         ));
                         intermediate_plan.processed_globally.insert(name);
                     }

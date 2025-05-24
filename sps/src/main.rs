@@ -165,8 +165,24 @@ async fn main() -> spResult<()> {
     };
 
     if let Err(e) = command_execution_result {
-        error!("Command failed: {:#}", e); // Use `error!` macro
-        eprintln!("{}: {:#}", "Error".red().bold(), e);
+        // For pipeline commands (Install, Reinstall, Upgrade), errors are already
+        // displayed via the status system, so only log in verbose mode
+        let is_pipeline_command = matches!(
+            cli_args.command,
+            Command::Install(_) | Command::Reinstall(_) | Command::Upgrade(_)
+        );
+
+        if is_pipeline_command {
+            // Only show error details in verbose mode
+            if cli_args.verbose > 0 {
+                error!("Command failed: {:#}", e);
+                eprintln!("{}: {:#}", "Error".red().bold(), e);
+            }
+        } else {
+            // For non-pipeline commands, show errors normally
+            error!("Command failed: {:#}", e);
+            eprintln!("{}: {:#}", "Error".red().bold(), e);
+        }
         process::exit(1);
     }
 
