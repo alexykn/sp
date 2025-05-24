@@ -118,10 +118,6 @@ pub fn install_app_from_staged(
                 // ========================================================================
                 // CRITICAL: Homebrew-Style App Bundle Replacement Strategy
                 // ========================================================================
-                // We use Homebrew's exact strategy: rm + cp -pR to preserve app bundle
-                // identity and Gatekeeper state. This mirrors Homebrew's move() function
-                // in cask/artifact/app.rb.
-                //
                 // WHY THIS APPROACH:
                 // 1. Preserves extended attributes (quarantine, code signing, etc.)
                 // 2. Maintains app bundle identity → prevents Gatekeeper reset
@@ -516,13 +512,6 @@ pub fn install_app_from_staged(
             let _ = remove_path_robustly(&final_app_destination_in_applications, config, true);
             return Err(SpsError::Io(std::sync::Arc::new(e)));
         }
-    }
-    #[cfg(not(unix))]
-    {
-        warn!(
-            "Symlink creation not supported on this platform. Skipping link for {}.",
-            actual_caskroom_symlink_path.display()
-        );
     }
 
     let mut created_artifacts = vec![InstalledArtifact::AppBundle {
