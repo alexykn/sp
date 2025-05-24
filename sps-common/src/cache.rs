@@ -91,4 +91,9 @@ impl Cache {
         }
         Ok(())
     }
+
+    /// Gets a reference to the config
+    pub fn config(&self) -> &Config {
+        &self._config
+    }
 }

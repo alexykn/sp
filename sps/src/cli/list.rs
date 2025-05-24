@@ -9,6 +9,7 @@ use sps_common::config::Config;
 use sps_common::error::Result;
 use sps_common::formulary::Formulary;
 use sps_core::check::installed::{get_installed_packages, PackageType};
+use sps_core::check::update::check_for_updates;
 use sps_core::check::InstalledPackageInfo;
 
 #[derive(Args, Debug)]
@@ -19,6 +20,9 @@ pub struct List {
     /// Show only casks
     #[arg(long = "cask")]
     pub cask_only: bool,
+    /// Show only packages with updates available
+    #[arg(long = "outdated")]
+    pub outdated_only: bool,
 }
 
 impl List {
@@ -58,12 +62,29 @@ impl List {
         }
         // If user wants to show installed formulas only.
         if self.formula_only {
-            self.print_formulas_table(formulas, config);
+            if self.outdated_only {
+                self.print_outdated_formulas_table(&formulas, config)
+                    .await?;
+            } else {
+                self.print_formulas_table(formulas, config);
+            }
             return Ok(());
         }
         // If user wants to show installed casks only.
         if self.cask_only {
-            self.print_casks_table(casks, cache);
+            if self.outdated_only {
+                self.print_outdated_casks_table(&casks, cache.clone())
+                    .await?;
+            } else {
+                self.print_casks_table(casks, cache);
+            }
+            return Ok(());
+        }
+
+        // If user wants to show only outdated packages
+        if self.outdated_only {
+            self.print_outdated_all_table(&formulas, &casks, config, cache)
+                .await?;
             return Ok(());
         }
 
@@ -228,5 +249,174 @@ impl List {
         }
         table.printstd();
         println!("{}", format!("{cask_count} casks installed").bold());
+    }
+
+    async fn print_outdated_formulas_table(
+        &self,
+        formulas: &[&InstalledPackageInfo],
+        config: &Config,
+    ) -> Result<()> {
+        if formulas.is_empty() {
+            println!("No formulas installed.");
+            return Ok(());
+        }
+
+        // Convert to owned for update checking
+        let formula_packages: Vec<InstalledPackageInfo> =
+            formulas.iter().map(|&f| f.clone()).collect();
+        let cache = sps_common::cache::Cache::new(config)?;
+        let updates = check_for_updates(&formula_packages, &cache, config).await?;
+
+        if updates.is_empty() {
+            println!("No formula updates available.");
+            return Ok(());
+        }
+
+        let mut table = Table::new();
+        table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+        table.add_row(Row::new(vec![Cell::new_align(
+            "Outdated Formulas",
+            format::Alignment::CENTER,
+        )
+        .style_spec("bFg")
+        .with_hspan(3)]));
+        table.add_row(Row::new(vec![
+            Cell::new("Name").style_spec("b"),
+            Cell::new("Installed").style_spec("b"),
+            Cell::new("Available").style_spec("b"),
+        ]));
+
+        let mut count = 0;
+        for update in updates {
+            table.add_row(Row::new(vec![
+                Cell::new(&update.name).style_spec("Fb"),
+                Cell::new(&update.installed_version),
+                Cell::new(&update.available_version).style_spec("Fg"),
+            ]));
+            count += 1;
+        }
+
+        table.printstd();
+        println!("{}", format!("{count} outdated formulas").bold());
+        Ok(())
+    }
+
+    async fn print_outdated_casks_table(
+        &self,
+        casks: &[&InstalledPackageInfo],
+        cache: Arc<Cache>,
+    ) -> Result<()> {
+        if casks.is_empty() {
+            println!("No casks installed.");
+            return Ok(());
+        }
+
+        // Convert to owned for update checking
+        let cask_packages: Vec<InstalledPackageInfo> = casks.iter().map(|&c| c.clone()).collect();
+        let config = cache.config();
+        let updates = check_for_updates(&cask_packages, &cache, config).await?;
+
+        if updates.is_empty() {
+            println!("No cask updates available.");
+            return Ok(());
+        }
+
+        let mut table = Table::new();
+        table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+        table.add_row(Row::new(vec![Cell::new_align(
+            "Outdated Casks",
+            format::Alignment::CENTER,
+        )
+        .style_spec("bFg")
+        .with_hspan(3)]));
+        table.add_row(Row::new(vec![
+            Cell::new("Name").style_spec("b"),
+            Cell::new("Installed").style_spec("b"),
+            Cell::new("Available").style_spec("b"),
+        ]));
+
+        let mut count = 0;
+        for update in updates {
+            table.add_row(Row::new(vec![
+                Cell::new(&update.name).style_spec("Fb"),
+                Cell::new(&update.installed_version),
+                Cell::new(&update.available_version).style_spec("Fy"),
+            ]));
+            count += 1;
+        }
+
+        table.printstd();
+        println!("{}", format!("{count} outdated casks").bold());
+        Ok(())
+    }
+
+    async fn print_outdated_all_table(
+        &self,
+        formulas: &[&InstalledPackageInfo],
+        casks: &[&InstalledPackageInfo],
+        config: &Config,
+        cache: Arc<Cache>,
+    ) -> Result<()> {
+        // Convert to owned for update checking
+        let mut all_packages: Vec<InstalledPackageInfo> = Vec::new();
+        all_packages.extend(formulas.iter().map(|&f| f.clone()));
+        all_packages.extend(casks.iter().map(|&c| c.clone()));
+
+        if all_packages.is_empty() {
+            println!("{}", "0 formulas and casks installed".yellow());
+            return Ok(());
+        }
+
+        let updates = check_for_updates(&all_packages, &cache, config).await?;
+
+        if updates.is_empty() {
+            println!("No outdated packages found.");
+            return Ok(());
+        }
+
+        let mut table = Table::new();
+        table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+        table.add_row(Row::new(vec![
+            Cell::new("Type").style_spec("b"),
+            Cell::new("Name").style_spec("b"),
+            Cell::new("Installed").style_spec("b"),
+            Cell::new("Available").style_spec("b"),
+        ]));
+
+        let mut formula_count = 0;
+        let mut cask_count = 0;
+
+        for update in updates {
+            let (type_name, type_style) = match update.pkg_type {
+                PackageType::Formula => {
+                    formula_count += 1;
+                    ("Formula", "Fg")
+                }
+                PackageType::Cask => {
+                    cask_count += 1;
+                    ("Cask", "Fy")
+                }
+            };
+
+            table.add_row(Row::new(vec![
+                Cell::new(type_name).style_spec(type_style),
+                Cell::new(&update.name).style_spec("Fb"),
+                Cell::new(&update.installed_version),
+                Cell::new(&update.available_version).style_spec("Fg"),
+            ]));
+        }
+
+        table.printstd();
+        if formula_count > 0 && cask_count > 0 {
+            println!(
+                "{}",
+                format!("{formula_count} outdated formulas, {cask_count} outdated casks").bold()
+            );
+        } else if formula_count > 0 {
+            println!("{}", format!("{formula_count} outdated formulas").bold());
+        } else if cask_count > 0 {
+            println!("{}", format!("{cask_count} outdated casks").bold());
+        }
+        Ok(())
     }
 }
