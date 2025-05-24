@@ -3,14 +3,14 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek};
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use sps_common::error::{Result, SpsError};
 use tar::{Archive, EntryType};
 use tracing::{debug, error, warn};
-use xz2::read::XzDecoder;
-use zip_rs::ZipArchive;
+use zip::ZipArchive;
 
 #[cfg(target_os = "macos")]
 use crate::utils::xattr;
@@ -41,8 +41,8 @@ pub(crate) fn infer_archive_root_dir(
             infer_tar_root(decompressed, archive_path)
         }
         "xz" | "txz" => {
-            let decompressed = XzDecoder::new(file);
-            infer_tar_root(decompressed, archive_path)
+            // Use external xz command to decompress, then read as tar
+            infer_xz_tar_root(archive_path)
         }
         "tar" => infer_tar_root(file, archive_path),
         _ => Err(SpsError::Generic(format!(
@@ -139,89 +139,64 @@ fn infer_tar_root<R: Read>(reader: R, archive_path_for_log: &Path) -> Result<Opt
     }
 }
 
-fn infer_zip_root<R: Read + Seek>(
-    mut reader: R,
-    archive_path_for_log: &Path,
-) -> Result<Option<PathBuf>> {
-    // Read the entire file into memory since zip-rs requires a buffer
-    let mut buffer = Vec::new();
-    reader
-        .read_to_end(&mut buffer)
+fn infer_xz_tar_root(archive_path: &Path) -> Result<Option<PathBuf>> {
+    // Create a temporary file for decompressed content
+    let temp_file =
+        tempfile::NamedTempFile::new().map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+    // Use external xz command to decompress
+    let output = Command::new("xz")
+        .args(["-dc", archive_path.to_str().unwrap()])
+        .output()
+        .map_err(|e| {
+            SpsError::Generic(format!(
+                "Failed to run xz command for decompression: {e}. Make sure xz is installed."
+            ))
+        })?;
+
+    if !output.status.success() {
+        return Err(SpsError::Generic(format!(
+            "xz decompression failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    // Write decompressed data to temp file
+    std::fs::write(temp_file.path(), &output.stdout)
         .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
 
-    let archive = ZipArchive::from_buffer(buffer).map_err(|e| {
+    // Read as tar
+    let file = File::open(temp_file.path()).map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+    infer_tar_root(file, archive_path)
+}
+
+fn infer_zip_root<R: Read + Seek>(reader: R, archive_path: &Path) -> Result<Option<PathBuf>> {
+    let mut archive = ZipArchive::new(reader).map_err(|e| {
         SpsError::Generic(format!(
-            "Failed to open ZIP {}: {}",
-            archive_path_for_log.display(),
+            "Failed to open ZIP archive {}: {}",
+            archive_path.display(),
             e
         ))
     })?;
-    let mut unique_roots = HashSet::new();
-    let mut non_empty_entry_found = false;
-    let mut first_component_name: Option<PathBuf> = None;
 
-    for file in &archive.central_directory.files {
-        let path_str = String::from_utf8_lossy(file.metadata.name);
-        let path = PathBuf::from(path_str.as_ref());
+    let mut root_candidates = HashSet::new();
 
-        if path.components().next().is_none() {
-            continue;
-        }
+    for i in 0..archive.len() {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| SpsError::Generic(format!("Failed to read ZIP entry {i}: {e}")))?;
 
-        if let Some(first_comp) = path.components().next() {
-            if let Component::Normal(name) = first_comp {
-                non_empty_entry_found = true;
-                let current_root = PathBuf::from(name);
-                if first_component_name.is_none() {
-                    first_component_name = Some(current_root.clone());
-                }
-                unique_roots.insert(current_root);
-
-                if unique_roots.len() > 1 {
-                    tracing::debug!(
-                        "Multiple top-level items found in ZIP {}, cannot infer single root.",
-                        archive_path_for_log.display()
-                    );
-                    return Ok(None);
-                }
-            } else {
-                tracing::debug!(
-                    "Non-standard top-level component ({:?}) found in ZIP {}, cannot infer single root.",
-                    first_comp,
-                    archive_path_for_log.display()
-                );
-                return Ok(None);
+        if let Some(enclosed_name) = file.enclosed_name() {
+            if let Some(Component::Normal(name)) = enclosed_name.components().next() {
+                root_candidates.insert(name.to_string_lossy().to_string());
             }
-        } else {
-            tracing::debug!(
-                "Empty or unusual path ('{}') found in ZIP {}, cannot infer single root.",
-                path_str,
-                archive_path_for_log.display()
-            );
-            return Ok(None);
         }
     }
 
-    if unique_roots.len() == 1 && non_empty_entry_found {
-        let inferred_root = first_component_name.unwrap();
-        tracing::debug!(
-            "Inferred single root directory in ZIP {}: {}",
-            archive_path_for_log.display(),
-            inferred_root.display()
-        );
-        Ok(Some(inferred_root))
-    } else if !non_empty_entry_found {
-        tracing::warn!(
-            "ZIP archive {} appears to be empty or contain only metadata.",
-            archive_path_for_log.display()
-        );
-        Ok(None)
+    if root_candidates.len() == 1 {
+        let root = root_candidates.into_iter().next().unwrap();
+        Ok(Some(PathBuf::from(root)))
     } else {
-        tracing::debug!(
-            "No single common root directory found in ZIP {}. unique_roots count: {}",
-            archive_path_for_log.display(),
-            unique_roots.len()
-        );
         Ok(None)
     }
 }
@@ -299,10 +274,7 @@ pub fn extract_archive(
             let tar = BzDecoder::new(file);
             extract_tar_archive(tar, target_dir, strip_components, archive_path)
         }
-        "xz" | "txz" => {
-            let tar = XzDecoder::new(file);
-            extract_tar_archive(tar, target_dir, strip_components, archive_path)
-        }
+        "xz" | "txz" => extract_xz_tar_archive(archive_path, target_dir, strip_components),
         "tar" => extract_tar_archive(file, target_dir, strip_components, archive_path),
         _ => Err(SpsError::Generic(format!(
             "Unsupported archive type provided for extraction: '{}' for file {}",
@@ -327,6 +299,46 @@ pub fn extract_archive(
 }
 
 /// Represents a hardlink operation that was deferred.
+fn extract_xz_tar_archive(
+    archive_path: &Path,
+    target_dir: &Path,
+    strip_components: usize,
+) -> Result<()> {
+    debug!(
+        "Extracting XZ+TAR archive using external xz command: {}",
+        archive_path.display()
+    );
+
+    // Create a temporary file for decompressed content
+    let temp_file =
+        tempfile::NamedTempFile::new().map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+    // Use external xz command to decompress
+    let output = Command::new("xz")
+        .args(["-dc", archive_path.to_str().unwrap()])
+        .output()
+        .map_err(|e| {
+            SpsError::Generic(format!(
+                "Failed to run xz command for extraction: {e}. Make sure xz is installed."
+            ))
+        })?;
+
+    if !output.status.success() {
+        return Err(SpsError::Generic(format!(
+            "xz decompression failed during extraction: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    // Write decompressed data to temp file
+    std::fs::write(temp_file.path(), &output.stdout)
+        .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+
+    // Extract as tar
+    let file = File::open(temp_file.path()).map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
+    extract_tar_archive(file, target_dir, strip_components, archive_path)
+}
+
 #[cfg(unix)]
 struct DeferredHardLink {
     link_path_in_archive: PathBuf,
@@ -605,47 +617,39 @@ fn extract_tar_archive<R: Read>(
 }
 
 fn extract_zip_archive<R: Read + Seek>(
-    mut reader: R,
+    reader: R,
     target_dir: &Path,
     strip_components: usize,
     archive_path_for_log: &Path,
 ) -> Result<()> {
-    // Read the entire file into memory since zip-rs requires a buffer
-    let mut buffer = Vec::new();
-    reader
-        .read_to_end(&mut buffer)
-        .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
-
-    let archive = ZipArchive::from_buffer(buffer.clone()).map_err(|e| {
+    let mut archive = ZipArchive::new(reader).map_err(|e| {
         SpsError::Generic(format!(
             "Failed to open ZIP {}: {}",
             archive_path_for_log.display(),
             e
         ))
     })?;
+
     debug!(
         "Starting ZIP extraction for {}",
         archive_path_for_log.display()
     );
 
-    for file_info in archive.central_directory.files.iter() {
-        let filename_str = String::from_utf8_lossy(file_info.metadata.name);
-        let original_path_in_archive = PathBuf::from(filename_str.as_ref());
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| SpsError::Generic(format!("Failed to read ZIP entry {i}: {e}")))?;
 
-        // Check if path is safe (enclosed_name equivalent)
-        if original_path_in_archive.is_absolute()
-            || original_path_in_archive
-                .components()
-                .any(|c| matches!(c, Component::ParentDir))
-        {
-            debug!("Skipping unsafe ZIP entry name {}", filename_str);
+        let Some(original_path_in_archive) = file.enclosed_name() else {
+            debug!("Skipping unsafe ZIP entry (no enclosed name)");
             continue;
-        }
+        };
 
         let stripped_components_iter: Vec<Component<'_>> = original_path_in_archive
             .components()
             .skip(strip_components)
             .collect();
+
         if stripped_components_iter.is_empty() {
             debug!(
                 "Skipping ZIP entry {} due to strip_components",
@@ -682,6 +686,7 @@ fn extract_zip_archive<R: Read + Seek>(
                 }
             }
         }
+
         if !final_target_path_on_disk.starts_with(target_dir) {
             error!(
                 "ZIP path traversal detected: {} -> {}",
@@ -699,68 +704,54 @@ fn extract_zip_archive<R: Read + Seek>(
                 fs::create_dir_all(parent).map_err(|e| {
                     SpsError::Io(std::sync::Arc::new(io::Error::new(
                         e.kind(),
-                        format!("Failed create dir {}: {}", parent.display(), e),
-                    )))
-                })?;
-            }
-        }
-
-        let is_dir = filename_str.ends_with('/');
-        if is_dir {
-            if !final_target_path_on_disk.exists() {
-                fs::create_dir_all(&final_target_path_on_disk).map_err(|e| {
-                    SpsError::Io(std::sync::Arc::new(io::Error::new(
-                        e.kind(),
                         format!(
-                            "Failed create dir {}: {}",
-                            final_target_path_on_disk.display(),
+                            "Failed to create parent directory {}: {}",
+                            parent.display(),
                             e
                         ),
                     )))
                 })?;
             }
+        }
+
+        if file.is_dir() {
+            debug!(
+                "Creating directory: {}",
+                final_target_path_on_disk.display()
+            );
+            fs::create_dir_all(&final_target_path_on_disk).map_err(|e| {
+                SpsError::Io(std::sync::Arc::new(io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to create directory {}: {}",
+                        final_target_path_on_disk.display(),
+                        e
+                    ),
+                )))
+            })?;
         } else {
-            // Use the original buffer to extract file data
-            let file_start = file_info.local_header_offset as usize
-                + 30
-                + file_info.metadata.name.len()
-                + file_info.metadata.extra_field.len();
-            let file_end = file_start + file_info.metadata.compressed_size as usize;
-
-            if file_end > buffer.len() {
-                return Err(SpsError::Generic(format!(
-                    "Invalid file data range for {}: {}..{} (archive size: {})",
-                    original_path_in_archive.display(),
-                    file_start,
-                    file_end,
-                    buffer.len()
-                )));
-            }
-
-            let compressed_data = &buffer[file_start..file_end];
-            let file_data = if file_info.metadata.compression_method.0 == 0 {
-                // No compression
-                compressed_data.to_vec()
-            } else {
-                // For now, only support uncompressed files
-                return Err(SpsError::Generic(format!(
-                    "Compressed ZIP entries not yet supported for file: {} (compression method: {})",
-                    original_path_in_archive.display(),
-                    file_info.metadata.compression_method.0
-                )));
-            };
-
             // Regular file
             if final_target_path_on_disk.exists() {
-                // Overwrite if exists
                 match fs::remove_file(&final_target_path_on_disk) {
                     Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {} // Fine if not found
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                     Err(e) => return Err(SpsError::Io(std::sync::Arc::new(e))),
                 }
             }
 
-            fs::write(&final_target_path_on_disk, file_data).map_err(|e| {
+            debug!("Extracting file: {}", final_target_path_on_disk.display());
+            let mut outfile = File::create(&final_target_path_on_disk).map_err(|e| {
+                SpsError::Io(std::sync::Arc::new(io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to create file {}: {}",
+                        final_target_path_on_disk.display(),
+                        e
+                    ),
+                )))
+            })?;
+
+            std::io::copy(&mut file, &mut outfile).map_err(|e| {
                 SpsError::Io(std::sync::Arc::new(io::Error::new(
                     e.kind(),
                     format!(
@@ -771,23 +762,25 @@ fn extract_zip_archive<R: Read + Seek>(
                 )))
             })?;
 
+            // Set permissions on Unix systems
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mode = file_info.external_attributes.0 >> 16;
-                if mode != 0 && final_target_path_on_disk.is_file() {
-                    fs::set_permissions(
-                        &final_target_path_on_disk,
-                        fs::Permissions::from_mode(mode),
-                    )?;
+                if let Some(mode) = file.unix_mode() {
+                    let perms = std::fs::Permissions::from_mode(mode);
+                    std::fs::set_permissions(&final_target_path_on_disk, perms)
+                        .map_err(|e| SpsError::Io(std::sync::Arc::new(e)))?;
                 }
             }
         }
     }
+
     debug!(
         "Finished ZIP extraction for {}",
         archive_path_for_log.display()
     );
+
+    // Apply quarantine to extracted apps on macOS
     #[cfg(target_os = "macos")]
     {
         if let Err(e) = quarantine_extracted_apps_in_stage(target_dir, "sps-zip-extractor") {
@@ -798,5 +791,6 @@ fn extract_zip_archive<R: Read + Seek>(
             );
         }
     }
+
     Ok(())
 }
