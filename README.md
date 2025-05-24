@@ -56,7 +56,9 @@ cargo install sps
 > due too the amount of work keeping the crates up to date with every change would entail the crates.io published version will only be updated after major changes or fixes (if there are none expect once a week)
 ---
 
-<img width="932" alt="Screenshot 2025-04-28 at 23 43 35" src="https://github.com/user-attachments/assets/473347a7-210c-41a3-bb49-e233cfa43c46" />
+<img width="1242" alt="Screenshot 2025-05-24 at 10 09 03" src="https://github.com/user-attachments/assets/eac4bb5e-5447-48a6-b202-062ba382ce0c" />
+
+<img width="1242" alt="Screenshot 2025-05-24 at 10 09 49" src="https://github.com/user-attachments/assets/c82ad6be-a286-48ce-9d9f-8b26216e7f48" />
 
 ---
 
