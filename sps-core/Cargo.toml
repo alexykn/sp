@@ -1,6 +1,6 @@
 [package]
 name = "sps-core"
-version = "0.1.54"
+version = "0.1.55"
 edition = "2021"
 authors = ["Alexander Knott <alexander.knott@posteo.de>", "sps contributors"]
 description = "Core library for the sps package manager"
@@ -8,8 +8,8 @@ repository = "https://github.com/alexykn/sps"
 license = "BSD-3-Clause"
 
 [dependencies]
-sps-net = "0.1.54"
-sps-common = "0.1.54"
+sps-net = "0.1.55"
+sps-common = "0.1.55"
 
 anyhow = "1.0.98"
 uuid = { version = "1.17.0", features = ["v4"] }
@@ -47,9 +47,8 @@ regex = "1.11.1"
 glob = "0.3.2"
 flate2 = "1.1.1"
 bzip2 = "0.5.2"
-xz2 = "0.1.7"
 tar = "0.4.44"
-zip-rs = "0.1.1"                                                                 # Replacement for zip that doesn't conflict
+zip = "2.2.1"                                                                    # Back to original zip crate
 chrono = { version = "0.4.41", features = ["serde"] }
 async-recursion = "1.1.1"
 crossbeam-channel = "0.5.15"
